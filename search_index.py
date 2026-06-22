@@ -30,6 +30,11 @@ SYNONYMS = {
 }
 FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
 FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수", re.IGNORECASE)
+QUICK_INTENTS = (
+    (re.compile(r"교육과정|교과과정|커리큘럼", re.IGNORECASE), ("교육과정", "교과과정", "교과정보")),
+    (re.compile(r"최근\s*공지|공지사항|학과\s*공지", re.IGNORECASE), ("공지사항", "공지", "학과광장")),
+    (re.compile(r"학과\s*일정|학사\s*일정|일정", re.IGNORECASE), ("학과일정", "학사일정")),
+)
 STOPWORDS = {
     "무엇", "뭐", "어떻게", "알려줘", "알려주세요", "대한", "관련", "있는", "있나요",
     "인가요", "합니다", "해주세요", "그리고", "에서", "으로", "컴퓨터과학과",
@@ -95,6 +100,7 @@ class SearchIndex:
         hits = []
         compact_query = re.sub(r"\s+", "", query.lower())
         faculty_intent = bool(FACULTY_QUERY_RE.search(query))
+        quick_intent_terms = next((terms for pattern, terms in QUICK_INTENTS if pattern.search(query)), ())
 
         for doc in documents:
             tokens = doc.get("tokens") or []
@@ -111,6 +117,9 @@ class SearchIndex:
                     score += 100
                 else:
                     score -= 25
+            if quick_intent_terms:
+                if any(term.lower() in f"{title} {category}" for term in quick_intent_terms):
+                    score += 45
             for token in query_tokens:
                 count = token_counts.get(token, 0)
                 if count:

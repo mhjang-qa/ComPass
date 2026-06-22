@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +45,21 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 index = SearchIndex()
 job_lock = threading.Lock()
+index_load_lock = threading.Lock()
 job_state: dict[str, Any] = {
     "crawl": {"running": False, "message": "대기 중", "result": None},
     "index": {"running": False, "message": "대기 중", "result": None},
     "notion": {"running": False, "message": "확인 전", "result": None},
+}
+runtime_state: dict[str, Any] = {
+    "loading": False,
+    "notion_connected": False,
+    "notion_document_count": 0,
+    "index_document_count": index.status()["documents"],
+    "last_sync_at": index.status()["built_at"],
+    "last_attempt_at": None,
+    "last_reason": "process_start",
+    "last_error": "",
 }
 
 
@@ -73,6 +85,107 @@ def require_admin(password: str | None) -> None:
         raise HTTPException(status_code=401, detail="관리자 비밀번호가 올바르지 않습니다.")
 
 
+def mask_database_id(database_id: str) -> str:
+    value = (database_id or "").replace("-", "")
+    if len(value) < 12:
+        return "***"
+    return f"{value[:6]}…{value[-6:]}"
+
+
+def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bool:
+    current_count = index.status()["documents"]
+    if current_count > 0 and not force:
+        runtime_state["index_document_count"] = current_count
+        return True
+    if not index_load_lock.acquire(timeout=45):
+        runtime_state["last_error"] = "검색 인덱스 로딩 대기 시간이 초과되었습니다."
+        logger.error("[INDEX] load lock timeout reason=%s", reason)
+        return index.status()["documents"] > 0
+    if index.status()["documents"] > 0 and not force:
+        index_load_lock.release()
+        return True
+    if reason == "lazy_chat" and index.status()["documents"] > 0:
+        index_load_lock.release()
+        return True
+
+    runtime_state.update(
+        loading=True,
+        last_attempt_at=datetime.now().astimezone().isoformat(),
+        last_reason=reason,
+        last_error="",
+    )
+    try:
+        if not config.NOTION_TOKEN:
+            raise RuntimeError(
+                "NOTION_TOKEN이 설정되지 않았습니다. NOTION_API_KEY 별칭도 확인했으나 값이 없습니다."
+            )
+        client = NotionClient()
+        schema_result = client.ensure_knowledge_schema()
+        curated_result = client.upsert_curated_knowledge()
+        documents = client.knowledge_documents()
+        runtime_state.update(
+            notion_connected=True,
+            notion_document_count=len(documents),
+        )
+        if not documents:
+            runtime_state["last_error"] = "Notion 지식 DB가 비어 있습니다."
+            logger.warning(
+                "[INDEX] Notion load succeeded but zero documents db=%s reason=%s",
+                mask_database_id(config.NOTION_KNOWLEDGE_DB_ID),
+                reason,
+            )
+            return False
+        result = index.rebuild(documents)
+        runtime_state.update(
+            index_document_count=result["documents"],
+            last_sync_at=result["built_at"],
+            last_error="",
+        )
+        job_state["index"] = {
+            "running": False,
+            "message": "검색 인덱스 자동 로딩 완료",
+            "result": result,
+        }
+        job_state["notion"] = {
+            "running": False,
+            "message": "Notion 연결 및 지식 로딩 완료",
+            "result": {
+                "knowledge": schema_result,
+                "curated": curated_result,
+                "documents": len(documents),
+            },
+        }
+        logger.info(
+            "[INDEX] Notion load success documents=%d indexed=%d db=%s reason=%s",
+            len(documents),
+            result["documents"],
+            mask_database_id(config.NOTION_KNOWLEDGE_DB_ID),
+            reason,
+        )
+        return result["documents"] > 0
+    except Exception as exc:
+        runtime_state.update(
+            notion_connected=False,
+            notion_document_count=0,
+            index_document_count=index.status()["documents"],
+            last_error=notion_error_message(exc, "지식 DB"),
+        )
+        job_state["notion"] = {
+            "running": False,
+            "message": runtime_state["last_error"],
+            "result": None,
+        }
+        logger.exception(
+            "[INDEX] Notion/index load failed db=%s reason=%s",
+            mask_database_id(config.NOTION_KNOWLEDGE_DB_ID),
+            reason,
+        )
+        return False
+    finally:
+        runtime_state["loading"] = False
+        index_load_lock.release()
+
+
 def initialize_notion_schemas() -> None:
     if not config.NOTION_TOKEN:
         job_state["notion"] = {
@@ -80,23 +193,11 @@ def initialize_notion_schemas() -> None:
             "message": "NOTION_TOKEN이 없어 자동 구성을 건너뛰었습니다.",
             "result": None,
         }
+        runtime_state["last_error"] = job_state["notion"]["message"]
+        logger.error("[STARTUP] %s", job_state["notion"]["message"])
         return
-    job_state["notion"] = {"running": True, "message": "필수 컬럼 구성 중", "result": None}
-    try:
-        result = NotionClient().ensure_all_schemas()
-        curated_result = NotionClient().upsert_curated_knowledge()
-        job_state["notion"] = {
-            "running": False,
-            "message": "필수 컬럼 구성 완료",
-            "result": {**result, "curated": curated_result},
-        }
-    except Exception as exc:
-        logger.exception("Notion DB 자동 구성 실패")
-        job_state["notion"] = {
-            "running": False,
-            "message": notion_error_message(exc),
-            "result": None,
-        }
+    job_state["notion"] = {"running": True, "message": "Notion 지식 DB 로딩 중", "result": None}
+    ensure_search_index(force=True, reason="startup")
 
 
 @app.on_event("startup")
@@ -156,6 +257,15 @@ def run_crawl_job(max_depth: int) -> None:
             progress={**job_state["crawl"]["progress"], "percent": 98},
         )
         index_result = index.rebuild(notion.knowledge_documents())
+        runtime_state.update(
+            notion_connected=True,
+            notion_document_count=index_result["documents"],
+            index_document_count=index_result["documents"],
+            last_sync_at=index_result["built_at"],
+            last_attempt_at=datetime.now().astimezone().isoformat(),
+            last_reason="crawl_complete",
+            last_error="",
+        )
         job_state["crawl"] = {
             "running": False,
             "message": "크롤링, 표준화 저장, 검색 인덱스 갱신 완료",
@@ -186,8 +296,9 @@ def run_crawl_job(max_depth: int) -> None:
 def run_index_job() -> None:
     job_state["index"] = {"running": True, "message": "Notion 데이터를 읽고 있습니다.", "result": None}
     try:
-        NotionClient().ensure_knowledge_schema()
-        result = index.rebuild()
+        if not ensure_search_index(force=True, reason="manual_rebuild"):
+            raise RuntimeError(runtime_state["last_error"] or "검색 인덱스에 문서가 없습니다.")
+        result = index.status()
         job_state["index"] = {"running": False, "message": "검색 인덱스 생성 완료", "result": result}
     except Exception as exc:
         logger.exception("인덱스 생성 실패")
@@ -240,6 +351,7 @@ def setup_notion_databases(x_admin_password: str | None = Header(default=None)):
     try:
         result = NotionClient().ensure_all_schemas()
         curated_result = NotionClient().upsert_curated_knowledge()
+        ensure_search_index(force=True, reason="notion_setup")
         return {
             "ok": True,
             "message": "크롤링 지식 DB와 챗봇 통계 DB의 필수 컬럼 구성이 완료되었습니다.",
@@ -274,14 +386,76 @@ def search_test(req: SearchRequest, x_admin_password: str | None = Header(defaul
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
+    if index.status()["documents"] == 0:
+        logger.warning(
+            "[CHAT] empty index detected; attempting lazy load question=%r notion_connected=%s",
+            req.question[:120],
+            runtime_state["notion_connected"],
+        )
+        loaded = ensure_search_index(force=True, reason="lazy_chat")
+        if not loaded:
+            mode = "DB_LOAD_ERROR" if runtime_state["last_error"] else "INDEX_EMPTY"
+            answer = (
+                "공식 지식 DB를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+                if mode == "DB_LOAD_ERROR"
+                else "공식 지식 DB는 연결되었지만 검색할 문서가 없습니다. 관리자에게 크롤링을 요청해 주세요."
+            )
+            result = {
+                "answer": answer,
+                "mode": mode,
+                "sources": [],
+                "score": 0,
+                "failure_reason": runtime_state["last_error"] or "검색 인덱스 문서 0개",
+                "diagnostics": debug_index_payload(),
+            }
+            logger.error(
+                "[CHAT] search unavailable mode=%s error=%s",
+                mode,
+                result["failure_reason"],
+            )
+            record_interaction_async(req.question, result)
+            return result
     result = answer_question(
         req.question,
         history=req.history,
         allow_llm=req.allow_llm,
         index=index,
     )
+    result["diagnostics"] = {
+        "notion_connected": runtime_state["notion_connected"],
+        "notion_documents": runtime_state["notion_document_count"],
+        "index_documents": index.status()["documents"],
+        "last_sync_at": runtime_state["last_sync_at"],
+    }
+    if result.get("requires_llm_confirmation"):
+        result["answer"] = (
+            f"공식 지식 DB {index.status()['documents']}개 문서를 검색했지만 충분한 근거를 찾지 못했습니다. "
+            "제한된 범위에서 LLM 보조 검색을 진행할까요?"
+        )
     record_interaction_async(req.question, result)
     return result
+
+
+def debug_index_payload() -> dict[str, Any]:
+    return {
+        "notion_connected": runtime_state["notion_connected"],
+        "notion_loading": runtime_state["loading"],
+        "notion_document_count": runtime_state["notion_document_count"],
+        "index_document_count": index.status()["documents"],
+        "last_sync_at": runtime_state["last_sync_at"],
+        "last_attempt_at": runtime_state["last_attempt_at"],
+        "last_reason": runtime_state["last_reason"],
+        "last_error": runtime_state["last_error"],
+        "knowledge_db_id_masked": mask_database_id(config.NOTION_KNOWLEDGE_DB_ID),
+        "stats_db_id_masked": mask_database_id(config.NOTION_STATS_DB_ID),
+        "token_configured": bool(config.NOTION_TOKEN),
+        "token_env_name": config.NOTION_TOKEN_SOURCE or "missing",
+    }
+
+
+@app.get("/api/debug/index-status")
+def debug_index_status():
+    return debug_index_payload()
 
 
 @app.get("/api/stats")
@@ -317,5 +491,6 @@ def health():
         "index": index.status(),
         "notion_configured": bool(config.NOTION_TOKEN),
         "notion_schema": job_state["notion"],
+        "runtime": debug_index_payload(),
         "llm_provider": config.LLM_PROVIDER,
     }

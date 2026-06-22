@@ -112,6 +112,8 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 토큰과 키는 코드에 넣지 말고 `.env` 또는 배포 서비스의 Secret 환경변수로만 관리합니다.
 
+이전 배포 환경과의 호환을 위해 `NOTION_API_KEY`는 `NOTION_TOKEN`의 별칭으로, `NOTION_DATABASE_ID`는 `NOTION_KNOWLEDGE_DB_ID`의 별칭으로 인식합니다. 신규 설정은 표의 공식 변수명을 사용하십시오.
+
 ## Notion 연동 준비
 
 1. Notion에서 Internal Integration을 생성합니다.
@@ -173,6 +175,7 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 | GET | `/api/stats` | 최근 질문 통계 |
 | GET | `/api/knowledge/recent` | 최근 지식 데이터 |
 | GET | `/api/health` | 서버 상태 |
+| GET | `/api/debug/index-status` | Notion 연결, 로딩 문서 수, 인덱스 수, 동기화 시각, 마스킹 DB ID |
 
 관리자 API에는 `X-Admin-Password` 헤더가 필요합니다.
 
@@ -187,6 +190,8 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 ```
 
 검색 결과가 부족하면 `requires_llm_confirmation: true`가 반환됩니다. 사용자가 동의한 경우 동일 질문을 `allow_llm: true`로 다시 요청합니다.
+
+서버 시작 시 Notion 지식 DB를 자동 로딩해 검색 인덱스를 생성합니다. 첫 질문 시 인덱스가 비어 있으면 lazy loading을 다시 시도하며, 실패 원인은 Render 로그의 `[INDEX]` 및 `[CHAT]` 항목과 `/api/debug/index-status`에서 확인할 수 있습니다.
 
 ### 깊이별 크롤링
 

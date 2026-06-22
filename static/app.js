@@ -47,9 +47,22 @@ function adminHeaders() {
 }
 
 async function jsonFetch(url, options = {}) {
-  const response = await fetch(url, options);
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (cause) {
+    const error = new Error("백엔드 서버에 연결할 수 없습니다. Render가 부팅 중인지 확인해 주세요.");
+    error.kind = "BACKEND_CONNECTION";
+    error.cause = cause;
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.detail || `요청 실패 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.detail || `백엔드 요청 실패 (${response.status})`);
+    error.kind = response.status >= 500 ? "BACKEND_SERVER" : "BACKEND_REQUEST";
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
@@ -118,11 +131,23 @@ async function sendQuestion(raw, allowLlm = false) {
       body: JSON.stringify({ question, history: history.slice(-8), allow_llm: allowLlm }),
     });
     waiting.remove();
-    addMessage("bot", result.answer, result.sources || [], result.requires_llm_confirmation);
+    let answer = result.answer;
+    if (result.mode === "DB_LOAD_ERROR") {
+      answer = `지식 DB 로딩에 실패했습니다.\n${result.failure_reason || "관리자에게 서버 로그 확인을 요청해 주세요."}`;
+    } else if (result.mode === "INDEX_EMPTY") {
+      answer = "백엔드 연결은 정상이지만 검색 인덱스가 비어 있습니다. 관리자 메뉴에서 크롤링 또는 인덱스 재생성을 실행해 주세요.";
+    }
+    addMessage("bot", answer, result.sources || [], result.requires_llm_confirmation);
     history.push({ role: "assistant", content: result.answer });
   } catch (error) {
     waiting.remove();
-    addMessage("bot", `답변 처리 중 오류가 발생했습니다: ${error.message}`);
+    const prefix =
+      error.kind === "BACKEND_CONNECTION"
+        ? "백엔드 연결 실패"
+        : error.kind === "BACKEND_SERVER"
+          ? "백엔드 또는 DB 로딩 실패"
+          : "요청 처리 실패";
+    addMessage("bot", `${prefix}: ${error.message}`);
   } finally {
     $("#sendButton").disabled = false;
     $("#question").focus();

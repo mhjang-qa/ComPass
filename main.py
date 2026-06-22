@@ -93,7 +93,11 @@ def run_index_job() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={},
+    )
 
 
 @app.post("/api/crawl")
@@ -169,4 +173,3 @@ def health():
         "notion_configured": bool(config.NOTION_TOKEN),
         "llm_provider": config.LLM_PROVIDER,
     }
-

@@ -144,11 +144,18 @@ button { cursor: pointer; }
 .primary { min-height: 44px; }
 .admin-auth, .status-card, .table-card, .search-test, .result-card, .metric { margin-top: 22px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: white; }
 .admin-auth { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.admin-auth input, .search-test input { min-height: 42px; padding: 8px 11px; border: 1px solid #b9cbd9; border-radius: 10px; }
+.admin-auth label { display: flex; align-items: center; gap: 9px; font-weight: 700; }
+.admin-auth input, .admin-auth select, .search-test input { min-height: 42px; padding: 8px 11px; border: 1px solid #b9cbd9; border-radius: 10px; background: white; }
 .admin-auth span { color: var(--muted); font-size: .8rem; }
 .status-card p { color: var(--muted); margin-bottom: 0; }
 .status-card .setup-help { padding-top: 12px; border-top: 1px solid var(--line); font-size: .82rem; line-height: 1.55; }
 .status-card code { color: var(--navy); font-weight: 700; }
+.crawl-progress { margin-top: 16px; padding: 14px; border-radius: 13px; background: #f1f7fb; }
+.progress-track { height: 11px; overflow: hidden; border-radius: 999px; background: #d9e5ed; }
+.progress-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--mint)); transition: width .35s ease; }
+.progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 9px; color: var(--muted); font-size: .82rem; }
+.progress-meta strong { color: var(--blue); }
+.crawl-progress small { display: block; margin-top: 6px; overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: .88rem; }
 th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -209,6 +216,8 @@ th { color: var(--muted); font-size: .77rem; }
   .chat-layout { border-radius: 16px; grid-template-rows: auto minmax(0, 1fr) auto auto; }
   .bubble { max-width: 92%; }
   .section-head, .admin-auth { align-items: stretch; flex-direction: column; }
+  .admin-auth label { justify-content: space-between; }
+  .admin-auth input, .admin-auth select { min-width: 0; width: 58%; }
   .section-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .metric-grid { grid-template-columns: 1fr; }
   .search-test { flex-direction: column; }

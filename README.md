@@ -17,6 +17,7 @@
 - 이전 질문을 이용한 짧은 후속 질문 문맥 보완
 - 모든 질문·응답을 Notion 통계 DB에 비동기 기록
 - 크롤링, 인덱스, 검색 테스트, 질문 통계를 포함한 한국어 관리자 UI
+- Depth 0~5 수동 크롤링 범위 선택과 실시간 방문·대기·수집 현황 프로그래스바
 - Render 콜드 스타트 안내 화면 및 모바일 반응형 UI
 - 빈 화면 우측 하단 플로팅 아이콘, 채팅 창 모드, 전체 화면 전환
 
@@ -153,7 +154,7 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 | Method | Path | 설명 |
 |---|---|---|
 | GET | `/` | 메인 HTML |
-| POST | `/api/crawl` | 수동 크롤링 및 Notion 적재 |
+| POST | `/api/crawl` | `max_depth`를 지정한 수동 크롤링 및 Notion 적재 |
 | GET | `/api/crawl/status` | 크롤링 작업 상태 |
 | POST | `/api/notion/setup` | 두 Notion DB의 필수 컬럼 자동 구성 |
 | POST | `/api/index/rebuild` | Notion 기반 검색 인덱스 재생성 |
@@ -177,6 +178,20 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 ```
 
 검색 결과가 부족하면 `requires_llm_confirmation: true`가 반환됩니다. 사용자가 동의한 경우 동일 질문을 `allow_llm: true`로 다시 요청합니다.
+
+### 깊이별 크롤링
+
+```json
+{
+  "max_depth": 3
+}
+```
+
+- Depth 0: 시작 페이지
+- Depth 1: 주요 메뉴
+- Depth 2: 하위 메뉴와 게시판 목록
+- Depth 3: 게시물 상세 페이지까지 권장 탐색
+- Depth 5: 확장 탐색
 
 ## 답변 안전 정책
 

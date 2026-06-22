@@ -151,8 +151,31 @@ $$(".tab").forEach((button) => button.addEventListener("click", () => {
 async function pollCrawl() {
   const status = await jsonFetch("/api/crawl/status");
   $("#crawlStatus").textContent = status.message || "대기 중";
+  renderCrawlProgress(status);
   if (status.running) setTimeout(pollCrawl, 2000);
-  else if (status.result) loadKnowledge();
+  else {
+    $("#runCrawl").disabled = false;
+    $("#crawlDepth").disabled = false;
+    if (status.result) loadKnowledge();
+  }
+}
+
+function renderCrawlProgress(status) {
+  const wrap = $("#crawlProgressWrap");
+  const progress = status.progress || {};
+  const shouldShow = Boolean(status.running || status.result || progress.percent);
+  wrap.hidden = !shouldShow;
+  if (!shouldShow) return;
+
+  const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  $("#crawlProgressBar").style.width = `${percent}%`;
+  $("#crawlProgressPercent").textContent = `${percent}%`;
+  $("#crawlProgressDetail").textContent =
+    `Depth ${progress.depth ?? 0}/${progress.max_depth ?? $("#crawlDepth").value} · ` +
+    `방문 ${progress.visited ?? 0} · 대기 ${progress.queued ?? 0} · 수집 ${progress.documents ?? 0}`;
+  $("#crawlCurrentUrl").textContent = progress.url || "";
+  const track = wrap.querySelector('[role="progressbar"]');
+  track.setAttribute("aria-valuenow", String(percent));
 }
 
 $("#setupNotion").addEventListener("click", async () => {
@@ -172,10 +195,25 @@ $("#setupNotion").addEventListener("click", async () => {
 
 $("#runCrawl").addEventListener("click", async () => {
   try {
-    const result = await jsonFetch("/api/crawl", { method: "POST", headers: adminHeaders() });
+    const maxDepth = Number($("#crawlDepth").value);
+    $("#runCrawl").disabled = true;
+    $("#crawlDepth").disabled = true;
+    renderCrawlProgress({
+      running: true,
+      progress: { percent: 1, depth: 0, max_depth: maxDepth, visited: 0, queued: 0, documents: 0 },
+    });
+    const result = await jsonFetch("/api/crawl", {
+      method: "POST",
+      headers: { ...adminHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ max_depth: maxDepth }),
+    });
     $("#crawlStatus").textContent = result.message;
     setTimeout(pollCrawl, 800);
-  } catch (error) { $("#crawlStatus").textContent = error.message; }
+  } catch (error) {
+    $("#crawlStatus").textContent = error.message;
+    $("#runCrawl").disabled = false;
+    $("#crawlDepth").disabled = false;
+  }
 });
 
 async function loadKnowledge() {

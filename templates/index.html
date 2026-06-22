@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
   <title>ComPass · Computer + Compass</title>
-  <link rel="stylesheet" href="/static/style.css?v=6">
+  <link rel="stylesheet" href="/static/style.css?v=7">
 </head>
 <body>
   <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
@@ -97,11 +97,30 @@
         </div>
         <div class="admin-auth">
           <label>관리자 비밀번호 <input id="adminPassword" type="password" autocomplete="current-password"></label>
-          <span>비밀번호는 브라우저에 저장하지 않습니다.</span>
+          <label class="depth-control">
+            크롤링 깊이
+            <select id="crawlDepth">
+              <option value="0">Depth 0 · 시작 페이지만</option>
+              <option value="1">Depth 1 · 주요 메뉴</option>
+              <option value="2">Depth 2 · 하위 메뉴·게시판</option>
+              <option value="3" selected>Depth 3 · 게시물 상세 권장</option>
+              <option value="5">Depth 5 · 확장 탐색</option>
+            </select>
+          </label>
         </div>
         <div class="status-card">
           <strong>작업 상태</strong>
           <p id="crawlStatus">대기 중</p>
+          <div id="crawlProgressWrap" class="crawl-progress" hidden>
+            <div class="progress-track" role="progressbar" aria-label="크롤링 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span id="crawlProgressBar"></span>
+            </div>
+            <div class="progress-meta">
+              <strong id="crawlProgressPercent">0%</strong>
+              <span id="crawlProgressDetail">방문 0 · 대기 0 · 수집 0</span>
+            </div>
+            <small id="crawlCurrentUrl"></small>
+          </div>
           <p class="setup-help">
             처음에는 <strong>DB 테이블 구성</strong>을 눌러 두 빈 DB의 필수 컬럼을 생성하세요.
             권한 오류가 발생하면 두 DB의 연결(Connections)에 Integration을 추가하세요.
@@ -137,6 +156,6 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=5"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

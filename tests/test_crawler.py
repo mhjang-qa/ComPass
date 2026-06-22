@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+from pathlib import Path
 
 from crawler import KnouCrawler
 
@@ -75,3 +76,52 @@ def test_builds_javascript_board_pagination_links() -> None:
         "https://cs.knou.ac.kr/bbs/cs1/2119/artclList.do?page=2",
         "https://cs.knou.ac.kr/bbs/cs1/2119/artclList.do?page=3",
     ]
+
+
+class FakeResponse:
+    headers = {"content-type": "text/html; charset=utf-8"}
+    apparent_encoding = "utf-8"
+    encoding = "utf-8"
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class FakeSession:
+    def __init__(self, pages: dict[str, str]) -> None:
+        self.pages = pages
+
+    def get(self, url: str, timeout: int) -> FakeResponse:
+        return FakeResponse(self.pages[url])
+
+
+def test_crawl_respects_max_depth(tmp_path: Path, monkeypatch) -> None:
+    start = "https://cs.knou.ac.kr/sites/cs1/index.do"
+    child = "https://cs.knou.ac.kr/cs1/4784/subview.do"
+    grandchild = "https://cs.knou.ac.kr/cs1/4803/subview.do"
+    pages = {
+        start: f"<html><title>메인</title><main>메인 내용<a href='{child}'>하위</a></main></html>",
+        child: f"<html><title>하위</title><main>하위 내용<a href='{grandchild}'>손자</a></main></html>",
+        grandchild: "<html><title>손자</title><main>손자 내용</main></html>",
+    }
+
+    crawler = object.__new__(KnouCrawler)
+    crawler.start_url = start
+    crawler.max_pages = 20
+    crawler.max_depth = 1
+    crawler.delay = 0
+    crawler.allowed_path_prefixes = ("/cs1", "/sites/cs1", "/bbs/cs1")
+    crawler.robots = AllowAllRobots()
+    crawler.session = FakeSession(pages)
+    monkeypatch.setattr("crawler.config.CRAWL_SNAPSHOT_PATH", tmp_path / "snapshot.json")
+    monkeypatch.setattr("crawler.time.sleep", lambda _: None)
+
+    progress = []
+    documents = crawler.crawl(progress.append)
+
+    assert [document.source_url for document in documents] == [start, child]
+    assert all(item["depth"] <= 1 for item in progress)
+    assert progress[-1]["documents"] == 2

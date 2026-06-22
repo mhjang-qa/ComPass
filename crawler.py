@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
@@ -115,10 +115,12 @@ class KnouCrawler:
         start_url: str = config.CRAWL_START_URL,
         max_pages: int = config.CRAWL_MAX_PAGES,
         delay: float = config.CRAWL_DELAY_SECONDS,
+        max_depth: int = 3,
     ) -> None:
         self.start_url = normalize_url(start_url)
         self.max_pages = max_pages
         self.delay = max(delay, 0.2)
+        self.max_depth = max(0, max_depth)
         configured_prefixes = {
             prefix.strip()
             for prefix in config.ALLOWED_PATH_PREFIX.split(",")
@@ -162,18 +164,29 @@ class KnouCrawler:
             return False
         return self.robots.can_fetch(config.USER_AGENT, url)
 
-    def crawl(self, progress: Callable[[int, int, str], None] | None = None) -> list[CrawlDocument]:
-        queue = deque([self.start_url])
+    def crawl(self, progress: Callable[[dict[str, Any]], None] | None = None) -> list[CrawlDocument]:
+        queue = deque([(self.start_url, 0)])
+        enqueued: set[str] = {self.start_url}
         seen: set[str] = set()
         documents: list[CrawlDocument] = []
 
         while queue and len(seen) < self.max_pages:
-            url = queue.popleft()
+            url, depth = queue.popleft()
             if url in seen or not self.is_allowed(url):
                 continue
             seen.add(url)
             if progress:
-                progress(len(seen), len(queue), url)
+                progress(
+                    {
+                        "visited": len(seen),
+                        "queued": len(queue),
+                        "documents": len(documents),
+                        "depth": depth,
+                        "max_depth": self.max_depth,
+                        "url": url,
+                        "percent": min(94, max(2, round(len(seen) / self.max_pages * 100))),
+                    }
+                )
             try:
                 response = self.session.get(url, timeout=config.CRAWL_TIMEOUT_SECONDS)
                 response.raise_for_status()
@@ -187,9 +200,27 @@ class KnouCrawler:
                 document = self._parse_page(url, soup)
                 if document and document.body:
                     documents.append(document.finalize())
-                for link in discovered_links:
-                    if link not in seen:
-                        queue.append(link)
+                if depth < self.max_depth:
+                    for link in discovered_links:
+                        if link not in seen and link not in enqueued:
+                            queue.append((link, depth + 1))
+                            enqueued.add(link)
+                if progress:
+                    discovered_total = len(seen) + len(queue)
+                    progress(
+                        {
+                            "visited": len(seen),
+                            "queued": len(queue),
+                            "documents": len(documents),
+                            "depth": depth,
+                            "max_depth": self.max_depth,
+                            "url": url,
+                            "percent": min(
+                                94,
+                                max(2, round(len(seen) / max(discovered_total, 1) * 100)),
+                            ),
+                        }
+                    )
             except requests.RequestException as exc:
                 logger.warning("페이지 수집 실패 url=%s error=%s", url, exc)
             except Exception:
@@ -197,7 +228,12 @@ class KnouCrawler:
             time.sleep(self.delay)
 
         self.save_snapshot(documents, config.CRAWL_SNAPSHOT_PATH)
-        logger.info("크롤링 완료: 방문=%d 문서=%d", len(seen), len(documents))
+        logger.info(
+            "크롤링 완료: 최대깊이=%d 방문=%d 문서=%d",
+            self.max_depth,
+            len(seen),
+            len(documents),
+        )
         return documents
 
     def _extract_links(self, current_url: str, soup: BeautifulSoup) -> list[str]:

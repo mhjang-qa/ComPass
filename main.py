@@ -62,6 +62,10 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
 
 
+class CrawlRequest(BaseModel):
+    max_depth: int = Field(default=3, ge=0, le=10)
+
+
 def require_admin(password: str | None) -> None:
     if not config.ADMIN_PASSWORD or config.ADMIN_PASSWORD == "change-me":
         raise HTTPException(status_code=503, detail="ADMIN_PASSWORD를 먼저 안전한 값으로 설정하세요.")
@@ -99,25 +103,61 @@ def startup_initialize_notion() -> None:
     threading.Thread(target=initialize_notion_schemas, daemon=True).start()
 
 
-def run_crawl_job() -> None:
+def run_crawl_job(max_depth: int) -> None:
     if not job_lock.acquire(blocking=False):
         return
-    job_state["crawl"] = {"running": True, "message": "홈페이지를 수집하고 있습니다.", "result": None}
+    job_state["crawl"] = {
+        "running": True,
+        "message": f"크롤링 진행중입니다. Depth {max_depth} 범위를 준비하고 있습니다.",
+        "result": None,
+        "progress": {
+            "percent": 1,
+            "visited": 0,
+            "queued": 0,
+            "documents": 0,
+            "depth": 0,
+            "max_depth": max_depth,
+            "url": "",
+        },
+    }
     try:
         notion = NotionClient()
         job_state["crawl"]["message"] = "Notion 지식 DB 컬럼을 확인하고 있습니다."
         notion.ensure_knowledge_schema()
-        crawler = KnouCrawler()
-        documents = crawler.crawl(
-            lambda visited, queued, url: job_state["crawl"].update(
-                message=f"{visited}개 URL 확인 · 대기 {queued}개 · {url[:80]}"
+        crawler = KnouCrawler(max_depth=max_depth)
+
+        def update_crawl_progress(progress: dict[str, Any]) -> None:
+            previous_percent = job_state["crawl"].get("progress", {}).get("percent", 0)
+            progress["percent"] = max(previous_percent, progress["percent"])
+            job_state["crawl"].update(
+                message=(
+                    "크롤링 진행중입니다. "
+                    f"Depth {progress['depth']}/{progress['max_depth']} · "
+                    f"방문 {progress['visited']} · 대기 {progress['queued']} · "
+                    f"수집 {progress['documents']}"
+                ),
+                progress=progress,
             )
+
+        documents = crawler.crawl(update_crawl_progress)
+        job_state["crawl"].update(
+            message="크롤링 완료. Notion DB에 저장하고 있습니다.",
+            progress={
+                **job_state["crawl"]["progress"],
+                "percent": 96,
+                "documents": len(documents),
+            },
         )
         notion_result = notion.upsert_many(documents)
         job_state["crawl"] = {
             "running": False,
             "message": "크롤링 및 Notion 적재 완료",
-            "result": {"crawled": len(documents), "notion": notion_result},
+            "result": {"crawled": len(documents), "notion": notion_result, "max_depth": max_depth},
+            "progress": {
+                **job_state["crawl"]["progress"],
+                "percent": 100,
+                "documents": len(documents),
+            },
         }
     except Exception as exc:
         logger.exception("크롤링 작업 실패")
@@ -125,6 +165,7 @@ def run_crawl_job() -> None:
             "running": False,
             "message": f"실패: {notion_error_message(exc, '지식 DB')}",
             "result": None,
+            "progress": {**job_state["crawl"].get("progress", {}), "percent": 0},
         }
     finally:
         job_lock.release()
@@ -155,12 +196,21 @@ def home(request: Request):
 
 
 @app.post("/api/crawl")
-def crawl(background_tasks: BackgroundTasks, x_admin_password: str | None = Header(default=None)):
+def crawl(
+    background_tasks: BackgroundTasks,
+    req: CrawlRequest | None = None,
+    x_admin_password: str | None = Header(default=None),
+):
     require_admin(x_admin_password)
     if job_state["crawl"]["running"]:
         return {"accepted": False, **job_state["crawl"]}
-    background_tasks.add_task(run_crawl_job)
-    return {"accepted": True, "message": "크롤링 작업을 시작했습니다."}
+    max_depth = req.max_depth if req else 3
+    background_tasks.add_task(run_crawl_job, max_depth)
+    return {
+        "accepted": True,
+        "message": f"크롤링 진행중입니다. Depth {max_depth} 범위를 탐색합니다.",
+        "max_depth": max_depth,
+    }
 
 
 @app.get("/api/crawl/status")

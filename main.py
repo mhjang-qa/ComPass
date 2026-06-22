@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-app = FastAPI(title="ComPass", description="Computer + Compass, 학생들의 길잡이", version="1.0.0")
+app = FastAPI(title=config.APP_NAME, description=config.APP_SUBTITLE, version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -78,10 +79,19 @@ class CrawlRequest(BaseModel):
     max_depth: int = Field(default=3, ge=0, le=10)
 
 
+class AdminLoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=300)
+
+
+def admin_password_configured() -> bool:
+    return bool(config.ADMIN_PASSWORD and config.ADMIN_PASSWORD != "change-me")
+
+
 def require_admin(password: str | None) -> None:
-    if not config.ADMIN_PASSWORD or config.ADMIN_PASSWORD == "change-me":
+    if not admin_password_configured():
+        logger.warning("[ADMIN] ADMIN_PASSWORD 미설정으로 관리자 접근을 차단했습니다.")
         raise HTTPException(status_code=503, detail="ADMIN_PASSWORD를 먼저 안전한 값으로 설정하세요.")
-    if password != config.ADMIN_PASSWORD:
+    if not password or not secrets.compare_digest(password, config.ADMIN_PASSWORD):
         raise HTTPException(status_code=401, detail="관리자 비밀번호가 올바르지 않습니다.")
 
 
@@ -217,6 +227,8 @@ def initialize_notion_schemas() -> None:
 
 @app.on_event("startup")
 def startup_initialize_notion() -> None:
+    if not admin_password_configured():
+        logger.warning("[STARTUP] ADMIN_PASSWORD가 설정되지 않아 모든 관리자 기능을 차단합니다.")
     threading.Thread(target=initialize_notion_schemas, daemon=True).start()
 
 
@@ -333,8 +345,15 @@ def home(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={},
+        context={"app_name": config.APP_NAME, "app_subtitle": config.APP_SUBTITLE},
     )
+
+
+@app.post("/api/admin/login")
+def admin_login(req: AdminLoginRequest):
+    require_admin(req.password)
+    logger.info("[ADMIN] 관리자 화면 인증 성공")
+    return {"ok": True}
 
 
 @app.post("/api/crawl")
@@ -356,7 +375,8 @@ def crawl(
 
 
 @app.get("/api/crawl/status")
-def crawl_status():
+def crawl_status(x_admin_password: str | None = Header(default=None)):
+    require_admin(x_admin_password)
     return job_state["crawl"]
 
 
@@ -389,7 +409,8 @@ def rebuild_index(background_tasks: BackgroundTasks, x_admin_password: str | Non
 
 
 @app.get("/api/index/status")
-def index_status():
+def index_status(x_admin_password: str | None = Header(default=None)):
+    require_admin(x_admin_password)
     return {**index.status(), "job": job_state["index"]}
 
 
@@ -502,7 +523,7 @@ def health():
     return {
         "ok": True,
         "service": "ComPass",
-        "meaning": "Computer + Compass",
+        "meaning": config.APP_SUBTITLE,
         "index": index.status(),
         "notion_configured": bool(config.NOTION_TOKEN),
         "notion_schema": job_state["notion"],

@@ -1,6 +1,6 @@
 # ComPass
 
-**ComPass = Computer + Compass(나침반)**
+**ComPass = Computer Science + Compass(나침반)**
 
 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이가 되는 공식 정보 RAG 챗봇입니다. 홈페이지 공개 정보를 수집해 Notion 지식 DB에 적재하고 공식 데이터 검색을 우선합니다.
 
@@ -165,6 +165,7 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 | Method | Path | 설명 |
 |---|---|---|
 | GET | `/` | 메인 HTML |
+| POST | `/api/admin/login` | 관리자 비밀번호 검증 |
 | POST | `/api/crawl` | `max_depth`를 지정한 수동 크롤링 및 Notion 적재 |
 | GET | `/api/crawl/status` | 크롤링 작업 상태 |
 | POST | `/api/notion/setup` | 두 Notion DB의 필수 컬럼 자동 구성 |
@@ -177,7 +178,13 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 | GET | `/api/health` | 서버 상태 |
 | GET | `/api/debug/index-status` | Notion 연결, 로딩 문서 수, 인덱스 수, 동기화 시각, 마스킹 DB ID |
 
-관리자 API에는 `X-Admin-Password` 헤더가 필요합니다.
+관리자 API에는 `X-Admin-Password` 헤더가 필요합니다. 관리자 탭에서
+`POST /api/admin/login` 인증에 성공하면 현재 페이지가 유지되는 동안만 비밀번호를
+메모리에 보관합니다. 새로고침하면 다시 인증해야 하며, `ADMIN_PASSWORD`가 비어 있으면
+모든 관리자 접근은 기본 차단됩니다.
+
+관리자 화면의 수집일, 질문일시, 인덱스 생성 시각 등은 DB의 UTC 원본을 변경하지 않고
+브라우저에서 `Asia/Seoul` 기준 `YYYY-MM-DD HH:mm KST` 형식으로 표시합니다.
 
 ### 챗봇 요청 예시
 

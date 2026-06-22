@@ -145,6 +145,18 @@ button { cursor: pointer; }
 .section-head h2, .card-head h3 { margin: 4px 0 0; }
 .primary { min-height: 44px; }
 .admin-auth, .status-card, .table-card, .search-test, .result-card, .metric { margin-top: 22px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+.admin-modal[hidden] { display: none; }
+.admin-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; }
+.admin-modal-backdrop { position: absolute; inset: 0; background: rgba(8, 31, 52, .58); backdrop-filter: blur(3px); }
+.admin-modal-card { position: relative; width: min(420px, 100%); padding: 28px; border-radius: 20px; background: #fff; box-shadow: 0 24px 70px rgba(8, 31, 52, .3); }
+.admin-modal-card h2 { margin: 4px 0 8px; }
+.admin-modal-card label { display: grid; gap: 8px; margin-top: 20px; font-weight: 700; }
+.admin-modal-card input { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.admin-modal-card .primary { width: 100%; margin-top: 8px; }
+.modal-close { position: absolute; top: 14px; right: 14px; border: 0; background: transparent; font-size: 1.5rem; }
+.admin-login-error { min-height: 22px; margin: 8px 0; color: #c62828; font-size: .9rem; }
+.admin-logout { width: auto !important; padding-inline: 10px !important; font-size: .72rem !important; }
+.admin-logout[hidden] { display: none !important; }
 .admin-auth { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .admin-auth label { display: flex; align-items: center; gap: 9px; font-weight: 700; }
 .admin-auth input, .admin-auth select, .search-test input { min-height: 42px; padding: 8px 11px; border: 1px solid #b9cbd9; border-radius: 10px; background: white; }

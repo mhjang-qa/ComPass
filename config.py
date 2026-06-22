@@ -12,6 +12,9 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 load_dotenv(BASE_DIR / ".env")
 
+APP_NAME = "ComPass"
+APP_SUBTITLE = "Computer Science + Compass · 학생들의 길잡이"
+
 
 def env(name: str, default: str = "") -> str:
     return (os.getenv(name) or default).strip()
@@ -58,7 +61,7 @@ USER_AGENT = env(
     "KNOU-CS-AI-Navigator/1.0 (+https://cs.knou.ac.kr/sites/cs1/index.do)",
 )
 
-ADMIN_PASSWORD = env("ADMIN_PASSWORD", "change-me")
+ADMIN_PASSWORD = env("ADMIN_PASSWORD")
 SEARCH_TOP_K = env_int("SEARCH_TOP_K", 5)
 SEARCH_MIN_SCORE = env_float("SEARCH_MIN_SCORE", 18.0)
 INDEX_PATH = Path(env("INDEX_PATH", str(DATA_DIR / "search_index.json")))

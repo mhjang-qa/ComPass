@@ -3,9 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
-  <title>ComPass · Computer + Compass</title>
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <meta name="description" content="{{ app_subtitle }}">
+  <meta property="og:title" content="{{ app_name }}">
+  <meta property="og:description" content="{{ app_subtitle }}">
+  <title>{{ app_name }} · {{ app_subtitle }}</title>
+  <link rel="stylesheet" href="/static/style.css?v=10">
 </head>
 <body>
   <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
@@ -40,17 +42,18 @@
 
   <button id="chatLauncher" class="chat-launcher" type="button" aria-label="ComPass 챗봇 열기" aria-expanded="false">
     <span class="launcher-compass" aria-hidden="true">C</span>
-    <span class="launcher-label"><strong>ComPass</strong><small>학생들의 길잡이</small></span>
+    <span class="launcher-label"><strong data-app-name>{{ app_name }}</strong><small data-app-subtitle>{{ app_subtitle }}</small></span>
   </button>
 
   <div id="appShell" class="app-shell widget-window is-hidden" role="dialog" aria-label="ComPass 챗봇">
     <header class="topbar">
       <div class="brand-title">
         <p class="eyebrow">Korea National Open University</p>
-        <h1>ComPass</h1>
-        <p class="brand-copy">Computer + Compass · 학생들의 길잡이</p>
+        <h1 data-app-name>{{ app_name }}</h1>
+        <p class="brand-copy" data-app-subtitle>{{ app_subtitle }}</p>
       </div>
       <div class="window-actions">
+        <button id="adminLogout" class="admin-logout" type="button" aria-label="관리자 인증 해제" title="관리자 로그아웃" hidden>로그아웃</button>
         <button id="toggleFullscreen" type="button" aria-label="전체 화면으로 보기" title="전체 화면">⛶</button>
         <button id="minimizeChat" type="button" aria-label="챗봇 창 닫기" title="닫기">—</button>
       </div>
@@ -96,7 +99,6 @@
           </div>
         </div>
         <div class="admin-auth">
-          <label>관리자 비밀번호 <input id="adminPassword" type="password" autocomplete="current-password"></label>
           <label class="depth-control">
             크롤링 깊이
             <select id="crawlDepth">
@@ -168,6 +170,23 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=7"></script>
+  <div id="adminLoginModal" class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle" hidden>
+    <div class="admin-modal-backdrop"></div>
+    <form id="adminLoginForm" class="admin-modal-card">
+      <button id="adminLoginClose" class="modal-close" type="button" aria-label="닫기">×</button>
+      <p class="eyebrow">ADMIN ACCESS</p>
+      <h2 id="adminLoginTitle">관리자 인증</h2>
+      <p>관리자 기능을 이용하려면 비밀번호를 입력하세요.</p>
+      <label>
+        관리자 비밀번호
+        <input id="adminLoginPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="adminLoginError" class="admin-login-error" role="alert"></p>
+      <button id="adminLoginSubmit" class="primary" type="submit">확인</button>
+    </form>
+  </div>
+  <script src="/static/config.js?v=1"></script>
+  <script src="/static/time.js?v=1"></script>
+  <script src="/static/app.js?v=10"></script>
 </body>
 </html>

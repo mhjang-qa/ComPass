@@ -4,11 +4,25 @@ const messages = $("#messages");
 const appShell = $("#appShell");
 const chatLauncher = $("#chatLauncher");
 const history = [];
+const ADMIN_TABS = new Set(["crawl", "index", "stats"]);
+const APP_CONFIG = window.COMPASS_CONFIG;
 let pendingQuestion = "";
+let pendingAdminTab = "";
+let adminPassword = "";
+
+// 새로고침 시 인증을 반드시 다시 받는다. 비밀번호는 브라우저 저장소에 보관하지 않는다.
+sessionStorage.removeItem("admin_auth");
+
+const { formatKstDateTime } = window.ComPassTime;
 
 function activateTab(tabName) {
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === tabName));
   $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tabName}`));
+}
+
+function applyAppConstants() {
+  $$("[data-app-name]").forEach((node) => { node.textContent = APP_CONFIG.appName; });
+  $$("[data-app-subtitle]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitle; });
 }
 
 function openChatWindow() {
@@ -43,7 +57,39 @@ $("#minimizeChat").addEventListener("click", minimizeChat);
 $("#toggleFullscreen").addEventListener("click", toggleFullscreen);
 
 function adminHeaders() {
-  return { "X-Admin-Password": $("#adminPassword").value };
+  return { "X-Admin-Password": adminPassword };
+}
+
+function isAdminAuthenticated() {
+  return sessionStorage.getItem("admin_auth") === "true" && Boolean(adminPassword);
+}
+
+function updateAdminUi() {
+  $("#adminLogout").hidden = !isAdminAuthenticated();
+}
+
+function openAdminLogin(tabName) {
+  pendingAdminTab = tabName;
+  $("#adminLoginError").textContent = "";
+  $("#adminLoginPassword").value = "";
+  $("#adminLoginModal").hidden = false;
+  requestAnimationFrame(() => $("#adminLoginPassword").focus());
+}
+
+function closeAdminLogin() {
+  $("#adminLoginModal").hidden = true;
+  pendingAdminTab = "";
+}
+
+async function enterAdminTab(tabName) {
+  if (!isAdminAuthenticated()) {
+    openAdminLogin(tabName);
+    return;
+  }
+  activateTab(tabName);
+  if (tabName === "crawl") await loadKnowledge();
+  if (tabName === "index") await loadIndexStatus();
+  if (tabName === "stats") await loadStats();
 }
 
 async function jsonFetch(url, options = {}) {
@@ -169,12 +215,50 @@ $("#question").addEventListener("keydown", (event) => {
 $$("[data-question]").forEach((button) => button.addEventListener("click", () => sendQuestion(button.dataset.question)));
 
 $$(".tab").forEach((button) => button.addEventListener("click", () => {
-  activateTab(button.dataset.tab);
-  if (button.dataset.tab === "index") loadIndexStatus();
+  const tabName = button.dataset.tab;
+  if (ADMIN_TABS.has(tabName)) enterAdminTab(tabName);
+  else activateTab(tabName);
 }));
 
+$("#adminLoginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const password = $("#adminLoginPassword").value;
+  const submit = $("#adminLoginSubmit");
+  submit.disabled = true;
+  $("#adminLoginError").textContent = "";
+  try {
+    await jsonFetch("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    adminPassword = password;
+    sessionStorage.setItem("admin_auth", "true");
+    const target = pendingAdminTab;
+    closeAdminLogin();
+    updateAdminUi();
+    await enterAdminTab(target);
+  } catch (error) {
+    $("#adminLoginError").textContent =
+      error.status === 401 ? "비밀번호가 올바르지 않습니다." : error.message;
+    $("#adminLoginPassword").select();
+  } finally {
+    submit.disabled = false;
+  }
+});
+$("#adminLoginClose").addEventListener("click", closeAdminLogin);
+$("#adminLoginModal").addEventListener("click", (event) => {
+  if (event.target.classList.contains("admin-modal-backdrop")) closeAdminLogin();
+});
+$("#adminLogout").addEventListener("click", () => {
+  adminPassword = "";
+  sessionStorage.removeItem("admin_auth");
+  updateAdminUi();
+  activateTab("chat");
+});
+
 async function pollCrawl() {
-  const status = await jsonFetch("/api/crawl/status");
+  const status = await jsonFetch("/api/crawl/status", { headers: adminHeaders() });
   $("#crawlStatus").textContent = status.message || "대기 중";
   renderCrawlProgress(status);
   if (status.running) setTimeout(pollCrawl, 2000);
@@ -248,17 +332,17 @@ async function loadKnowledge() {
     const data = await jsonFetch("/api/knowledge/recent?limit=30", { headers: adminHeaders() });
     tbody.innerHTML = data.items.map((item) => `<tr>
       <td><a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a></td>
-      <td>${escapeHtml(item.category)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.collected_at)}</td>
+      <td>${escapeHtml(item.category)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(formatKstDateTime(item.collected_at))}</td>
     </tr>`).join("") || '<tr><td colspan="4">데이터가 없습니다.</td></tr>';
   } catch (error) { tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(error.message)}</td></tr>`; }
 }
 $("#loadKnowledge").addEventListener("click", loadKnowledge);
 
 async function loadIndexStatus() {
-  const data = await jsonFetch("/api/index/status");
+  const data = await jsonFetch("/api/index/status", { headers: adminHeaders() });
   $("#indexStatus").innerHTML = `
     <div class="metric"><span>문서 수</span><strong>${data.documents}</strong></div>
-    <div class="metric"><span>생성 시각</span><strong>${escapeHtml(data.built_at || "미생성")}</strong></div>
+    <div class="metric"><span>생성 시각</span><strong>${escapeHtml(data.built_at ? formatKstDateTime(data.built_at, true) : "미생성")}</strong></div>
     <div class="metric"><span>작업 상태</span><strong>${escapeHtml(data.job.message)}</strong></div>`;
 }
 $("#rebuildIndex").addEventListener("click", async () => {
@@ -283,19 +367,22 @@ $("#searchForm").addEventListener("submit", async (event) => {
   } catch (error) { $("#searchResults").innerHTML = `<article class="result-card">${escapeHtml(error.message)}</article>`; }
 });
 
-$("#loadStats").addEventListener("click", async () => {
+async function loadStats() {
   const tbody = $("#statsRows");
   tbody.innerHTML = '<tr><td colspan="5">불러오는 중…</td></tr>';
   try {
     const data = await jsonFetch("/api/stats?limit=50", { headers: adminHeaders() });
     tbody.innerHTML = data.items.map((item) => `<tr>
-      <td>${escapeHtml(item["질문일시"])}</td><td>${escapeHtml(item["사용자질문"])}</td>
+      <td>${escapeHtml(formatKstDateTime(item["질문일시"]))}</td><td>${escapeHtml(item["사용자질문"])}</td>
       <td>${escapeHtml(item["응답방식"])}</td><td>${escapeHtml(item["검색점수"])}</td>
       <td>${escapeHtml(item["응답시간"])} ms</td></tr>`).join("") || '<tr><td colspan="5">통계가 없습니다.</td></tr>';
   } catch (error) { tbody.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`; }
-});
+}
+$("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
   addMessage("bot", "무엇을 도와드릴까요? ComPass는 컴퓨터과학과 공식 홈페이지 정보를 기준으로 학생들의 길을 안내합니다.");
 }
 wakeServer();
+applyAppConstants();
+updateAdminUi();

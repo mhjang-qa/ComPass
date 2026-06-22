@@ -119,6 +119,15 @@ class KnouCrawler:
         self.start_url = normalize_url(start_url)
         self.max_pages = max_pages
         self.delay = max(delay, 0.2)
+        configured_prefixes = {
+            prefix.strip()
+            for prefix in config.ALLOWED_PATH_PREFIX.split(",")
+            if prefix.strip()
+        }
+        # 기존 Render 환경변수가 /sites/cs1 하나로 남아 있어도 실제 메뉴·게시판 경로를 누락하지 않는다.
+        self.allowed_path_prefixes = tuple(
+            sorted(configured_prefixes | {"/cs1", "/sites/cs1", "/bbs/cs1"})
+        )
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": config.USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9"})
         self.robots = self._load_robots()
@@ -149,7 +158,7 @@ class KnouCrawler:
         parts = urlsplit(url)
         if parts.netloc != config.ALLOWED_DOMAIN:
             return False
-        if not parts.path.startswith(config.ALLOWED_PATH_PREFIX):
+        if not any(parts.path.startswith(prefix) for prefix in self.allowed_path_prefixes):
             return False
         return self.robots.can_fetch(config.USER_AGENT, url)
 
@@ -173,10 +182,12 @@ class KnouCrawler:
                     continue
                 response.encoding = response.apparent_encoding or response.encoding
                 soup = BeautifulSoup(response.text, "lxml")
+                # 본문 정제 과정에서 header/nav가 제거되기 전에 메뉴와 게시물 링크를 먼저 확보한다.
+                discovered_links = self._extract_links(url, soup)
                 document = self._parse_page(url, soup)
                 if document and document.body:
                     documents.append(document.finalize())
-                for link in self._extract_links(url, soup):
+                for link in discovered_links:
                     if link not in seen:
                         queue.append(link)
             except requests.RequestException as exc:
@@ -195,7 +206,25 @@ class KnouCrawler:
             candidate = normalize_url(tag.get("href", ""), current_url)
             if self.is_allowed(candidate):
                 links.append(candidate)
+        links.extend(self._extract_board_page_links(current_url, soup))
         return list(dict.fromkeys(links))
+
+    def _extract_board_page_links(self, current_url: str, soup: BeautifulSoup) -> list[str]:
+        """JavaScript page_link로만 제공되는 게시판 페이지 URL을 생성한다."""
+        current_page = soup.select_one("._curPage")
+        total_page = soup.select_one("._totPage")
+        page_form = soup.select_one('form[name="pageForm"][action], form[action*="/bbs/cs1/"]')
+        if not current_page or not total_page or not page_form:
+            return []
+        try:
+            total = min(int(total_page.get_text(strip=True)), 100)
+        except ValueError:
+            return []
+        action = normalize_url(page_form.get("action", ""), current_url)
+        if not self.is_allowed(action):
+            return []
+        separator = "&" if urlsplit(action).query else "?"
+        return [f"{action}{separator}page={page}" for page in range(1, total + 1)]
 
     def _parse_page(self, url: str, soup: BeautifulSoup) -> CrawlDocument | None:
         for tag in soup.select("script, style, noscript, iframe, nav, footer, header"):
@@ -280,4 +309,3 @@ class KnouCrawler:
             ),
             encoding="utf-8",
         )
-

@@ -44,7 +44,7 @@ GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.5-flash")
 
 CRAWL_START_URL = env("CRAWL_START_URL", "https://cs.knou.ac.kr/sites/cs1/index.do")
 ALLOWED_DOMAIN = env("ALLOWED_DOMAIN", "cs.knou.ac.kr")
-ALLOWED_PATH_PREFIX = env("ALLOWED_PATH_PREFIX", "/sites/cs1")
+ALLOWED_PATH_PREFIX = env("ALLOWED_PATH_PREFIX", "/cs1,/sites/cs1,/bbs/cs1")
 CRAWL_DELAY_SECONDS = env_float("CRAWL_DELAY_SECONDS", 1.0)
 CRAWL_MAX_PAGES = env_int("CRAWL_MAX_PAGES", 500)
 CRAWL_TIMEOUT_SECONDS = env_int("CRAWL_TIMEOUT_SECONDS", 25)

@@ -97,7 +97,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `GEMINI_MODEL` | Gemini 모델명 |
 | `CRAWL_START_URL` | 크롤링 시작 URL |
 | `ALLOWED_DOMAIN` | 허용 호스트 |
-| `ALLOWED_PATH_PREFIX` | 허용 URL 경로 접두사 |
+| `ALLOWED_PATH_PREFIX` | 허용 URL 경로 접두사. 쉼표로 복수 지정 가능 |
 | `CRAWL_DELAY_SECONDS` | 요청 사이 대기 시간 |
 | `CRAWL_MAX_PAGES` | 한 번에 방문할 최대 URL 수 |
 | `ADMIN_PASSWORD` | 관리자 API 비밀번호 |

@@ -84,10 +84,11 @@ def initialize_notion_schemas() -> None:
     job_state["notion"] = {"running": True, "message": "필수 컬럼 구성 중", "result": None}
     try:
         result = NotionClient().ensure_all_schemas()
+        curated_result = NotionClient().upsert_curated_knowledge()
         job_state["notion"] = {
             "running": False,
             "message": "필수 컬럼 구성 완료",
-            "result": result,
+            "result": {**result, "curated": curated_result},
         }
     except Exception as exc:
         logger.exception("Notion DB 자동 구성 실패")
@@ -124,6 +125,7 @@ def run_crawl_job(max_depth: int) -> None:
         notion = NotionClient()
         job_state["crawl"]["message"] = "Notion 지식 DB 컬럼을 확인하고 있습니다."
         notion.ensure_knowledge_schema()
+        notion.upsert_curated_knowledge()
         crawler = KnouCrawler(max_depth=max_depth)
 
         def update_crawl_progress(progress: dict[str, Any]) -> None:
@@ -233,10 +235,11 @@ def setup_notion_databases(x_admin_password: str | None = Header(default=None)):
     require_admin(x_admin_password)
     try:
         result = NotionClient().ensure_all_schemas()
+        curated_result = NotionClient().upsert_curated_knowledge()
         return {
             "ok": True,
             "message": "크롤링 지식 DB와 챗봇 통계 DB의 필수 컬럼 구성이 완료되었습니다.",
-            "result": result,
+            "result": {**result, "curated": curated_result},
         }
     except Exception as exc:
         raise HTTPException(

@@ -1,0 +1,51 @@
+{
+  "items": [
+    {
+      "id": "graduation_credits",
+      "enabled": true,
+      "title": "졸업학점 기준",
+      "category": "학사 > 졸업",
+      "intent": "graduation_requirement",
+      "match_all": ["졸업"],
+      "match_any": ["학점", "몇학점", "요건", "필요"],
+      "answer": "졸업하려면 총 130학점 이상이 필요합니다.",
+      "note": "개인별 입학연도·편입·전공 및 교양 요건은 학사정보에서 추가 확인해야 합니다.",
+      "keywords": ["졸업", "졸업학점", "130학점", "졸업요건"],
+      "source_url": "https://www.knou.ac.kr/knou/index.do#compass-graduation-credits",
+      "validity": "관리자 검증 기준",
+      "updated_at": "2026-06-22T00:00:00+09:00"
+    },
+    {
+      "id": "recommended_certifications",
+      "enabled": true,
+      "title": "컴퓨터과학과 추천 자격증",
+      "category": "진로 > 자격증",
+      "intent": "career_certification",
+      "match_any": ["추천자격증", "자격증추천", "어떤자격증", "자격증"],
+      "answer": "추천 자격증은 정보처리기사와 SQLD입니다.",
+      "note": "학과의 필수 졸업요건이 아니라 컴퓨터·데이터 분야 진로를 위한 추천 정보입니다.",
+      "keywords": ["자격증", "정보처리기사", "SQLD", "진로"],
+      "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#compass-recommended-certifications",
+      "validity": "관리자 추천 기준",
+      "use_context": false,
+      "updated_at": "2026-06-22T00:00:00+09:00"
+    },
+    {
+      "id": "database_exam_range",
+      "enabled": true,
+      "title": "데이터베이스 시험 범위",
+      "category": "교과 > 시험범위",
+      "intent": "exam_scope",
+      "subject": "데이터베이스",
+      "assessment": "시험",
+      "match_all": ["데이터베이스", "시험"],
+      "match_any": ["범위", "몇장", "어디까지"],
+      "answer": "데이터베이스 시험 범위는 13~15장입니다.",
+      "note": "학기별 공지에 따라 변경될 수 있으므로 시험 전 최신 공지를 확인해야 합니다.",
+      "keywords": ["데이터베이스", "시험범위", "13장", "14장", "15장"],
+      "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#compass-database-exam-range",
+      "validity": "현재 관리자 등록 기준",
+      "updated_at": "2026-06-22T00:00:00+09:00"
+    }
+  ]
+}

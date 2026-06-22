@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 import config
+from curated_knowledge import match_curated
 from search_index import SearchIndex, tokenize
 from search_index import FACULTY_QUERY_RE, FACULTY_URL
 
@@ -26,7 +27,8 @@ OUT_OF_SCOPE_PATTERNS = re.compile(
 )
 SCOPE_PATTERNS = re.compile(
     r"방송대|한국방송통신대|knou|컴퓨터과학과|컴과|학과|교수|교과|과목|수강|"
-    r"졸업|시험|과제|공지|일정|학사|입학|편입|장학|등록금|학생회|스터디|게시판|faq",
+    r"졸업|시험|과제|공지|일정|학사|입학|편입|장학|등록금|학생회|스터디|게시판|faq|"
+    r"자격증|정보처리기사|sqld|데이터베이스",
     re.IGNORECASE,
 )
 
@@ -195,6 +197,24 @@ def answer_question(
     clean_question = sanitize_input(question)
     if not clean_question:
         return {"answer": "질문을 입력해 주세요.", "mode": "SYSTEM", "sources": [], "score": 0}
+    curated = match_curated(clean_question, history)
+    if curated:
+        return {
+            "answer": curated["answer"],
+            "mode": "DB검색",
+            "sources": [
+                {
+                    "title": curated["title"],
+                    "url": curated["source_url"],
+                    "score": 100,
+                }
+            ],
+            "score": 100,
+            "keywords": curated.get("keywords", tokenize(clean_question)),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "structured_intent": curated.get("intent"),
+            "validity": curated.get("validity"),
+        }
     if is_out_of_scope(clean_question):
         return {
             "answer": OUT_OF_SCOPE_MESSAGE,

@@ -12,6 +12,7 @@ import requests
 
 import config
 from crawler import CrawlDocument
+from curated_knowledge import curated_documents
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +365,10 @@ class NotionClient:
                 counts["실패"] += 1
                 logger.exception("Notion 적재 실패 url=%s error=%s", doc.source_url, exc)
         return counts
+
+    def upsert_curated_knowledge(self) -> dict[str, int]:
+        """관리자 검증 지식을 일반 크롤링 문서와 동일한 DB에 동기화한다."""
+        return self.upsert_many(curated_documents())
 
     def knowledge_documents(self, limit: int | None = None) -> list[dict[str, Any]]:
         pages = self.query_all(config.NOTION_KNOWLEDGE_DB_ID, limit=limit)

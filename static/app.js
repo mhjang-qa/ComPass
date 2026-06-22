@@ -504,6 +504,30 @@ $("#searchForm").addEventListener("submit", async (event) => {
   } catch (error) { $("#searchResults").innerHTML = `<article class="result-card">${escapeHtml(error.message)}</article>`; }
 });
 
+async function typeMessage(role, text, speed = 30) {
+
+  const messageEl = addMessage(role, "");
+
+  let result = "";
+
+  for (const char of text) {
+
+    result += char;
+
+    // 줄바꿈 처리
+
+    messageEl.innerHTML = result.replace(/\n/g, "<br>");
+
+    await new Promise(resolve =>
+
+      setTimeout(resolve, speed)
+
+    );
+
+  }
+
+}
+
 async function loadStats() {
   const tbody = $("#statsRows");
   tbody.innerHTML = '<tr><td colspan="5">불러오는 중…</td></tr>';
@@ -518,7 +542,10 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  addMessage("bot", "무엇을 도와드릴까요? ComPass는 컴퓨터과학과 공식 홈페이지 정보를 기준으로 학생들의 길을 안내합니다.");
+  await typeMessage(
+    "bot",
+    "안녕하세요, ComPass입니다.\n컴퓨터과학과 공식 정보를 쉽고 빠르게 안내합니다."
+  );
 }
 wakeServer();
 applyAppConstants();

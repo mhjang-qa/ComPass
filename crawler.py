@@ -44,6 +44,9 @@ ATTACHMENT_EXTENSIONS = (
     ".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".zip", ".txt", ".csv", ".jpg", ".jpeg", ".png",
 )
+REQUIRED_DOCUMENT_URLS = (
+    "https://cs.knou.ac.kr/cs1/4786/subview.do",
+)
 
 
 @dataclass
@@ -199,8 +202,9 @@ class KnouCrawler:
         return self.robots.can_fetch(config.USER_AGENT, url)
 
     def crawl(self, progress: Callable[[dict[str, Any]], None] | None = None) -> list[CrawlDocument]:
-        queue = deque([(self.start_url, 0)])
-        enqueued: set[str] = {self.start_url}
+        seed_urls = [self.start_url, *REQUIRED_DOCUMENT_URLS]
+        queue = deque((url, 0) for url in dict.fromkeys(seed_urls))
+        enqueued: set[str] = set(seed_urls)
         seen: set[str] = set()
         documents: list[CrawlDocument] = []
 
@@ -323,7 +327,7 @@ class KnouCrawler:
             return None
         content = BeautifulSoup(str(content), "lxml")
         for tag in content.select(
-            "script, style, noscript, iframe, nav, footer, header, form, input, button, "
+            "script, style, noscript, iframe, nav, footer, header, input, button, "
             ".hidden, .control, .paging, .page-move, .board-search, .wrap-pop, "
             ".view-util, .view-file, .prev-next, .btn-area"
         ):

@@ -26,6 +26,8 @@ SYNONYMS = {
     "졸업": ["졸업요건", "학위"],
     "FAQ": ["자주하는질문", "자주 묻는 질문"],
 }
+FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
+FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수", re.IGNORECASE)
 STOPWORDS = {
     "무엇", "뭐", "어떻게", "알려줘", "알려주세요", "대한", "관련", "있는", "있나요",
     "인가요", "합니다", "해주세요", "그리고", "에서", "으로", "컴퓨터과학과",
@@ -90,6 +92,7 @@ class SearchIndex:
         total = max(len(documents), 1)
         hits = []
         compact_query = re.sub(r"\s+", "", query.lower())
+        faculty_intent = bool(FACULTY_QUERY_RE.search(query))
 
         for doc in documents:
             tokens = doc.get("tokens") or []
@@ -100,6 +103,12 @@ class SearchIndex:
             category = (doc.get("category") or "").lower()
             text = (doc.get("search_text") or "").lower()
             compact_text = re.sub(r"\s+", "", text)
+            source_url = doc.get("source_url") or ""
+            if faculty_intent:
+                if source_url == FACULTY_URL or "교수진" in title or "교수진" in category:
+                    score += 100
+                else:
+                    score -= 25
             for token in query_tokens:
                 count = token_counts.get(token, 0)
                 if count:
@@ -130,7 +139,18 @@ class SearchIndex:
                         "matched_keywords": list(dict.fromkeys(matched)),
                     }
                 )
-        return sorted(hits, key=lambda item: item["score"], reverse=True)[:top_k]
+        ranked = sorted(hits, key=lambda item: item["score"], reverse=True)
+        if faculty_intent:
+            faculty_hits = [
+                hit
+                for hit in ranked
+                if hit.get("source_url") == FACULTY_URL
+                or "교수진" in (hit.get("title") or "")
+                or "교수진" in (hit.get("category") or "")
+            ]
+            if faculty_hits:
+                return faculty_hits[:top_k]
+        return ranked[:top_k]
 
     def status(self) -> dict[str, Any]:
         return {

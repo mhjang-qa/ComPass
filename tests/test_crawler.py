@@ -117,6 +117,7 @@ def test_crawl_respects_max_depth(tmp_path: Path, monkeypatch) -> None:
     crawler.robots = AllowAllRobots()
     crawler.session = FakeSession(pages)
     monkeypatch.setattr("crawler.config.CRAWL_SNAPSHOT_PATH", tmp_path / "snapshot.json")
+    monkeypatch.setattr("crawler.REQUIRED_DOCUMENT_URLS", ())
     monkeypatch.setattr("crawler.time.sleep", lambda _: None)
 
     progress = []
@@ -139,3 +140,9 @@ def test_clean_text_removes_site_technical_noise() -> None:
     """
 
     assert clean_text(raw) == "교육목표\n컴퓨터과학과의 교육목표입니다."
+
+
+def test_professor_page_is_always_seeded() -> None:
+    from crawler import REQUIRED_DOCUMENT_URLS
+
+    assert "https://cs.knou.ac.kr/cs1/4786/subview.do" in REQUIRED_DOCUMENT_URLS

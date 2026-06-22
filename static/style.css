@@ -127,11 +127,13 @@ button { cursor: pointer; }
 .message { display: flex; margin: 0 0 16px; }
 .message.user { justify-content: flex-end; }
 .bubble { max-width: 82%; padding: 13px 16px; border-radius: 18px 18px 18px 5px; background: white; border: 1px solid var(--line); line-height: 1.6; white-space: pre-wrap; box-shadow: 0 4px 14px rgba(16,42,67,.05); }
+.messages .bubble { font-size: 15px; }
 .user .bubble { color: white; background: var(--blue); border: 0; border-radius: 18px 18px 5px 18px; }
 .source-list { display: grid; gap: 6px; margin-top: 10px; }
 .source-list a { color: var(--blue); font-size: .82rem; font-weight: 700; text-decoration: none; }
 .confirm-actions { display: flex; gap: 8px; margin-top: 10px; }
 .confirm-actions button, .suggestions button { border: 1px solid #bcd7eb; border-radius: 999px; padding: 8px 12px; color: var(--blue); background: white; }
+.suggestions button, .confirm-actions button { font-size: 15px; }
 .suggestions { display: flex; gap: 8px; padding: 10px 18px; overflow-x: auto; border-top: 1px solid var(--line); }
 .composer { display: flex; gap: 10px; padding: 14px 18px 18px; }
 .composer textarea { flex: 1; resize: none; min-height: 48px; max-height: 140px; padding: 13px 15px; border: 1px solid #b9cbd9; border-radius: 14px; outline: none; font-size: 14px; }

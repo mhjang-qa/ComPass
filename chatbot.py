@@ -11,6 +11,7 @@ import requests
 
 import config
 from search_index import SearchIndex, tokenize
+from search_index import FACULTY_QUERY_RE, FACULTY_URL
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,19 @@ def is_out_of_scope(question: str) -> bool:
 
 
 def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
+    if FACULTY_QUERY_RE.search(question):
+        faculty_hit = next(
+            (
+                hit
+                for hit in hits
+                if hit.get("source_url") == FACULTY_URL
+                or "교수진" in (hit.get("title") or "")
+            ),
+            None,
+        )
+        if faculty_hit:
+            return _faculty_answer(faculty_hit)
+
     query_tokens = tokenize(question)
     candidates: list[tuple[float, str]] = []
     for hit in hits[:3]:
@@ -79,6 +93,24 @@ def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
     if not selected:
         selected = [hit.get("summary", "") for hit in hits[:2] if hit.get("summary")]
     return "\n".join(f"- {sentence[:500]}" for sentence in selected) or OUT_OF_SCOPE_MESSAGE
+
+
+def _faculty_answer(hit: dict[str, Any]) -> str:
+    lines = [line.strip() for line in (hit.get("body") or "").splitlines() if line.strip()]
+    items: list[str] = []
+    index = 0
+    while index < len(lines):
+        name = lines[index]
+        detail = lines[index + 1] if index + 1 < len(lines) else ""
+        if re.fullmatch(r"[가-힣]{2,5}", name) and re.search(r"교수|이메일|연락처", detail):
+            detail = detail.replace(" 홈페이지 바로가기", "").strip()
+            items.append(f"- {name}: {detail}")
+            index += 2
+            continue
+        index += 1
+    if not items:
+        return hit.get("summary") or OUT_OF_SCOPE_MESSAGE
+    return "컴퓨터과학과 교수진 정보입니다.\n" + "\n".join(items)
 
 
 def _llm_prompt(question: str) -> str:

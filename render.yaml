@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: knou-cs-ai-navigator
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_KNOWLEDGE_DB_ID
+        sync: false
+      - key: NOTION_STATS_DB_ID
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: LLM_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+

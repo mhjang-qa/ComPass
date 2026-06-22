@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
+  <title>KNOU-CS AI Navigator · 컴누리</title>
+  <link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+  <div id="coldStart" class="cold-start">
+    <div class="cold-card">
+      <div class="loader" aria-hidden="true"></div>
+      <strong>컴누리를 깨우고 있습니다</strong>
+      <p>무료 서버의 첫 접속은 최대 1분 정도 걸릴 수 있습니다.</p>
+      <span id="coldStatus">서버 연결 확인 중…</span>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Korea National Open University</p>
+        <h1>KNOU-CS AI Navigator</h1>
+      </div>
+      <div class="brand-badge"><span>컴</span>누리</div>
+    </header>
+
+    <nav class="tabs" aria-label="주요 메뉴">
+      <button class="tab active" data-tab="chat">챗봇</button>
+      <button class="tab" data-tab="crawl">크롤링 관리</button>
+      <button class="tab" data-tab="index">검색 인덱스</button>
+      <button class="tab" data-tab="stats">질문 통계</button>
+    </nav>
+
+    <main>
+      <section id="panel-chat" class="panel active">
+        <div class="chat-layout">
+          <div class="chat-intro">
+            <div class="bot-mark">컴</div>
+            <div>
+              <h2>안녕하세요, 컴누리입니다.</h2>
+              <p>한국방송통신대학교 컴퓨터과학과 홈페이지의 공식 정보를 찾아 안내합니다.</p>
+            </div>
+          </div>
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <div class="suggestions">
+            <button data-question="컴퓨터과학과 교육과정을 알려줘">교육과정</button>
+            <button data-question="교수진 정보를 알려줘">교수진</button>
+            <button data-question="최근 공지사항을 알려줘">최근 공지</button>
+            <button data-question="학과 일정을 알려줘">학과 일정</button>
+          </div>
+          <form id="chatForm" class="composer">
+            <textarea id="question" rows="1" maxlength="1000" placeholder="컴퓨터과학과 공식 정보에 대해 질문하세요"></textarea>
+            <button id="sendButton" type="submit">전송</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="panel-crawl" class="panel">
+        <div class="section-head">
+          <div><p class="eyebrow">ADMIN</p><h2>크롤링 관리</h2></div>
+          <button id="runCrawl" class="primary">수동 크롤링 실행</button>
+        </div>
+        <div class="admin-auth">
+          <label>관리자 비밀번호 <input id="adminPassword" type="password" autocomplete="current-password"></label>
+          <span>비밀번호는 브라우저에 저장하지 않습니다.</span>
+        </div>
+        <div class="status-card">
+          <strong>작업 상태</strong>
+          <p id="crawlStatus">대기 중</p>
+        </div>
+        <div class="table-card">
+          <div class="card-head"><h3>최근 수집 데이터</h3><button id="loadKnowledge">새로고침</button></div>
+          <div class="table-wrap"><table><thead><tr><th>제목</th><th>카테고리</th><th>상태</th><th>수집일</th></tr></thead><tbody id="knowledgeRows"></tbody></table></div>
+        </div>
+      </section>
+
+      <section id="panel-index" class="panel">
+        <div class="section-head">
+          <div><p class="eyebrow">RETRIEVAL</p><h2>검색 인덱스</h2></div>
+          <button id="rebuildIndex" class="primary">인덱스 재생성</button>
+        </div>
+        <div id="indexStatus" class="metric-grid"></div>
+        <form id="searchForm" class="search-test">
+          <input id="searchQuery" placeholder="검색어를 입력하세요">
+          <button type="submit">검색 테스트</button>
+        </form>
+        <div id="searchResults" class="result-list"></div>
+      </section>
+
+      <section id="panel-stats" class="panel">
+        <div class="section-head">
+          <div><p class="eyebrow">ANALYTICS</p><h2>질문 통계</h2></div>
+          <button id="loadStats" class="primary">통계 새로고침</button>
+        </div>
+        <div class="table-card">
+          <div class="table-wrap"><table><thead><tr><th>질문일시</th><th>질문</th><th>방식</th><th>점수</th><th>응답시간</th></tr></thead><tbody id="statsRows"></tbody></table></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js?v=1"></script>
+</body>
+</html>
+

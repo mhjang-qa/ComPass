@@ -342,11 +342,17 @@ class NotionClient:
         existing = self.find_by_url(database_id, doc.source_url)
         if existing:
             old_hash = self._property_text((existing.get("properties") or {}).get("콘텐츠해시", {}))
-            status = "유지" if old_hash == doc.content_hash else "변경"
-            self.request("PATCH", f"/pages/{existing['id']}", {"properties": self._properties(doc, status)})
-            if status == "변경":
-                self.replace_page_blocks(existing["id"], doc)
-            return status
+            if old_hash == doc.content_hash:
+                # 제목·본문·게시일·첨부파일이 모두 같으면 Notion 페이지를 전혀 수정하지 않는다.
+                # 수집일이나 상태만 갱신하는 PATCH도 하지 않아 진정한 증분 동기화를 보장한다.
+                return "유지"
+            self.request(
+                "PATCH",
+                f"/pages/{existing['id']}",
+                {"properties": self._properties(doc, "변경")},
+            )
+            self.replace_page_blocks(existing["id"], doc)
+            return "변경"
         payload = {
             "parent": {"database_id": normalize_id(database_id)},
             "properties": self._properties(doc, "신규"),

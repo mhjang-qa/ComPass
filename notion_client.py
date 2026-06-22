@@ -15,6 +15,31 @@ from crawler import CrawlDocument
 
 logger = logging.getLogger(__name__)
 
+KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
+    "카테고리": {"select": {}},
+    "본문": {"rich_text": {}},
+    "요약": {"rich_text": {}},
+    "원본URL": {"url": {}},
+    "게시일": {"date": {}},
+    "수집일": {"date": {}},
+    "키워드": {"multi_select": {}},
+    "콘텐츠해시": {"rich_text": {}},
+    "상태": {"select": {}},
+    "검색용텍스트": {"rich_text": {}},
+}
+
+STATS_SCHEMA: dict[str, dict[str, Any]] = {
+    "질문일시": {"date": {}},
+    "추출키워드": {"multi_select": {}},
+    "검색결과유무": {"checkbox": {}},
+    "응답방식": {"select": {}},
+    "답변내용": {"rich_text": {}},
+    "참조URL": {"rich_text": {}},
+    "응답시간": {"number": {"format": "number"}},
+    "검색점수": {"number": {"format": "number"}},
+    "실패사유": {"rich_text": {}},
+}
+
 
 class NotionAPIError(RuntimeError):
     pass
@@ -101,6 +126,74 @@ class NotionClient:
             return self.database(database_id)
         except Exception as exc:
             raise NotionAPIError(notion_error_message(exc, label)) from exc
+
+    def ensure_database_schema(
+        self,
+        database_id: str,
+        *,
+        title_name: str,
+        required: dict[str, dict[str, Any]],
+        label: str,
+    ) -> dict[str, Any]:
+        database = self.validate_database(database_id, label)
+        properties = database.get("properties") or {}
+        title_property = next(
+            (
+                name
+                for name, prop in properties.items()
+                if isinstance(prop, dict) and prop.get("type") == "title"
+            ),
+            "",
+        )
+        renamed = False
+        if title_property and title_property != title_name:
+            self.request(
+                "PATCH",
+                f"/databases/{normalize_id(database_id)}",
+                {"properties": {title_property: {"name": title_name}}},
+            )
+            renamed = True
+            database = self.database(database_id)
+            properties = database.get("properties") or {}
+
+        missing = {name: schema for name, schema in required.items() if name not in properties}
+        final_property_count = len(set(properties) | set(missing))
+        if missing:
+            self.request(
+                "PATCH",
+                f"/databases/{normalize_id(database_id)}",
+                {"properties": missing},
+            )
+        return {
+            "database_id": normalize_id(database_id),
+            "label": label,
+            "title_property": title_name,
+            "renamed_title": renamed,
+            "created_properties": list(missing),
+            "property_count": final_property_count,
+        }
+
+    def ensure_knowledge_schema(self) -> dict[str, Any]:
+        return self.ensure_database_schema(
+            config.NOTION_KNOWLEDGE_DB_ID,
+            title_name="제목",
+            required=KNOWLEDGE_SCHEMA,
+            label="크롤링 지식 DB",
+        )
+
+    def ensure_stats_schema(self) -> dict[str, Any]:
+        return self.ensure_database_schema(
+            config.NOTION_STATS_DB_ID,
+            title_name="사용자질문",
+            required=STATS_SCHEMA,
+            label="챗봇 통계 DB",
+        )
+
+    def ensure_all_schemas(self) -> dict[str, Any]:
+        return {
+            "knowledge": self.ensure_knowledge_schema(),
+            "stats": self.ensure_stats_schema(),
+        }
 
     def query_all(
         self,
@@ -274,6 +367,7 @@ class NotionClient:
         return documents
 
     def recent_knowledge(self, limit: int = 20) -> list[dict[str, Any]]:
+        self.ensure_knowledge_schema()
         pages = self.query_all(
             config.NOTION_KNOWLEDGE_DB_ID,
             sorts=[{"property": "수집일", "direction": "descending"}],

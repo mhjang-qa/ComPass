@@ -71,6 +71,8 @@ button { cursor: pointer; }
 .composer textarea:focus, input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(23,105,170,.12); }
 .composer button, .primary, .search-test button { border: 0; border-radius: 12px; padding: 0 20px; color: white; background: var(--blue); font-weight: 800; }
 .section-head, .card-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.section-actions { display: flex; gap: 10px; }
+.section-actions > button:not(.primary) { min-height: 44px; padding: 0 16px; border: 1px solid #9dc7e2; border-radius: 12px; color: var(--blue); background: white; font-weight: 800; }
 .section-head h2, .card-head h3 { margin: 4px 0 0; }
 .primary { min-height: 44px; }
 .admin-auth, .status-card, .table-card, .search-test, .result-card, .metric { margin-top: 22px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: white; }
@@ -109,6 +111,7 @@ th { color: var(--muted); font-size: .77rem; }
   .chat-layout { border-radius: 16px; grid-template-rows: auto minmax(0, 1fr) auto auto; }
   .bubble { max-width: 92%; }
   .section-head, .admin-auth { align-items: stretch; flex-direction: column; }
+  .section-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .metric-grid { grid-template-columns: 1fr; }
   .search-test { flex-direction: column; }
   .search-test button { min-height: 42px; }

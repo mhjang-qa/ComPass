@@ -12,13 +12,12 @@ services:
       - key: NOTION_TOKEN
         sync: false
       - key: NOTION_KNOWLEDGE_DB_ID
-        sync: false
+        value: 38773fbd195180788faac9a54ae8e512
       - key: NOTION_STATS_DB_ID
-        sync: false
+        value: 38773fbd195180708158dc38ec3fbd2f
       - key: ADMIN_PASSWORD
         sync: false
       - key: LLM_PROVIDER
         value: openai
       - key: OPENAI_API_KEY
         sync: false
-

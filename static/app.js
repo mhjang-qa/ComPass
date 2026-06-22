@@ -118,6 +118,21 @@ async function pollCrawl() {
   else if (status.result) loadKnowledge();
 }
 
+$("#setupNotion").addEventListener("click", async () => {
+  const status = $("#crawlStatus");
+  status.textContent = "Notion DB 필수 컬럼을 구성하고 있습니다…";
+  try {
+    const result = await jsonFetch("/api/notion/setup", {
+      method: "POST",
+      headers: adminHeaders(),
+    });
+    status.textContent = result.message;
+    await Promise.all([loadKnowledge(), loadIndexStatus()]);
+  } catch (error) {
+    status.textContent = error.message;
+  }
+});
+
 $("#runCrawl").addEventListener("click", async () => {
   try {
     const result = await jsonFetch("/api/crawl", { method: "POST", headers: adminHeaders() });

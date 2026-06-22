@@ -77,9 +77,10 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 브라우저에서 `http://127.0.0.1:8000`을 엽니다. 최초 실행 순서는 다음과 같습니다.
 
 1. `크롤링 관리`에서 관리자 비밀번호를 입력합니다.
-2. `수동 크롤링 실행`으로 홈페이지를 수집하고 Notion에 적재합니다.
-3. `검색 인덱스`에서 `인덱스 재생성`을 실행합니다.
-4. 검색 테스트 후 챗봇 탭에서 질문합니다.
+2. `DB 테이블 구성`을 눌러 빈 Notion DB에 필수 컬럼을 자동 생성합니다.
+3. `수동 크롤링 실행`으로 홈페이지를 수집하고 Notion에 적재합니다.
+4. `검색 인덱스`에서 `인덱스 재생성`을 실행합니다.
+5. 검색 테스트 후 챗봇 탭에서 질문합니다.
 
 ## 환경변수
 
@@ -143,8 +144,8 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다. 제공된 기본 ID는 다음과 같습니다.
 
-- 지식 DB: `38773fbd19518052accefd956c00108d`
-- 통계 DB: `38773fbd19518027ba7cd38ddb7fbf9f`
+- 지식 DB: `38773fbd195180788faac9a54ae8e512`
+- 통계 DB: `38773fbd195180708158dc38ec3fbd2f`
 
 ## API
 
@@ -153,6 +154,7 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 | GET | `/` | 메인 HTML |
 | POST | `/api/crawl` | 수동 크롤링 및 Notion 적재 |
 | GET | `/api/crawl/status` | 크롤링 작업 상태 |
+| POST | `/api/notion/setup` | 두 Notion DB의 필수 컬럼 자동 구성 |
 | POST | `/api/index/rebuild` | Notion 기반 검색 인덱스 재생성 |
 | GET | `/api/index/status` | 인덱스 상태 |
 | POST | `/api/search/test` | 관리자 검색 테스트 |

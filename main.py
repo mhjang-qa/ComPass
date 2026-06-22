@@ -36,6 +36,7 @@ job_lock = threading.Lock()
 job_state: dict[str, Any] = {
     "crawl": {"running": False, "message": "대기 중", "result": None},
     "index": {"running": False, "message": "대기 중", "result": None},
+    "notion": {"running": False, "message": "확인 전", "result": None},
 }
 
 
@@ -57,14 +58,44 @@ def require_admin(password: str | None) -> None:
         raise HTTPException(status_code=401, detail="관리자 비밀번호가 올바르지 않습니다.")
 
 
+def initialize_notion_schemas() -> None:
+    if not config.NOTION_TOKEN:
+        job_state["notion"] = {
+            "running": False,
+            "message": "NOTION_TOKEN이 없어 자동 구성을 건너뛰었습니다.",
+            "result": None,
+        }
+        return
+    job_state["notion"] = {"running": True, "message": "필수 컬럼 구성 중", "result": None}
+    try:
+        result = NotionClient().ensure_all_schemas()
+        job_state["notion"] = {
+            "running": False,
+            "message": "필수 컬럼 구성 완료",
+            "result": result,
+        }
+    except Exception as exc:
+        logger.exception("Notion DB 자동 구성 실패")
+        job_state["notion"] = {
+            "running": False,
+            "message": notion_error_message(exc),
+            "result": None,
+        }
+
+
+@app.on_event("startup")
+def startup_initialize_notion() -> None:
+    threading.Thread(target=initialize_notion_schemas, daemon=True).start()
+
+
 def run_crawl_job() -> None:
     if not job_lock.acquire(blocking=False):
         return
     job_state["crawl"] = {"running": True, "message": "홈페이지를 수집하고 있습니다.", "result": None}
     try:
         notion = NotionClient()
-        job_state["crawl"]["message"] = "Notion 지식 DB 연결을 확인하고 있습니다."
-        notion.validate_database(config.NOTION_KNOWLEDGE_DB_ID, "지식 DB")
+        job_state["crawl"]["message"] = "Notion 지식 DB 컬럼을 확인하고 있습니다."
+        notion.ensure_knowledge_schema()
         crawler = KnouCrawler()
         documents = crawler.crawl(
             lambda visited, queued, url: job_state["crawl"].update(
@@ -91,7 +122,7 @@ def run_crawl_job() -> None:
 def run_index_job() -> None:
     job_state["index"] = {"running": True, "message": "Notion 데이터를 읽고 있습니다.", "result": None}
     try:
-        NotionClient().validate_database(config.NOTION_KNOWLEDGE_DB_ID, "지식 DB")
+        NotionClient().ensure_knowledge_schema()
         result = index.rebuild()
         job_state["index"] = {"running": False, "message": "검색 인덱스 생성 완료", "result": result}
     except Exception as exc:
@@ -124,6 +155,23 @@ def crawl(background_tasks: BackgroundTasks, x_admin_password: str | None = Head
 @app.get("/api/crawl/status")
 def crawl_status():
     return job_state["crawl"]
+
+
+@app.post("/api/notion/setup")
+def setup_notion_databases(x_admin_password: str | None = Header(default=None)):
+    require_admin(x_admin_password)
+    try:
+        result = NotionClient().ensure_all_schemas()
+        return {
+            "ok": True,
+            "message": "크롤링 지식 DB와 챗봇 통계 DB의 필수 컬럼 구성이 완료되었습니다.",
+            "result": result,
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Notion DB 구성 실패: {notion_error_message(exc)}",
+        ) from exc
 
 
 @app.post("/api/index/rebuild")
@@ -190,5 +238,6 @@ def health():
         "meaning": "Computer + Compass",
         "index": index.status(),
         "notion_configured": bool(config.NOTION_TOKEN),
+        "notion_schema": job_state["notion"],
         "llm_provider": config.LLM_PROVIDER,
     }

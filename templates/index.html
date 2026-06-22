@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
   <title>ComPass · Computer + Compass</title>
-  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
   <div id="coldStart" class="cold-start">
@@ -61,7 +61,10 @@
       <section id="panel-crawl" class="panel">
         <div class="section-head">
           <div><p class="eyebrow">ADMIN</p><h2>크롤링 관리</h2></div>
-          <button id="runCrawl" class="primary">수동 크롤링 실행</button>
+          <div class="section-actions">
+            <button id="setupNotion" type="button">DB 테이블 구성</button>
+            <button id="runCrawl" class="primary">수동 크롤링 실행</button>
+          </div>
         </div>
         <div class="admin-auth">
           <label>관리자 비밀번호 <input id="adminPassword" type="password" autocomplete="current-password"></label>
@@ -71,8 +74,8 @@
           <strong>작업 상태</strong>
           <p id="crawlStatus">대기 중</p>
           <p class="setup-help">
-            Notion 오류가 발생하면 지식 DB의 연결(Connections)에 Integration을 추가하고
-            Render의 <code>NOTION_KNOWLEDGE_DB_ID</code>를 확인하세요.
+            처음에는 <strong>DB 테이블 구성</strong>을 눌러 두 빈 DB의 필수 컬럼을 생성하세요.
+            권한 오류가 발생하면 두 DB의 연결(Connections)에 Integration을 추가하세요.
           </p>
         </div>
         <div class="table-card">
@@ -105,6 +108,6 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

@@ -32,8 +32,8 @@ def env_float(name: str, default: float) -> float:
 
 
 NOTION_TOKEN = env("NOTION_TOKEN")
-NOTION_KNOWLEDGE_DB_ID = env("NOTION_KNOWLEDGE_DB_ID", "38773fbd19518052accefd956c00108d")
-NOTION_STATS_DB_ID = env("NOTION_STATS_DB_ID", "38773fbd19518027ba7cd38ddb7fbf9f")
+NOTION_KNOWLEDGE_DB_ID = env("NOTION_KNOWLEDGE_DB_ID", "38773fbd195180788faac9a54ae8e512")
+NOTION_STATS_DB_ID = env("NOTION_STATS_DB_ID", "38773fbd195180708158dc38ec3fbd2f")
 NOTION_VERSION = env("NOTION_VERSION", "2022-06-28")
 
 LLM_PROVIDER = env("LLM_PROVIDER", "openai").lower()
@@ -58,4 +58,3 @@ SEARCH_TOP_K = env_int("SEARCH_TOP_K", 5)
 SEARCH_MIN_SCORE = env_float("SEARCH_MIN_SCORE", 18.0)
 INDEX_PATH = Path(env("INDEX_PATH", str(DATA_DIR / "search_index.json")))
 CRAWL_SNAPSHOT_PATH = Path(env("CRAWL_SNAPSHOT_PATH", str(DATA_DIR / "crawl_snapshot.json")))
-

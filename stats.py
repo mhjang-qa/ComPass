@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 def record_interaction(question: str, result: dict[str, Any]) -> None:
     client = NotionClient()
+    client.ensure_stats_schema()
     sources = result.get("sources") or []
     reference_urls = "\n".join(source.get("url", "") for source in sources if source.get("url"))
     mode = result.get("mode", "SYSTEM")
@@ -51,6 +52,7 @@ def record_interaction_async(question: str, result: dict[str, Any]) -> None:
 
 def recent_stats(limit: int = 30) -> list[dict[str, Any]]:
     client = NotionClient()
+    client.ensure_stats_schema()
     pages = client.query_all(config.NOTION_STATS_DB_ID, limit=limit)
     rows = []
     for page in pages:
@@ -66,4 +68,3 @@ def recent_stats(limit: int = 30) -> list[dict[str, Any]]:
                 row[name] = [item.get("name") for item in prop.get("multi_select", [])]
         rows.append(row)
     return rows
-

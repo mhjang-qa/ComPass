@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
   <title>ComPass · Computer + Compass</title>
-  <link rel="stylesheet" href="/static/style.css?v=4">
+  <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
   <div id="coldStart" class="cold-start">
@@ -17,14 +17,22 @@
     </div>
   </div>
 
-  <div class="app-shell">
+  <button id="chatLauncher" class="chat-launcher" type="button" aria-label="ComPass 챗봇 열기" aria-expanded="false">
+    <span class="launcher-compass" aria-hidden="true">C</span>
+    <span class="launcher-label"><strong>ComPass</strong><small>학생들의 길잡이</small></span>
+  </button>
+
+  <div id="appShell" class="app-shell widget-window is-hidden" role="dialog" aria-label="ComPass 챗봇">
     <header class="topbar">
-      <div>
+      <div class="brand-title">
         <p class="eyebrow">Korea National Open University</p>
         <h1>ComPass</h1>
         <p class="brand-copy">Computer + Compass · 학생들의 길잡이</p>
       </div>
-      <div class="brand-badge"><span>C</span>ComPass</div>
+      <div class="window-actions">
+        <button id="toggleFullscreen" type="button" aria-label="전체 화면으로 보기" title="전체 화면">⛶</button>
+        <button id="minimizeChat" type="button" aria-label="챗봇 창 닫기" title="닫기">—</button>
+      </div>
     </header>
 
     <nav class="tabs" aria-label="주요 메뉴">
@@ -108,6 +116,6 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

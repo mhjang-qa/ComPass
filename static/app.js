@@ -1,8 +1,46 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const messages = $("#messages");
+const appShell = $("#appShell");
+const chatLauncher = $("#chatLauncher");
 const history = [];
 let pendingQuestion = "";
+
+function activateTab(tabName) {
+  $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === tabName));
+  $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tabName}`));
+}
+
+function openChatWindow() {
+  appShell.classList.remove("is-hidden", "fullscreen");
+  appShell.classList.add("widget-window");
+  chatLauncher.classList.add("is-hidden");
+  chatLauncher.setAttribute("aria-expanded", "true");
+  $("#toggleFullscreen").textContent = "⛶";
+  $("#toggleFullscreen").setAttribute("aria-label", "전체 화면으로 보기");
+  activateTab("chat");
+  requestAnimationFrame(() => $("#question").focus());
+}
+
+function minimizeChat() {
+  appShell.classList.add("is-hidden");
+  chatLauncher.classList.remove("is-hidden");
+  chatLauncher.setAttribute("aria-expanded", "false");
+  chatLauncher.focus();
+}
+
+function toggleFullscreen() {
+  const expanding = !appShell.classList.contains("fullscreen");
+  appShell.classList.toggle("fullscreen", expanding);
+  appShell.classList.toggle("widget-window", !expanding);
+  $("#toggleFullscreen").textContent = expanding ? "↙" : "⛶";
+  $("#toggleFullscreen").setAttribute("aria-label", expanding ? "창 모드로 보기" : "전체 화면으로 보기");
+  $("#toggleFullscreen").setAttribute("title", expanding ? "창 모드" : "전체 화면");
+}
+
+chatLauncher.addEventListener("click", openChatWindow);
+$("#minimizeChat").addEventListener("click", minimizeChat);
+$("#toggleFullscreen").addEventListener("click", toggleFullscreen);
 
 function adminHeaders() {
   return { "X-Admin-Password": $("#adminPassword").value };
@@ -106,8 +144,7 @@ $("#question").addEventListener("keydown", (event) => {
 $$("[data-question]").forEach((button) => button.addEventListener("click", () => sendQuestion(button.dataset.question)));
 
 $$(".tab").forEach((button) => button.addEventListener("click", () => {
-  $$(".tab").forEach((tab) => tab.classList.toggle("active", tab === button));
-  $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${button.dataset.tab}`));
+  activateTab(button.dataset.tab);
   if (button.dataset.tab === "index") loadIndexStatus();
 }));
 

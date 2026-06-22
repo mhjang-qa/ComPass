@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -200,6 +200,10 @@ def run_index_job() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
+    hostname = (request.url.hostname or "").lower()
+    from_loader = request.query_params.get("from") == "github-pages"
+    if hostname.endswith(".onrender.com") and not from_loader:
+        return RedirectResponse(config.PUBLIC_LOADER_URL, status_code=307)
     return templates.TemplateResponse(
         request=request,
         name="index.html",

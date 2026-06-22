@@ -252,6 +252,8 @@ https://mhjang-qa.github.io/ComPass/
 
 GitHub Pages 정적 화면은 즉시 컴퓨터과학과 메인 배경과 로딩 상태를 표시하고 Render의 `/api/health`를 호출합니다. Render가 준비되면 실제 ComPass 화면을 자동으로 불러옵니다. 저장소 Settings → Pages의 Source는 `GitHub Actions`로 설정합니다.
 
+Render 주소를 직접 열면 Render 플랫폼이 애플리케이션 실행 전에 자체 부팅 화면을 표시하므로 사용자 정의 로딩 HTML을 제공할 수 없습니다. Render가 깨어난 뒤에는 직접 접속도 GitHub Pages 로더로 자동 이동합니다.
+
 ## 테스트 질문 예시
 
 - 컴퓨터과학과 교육목표를 알려줘.

@@ -21,3 +21,5 @@ services:
         value: openai
       - key: OPENAI_API_KEY
         sync: false
+      - key: PUBLIC_LOADER_URL
+        value: https://mhjang-qa.github.io/ComPass/

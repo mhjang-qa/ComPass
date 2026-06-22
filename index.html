@@ -71,7 +71,7 @@
     <h2>ComPass를 준비하고 있습니다</h2>
     <p id="bootText">학생들의 길잡이가 공식 데이터를 확인하고 있습니다.</p>
     <div class="progress" aria-hidden="true"></div>
-    <small>Render 초기 접속은 최대 1분 정도 걸릴 수 있습니다.</small>
+    <small>초기 접속은 최대 1분 정도 걸릴 수 있습니다.</small>
   </div>
 
   <iframe id="appFrame" title="ComPass 챗봇"></iframe>
@@ -86,7 +86,7 @@
     const messages = [
       "학생들의 길잡이가 공식 데이터를 확인하고 있습니다.",
       "컴퓨터과학과 정보를 정리하고 있습니다.",
-      "ComPass가 Render에서 깨어나는 중입니다."
+      "ComPass가 깨어나는 중입니다."
     ];
     let messageIndex = 0;
     setInterval(() => {
@@ -111,7 +111,7 @@
             return;
           }
         } catch (_) {
-          bootText.textContent = `Render 서버를 깨우고 있습니다. (${attempt}/30)`;
+          bootText.textContent = `서버를 깨우고 있습니다. (${attempt}/30)`;
         }
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }

@@ -20,6 +20,55 @@ OUT_OF_SCOPE_MESSAGE = (
     "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다. "
     "컴퓨터과학과 홈페이지에 등록된 공식 정보 기준으로만 안내할 수 있습니다."
 )
+GREETING_MESSAGE = (
+    "안녕하세요 👋\n"
+    "저는 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이, ComPass입니다.\n"
+    "공지사항, 교육과정, 교수진, 졸업요건, 학사일정 같은 공식 정보를 안내해 드릴 수 있습니다."
+)
+IDENTITY_MESSAGE = (
+    "저는 ComPass입니다.\n"
+    "Computer Science와 Compass(나침반)를 결합한 이름으로, "
+    "한국방송통신대학교 컴퓨터과학과 학생들이 필요한 공식 정보를 쉽게 찾도록 돕는 "
+    "RAG 기반 학과 안내 챗봇입니다."
+)
+CAPABILITY_MESSAGE = (
+    "ComPass는 컴퓨터과학과 공식 홈페이지 정보를 기반으로 다음 내용을 안내할 수 있습니다.\n\n"
+    "- 공지사항\n- 교육과정\n- 교수진\n- 학사일정\n- 졸업요건\n- FAQ\n- 추천 자격증\n- 시험범위\n\n"
+    "궁금한 내용을 자연스럽게 질문해 주세요."
+)
+THANKS_MESSAGE = (
+    "도움이 되었다니 다행입니다 😊\n"
+    "컴퓨터과학과 관련해서 더 궁금한 내용이 있으면 언제든지 질문해 주세요."
+)
+CASUAL_LIMIT_MESSAGE = (
+    "저는 일상 대화보다는 한국방송통신대학교 컴퓨터과학과 공식 정보를 안내하는 역할에 집중하고 있습니다.\n"
+    "컴퓨터과학과 교육과정, 교수진, 졸업요건, 학사일정 등이 궁금하시면 바로 안내해 드릴게요."
+)
+GREETING_RE = re.compile(
+    r"^(안녕|안녕하세요|하이|hi|hello|헬로|ㅎㅇ|반가워|반갑습니다|잘\s*부탁해(?:요)?)[.!?~\s]*$",
+    re.IGNORECASE,
+)
+IDENTITY_RE = re.compile(
+    r"(너|넌|너는|com\s*pass|compass|컴패스|챗봇|봇).*(누구|뭐야|무엇|정체|소개)|"
+    r"(누구|뭐야|무엇|정체).*(너|넌|너는|com\s*pass|compass|컴패스|챗봇|봇)|"
+    r"뭐\s*하는\s*(챗봇|봇)",
+    re.IGNORECASE,
+)
+CAPABILITY_RE = re.compile(
+    r"도움말|사용법|사용\s*방법|어떻게\s*(써|사용)|help|"
+    r"(뭐|무엇|어떤\s*일).*(할\s*수|가능)|"
+    r"(할\s*수\s*있는|가능한)\s*(일|기능)|기능\s*(알려|소개)",
+    re.IGNORECASE,
+)
+THANKS_RE = re.compile(
+    r"^(고마워|고마워요|감사|감사해|감사합니다|도움됐어|도움이\s*됐어요)[.!?~\s]*$",
+    re.IGNORECASE,
+)
+CASUAL_CHAT_RE = re.compile(
+    r"심심|놀아줘|농담|기분\s*어때|취미|몇\s*살|나이|"
+    r"점심\s*(뭐|추천)|저녁\s*(뭐|추천)|뭐\s*먹",
+    re.IGNORECASE,
+)
 OUT_OF_SCOPE_PATTERNS = re.compile(
     r"날씨|주가|환율|맛집|연애|운세|로또|코딩\s*(해줘|대행)|다른\s*학교|타\s*학교|"
     r"타\s*학과|의학|법률\s*상담|투자\s*추천|정치",
@@ -36,6 +85,31 @@ SCOPE_PATTERNS = re.compile(
 def sanitize_input(text: str, limit: int = 1000) -> str:
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text or "")
     return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def casual_response(question: str) -> dict[str, Any] | None:
+    """검색이 필요 없는 짧은 일상 대화를 ComPass 페르소나로 처리한다."""
+    raw = (question or "").strip()
+    if IDENTITY_RE.search(raw):
+        answer, intent = IDENTITY_MESSAGE, "identity"
+    elif CAPABILITY_RE.search(raw):
+        answer, intent = CAPABILITY_MESSAGE, "capabilities"
+    elif THANKS_RE.match(raw):
+        answer, intent = THANKS_MESSAGE, "thanks"
+    elif GREETING_RE.match(raw):
+        answer, intent = GREETING_MESSAGE, "greeting"
+    elif CASUAL_CHAT_RE.search(raw):
+        answer, intent = CASUAL_LIMIT_MESSAGE, "casual_guardrail"
+    else:
+        return None
+    return {
+        "answer": answer,
+        "mode": "일상대화",
+        "sources": [],
+        "score": 0,
+        "keywords": [],
+        "casual_intent": intent,
+    }
 
 
 def contextualize(question: str, history: list[dict[str, str]] | None) -> str:
@@ -197,6 +271,10 @@ def answer_question(
     clean_question = sanitize_input(question)
     if not clean_question:
         return {"answer": "질문을 입력해 주세요.", "mode": "SYSTEM", "sources": [], "score": 0}
+    casual = casual_response(clean_question)
+    if casual:
+        casual["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        return casual
     curated = match_curated(clean_question, history)
     if curated:
         return {

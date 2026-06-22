@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import config
-from chatbot import answer_question
+from chatbot import answer_question, casual_response, sanitize_input
 from crawler import REQUIRED_DOCUMENT_URLS, KnouCrawler
 from notion_client import NotionClient, notion_error_message
 from search_index import SearchIndex
@@ -422,6 +422,11 @@ def search_test(req: SearchRequest, x_admin_password: str | None = Header(defaul
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
+    casual = casual_response(sanitize_input(req.question))
+    if casual:
+        casual["elapsed_ms"] = 0
+        record_interaction_async(req.question, casual)
+        return casual
     if index.status()["documents"] == 0:
         logger.warning(
             "[CHAT] empty index detected; attempting lazy load question=%r notion_connected=%s",

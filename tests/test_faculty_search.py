@@ -39,6 +39,17 @@ def test_faculty_intent_only_uses_faculty_document(tmp_path) -> None:
     assert result["mode"] == "DB검색"
     assert len(result["sources"]) == 1
     assert result["sources"][0]["url"] == FACULTY_URL
-    assert "손진곤" in result["answer"]
-    assert "이병래" in result["answer"]
+    assert result["answer"] == "컴퓨터과학과 교수진 정보입니다."
+    assert [item["name"] for item in result["items"]] == ["손진곤", "이병래"]
     assert "전 산업 분야" not in result["answer"]
+    assert result["answer_type"] == "faculty"
+    assert result["total_count"] == 2
+    assert result["items"][0] == {
+        "name": "손진곤",
+        "title": "교수",
+        "email": "jgshon@knou.ac.kr",
+        "phone": "02-3668-4656",
+        "subjects_undergraduate": ["이산수학"],
+        "subjects_graduate": [],
+        "source_url": FACULTY_URL,
+    }

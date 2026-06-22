@@ -171,22 +171,94 @@ def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
     return "\n".join(f"- {sentence[:500]}" for sentence in selected) or OUT_OF_SCOPE_MESSAGE
 
 
-def _faculty_answer(hit: dict[str, Any]) -> str:
+def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
+    """교수진 공식 페이지 본문을 UI 렌더링용 구조로 변환한다."""
     lines = [line.strip() for line in (hit.get("body") or "").splitlines() if line.strip()]
-    items: list[str] = []
+    items: list[dict[str, Any]] = []
     index = 0
     while index < len(lines):
         name = lines[index]
         detail = lines[index + 1] if index + 1 < len(lines) else ""
-        if re.fullmatch(r"[가-힣]{2,5}", name) and re.search(r"교수|이메일|연락처", detail):
-            detail = detail.replace(" 홈페이지 바로가기", "").strip()
-            items.append(f"- {name}: {detail}")
-            index += 2
+        if not re.fullmatch(r"[가-힣]{2,5}", name) or not re.search(r"교수|이메일|연락처", detail):
+            index += 1
             continue
-        index += 1
+
+        detail = detail.replace(" 홈페이지 바로가기", "").strip()
+        title_match = re.match(r"(교수|조교수|부교수)", detail)
+        email_match = re.search(r"이메일\s+(\S+@\S+)", detail)
+        phone_match = re.search(r"연락처\s+([0-9-]+)", detail)
+        undergraduate_match = re.search(
+            r"담당과목\(대학\)\s*(.*?)(?=\s*담당과목\(대학원\)|$)",
+            detail,
+        )
+        graduate_match = re.search(r"담당과목\(대학원\)\s*(.*)$", detail)
+
+        def subjects(match: re.Match[str] | None) -> list[str]:
+            if not match:
+                return []
+            return [subject.strip() for subject in match.group(1).split(",") if subject.strip()]
+
+        items.append(
+            {
+                "name": name,
+                "title": title_match.group(1) if title_match else "교수",
+                "email": email_match.group(1).strip(".,") if email_match else "",
+                "phone": phone_match.group(1) if phone_match else "",
+                "subjects_undergraduate": subjects(undergraduate_match),
+                "subjects_graduate": subjects(graduate_match),
+                "source_url": hit.get("source_url") or FACULTY_URL,
+            }
+        )
+        index += 2
+    return items
+
+
+def _faculty_answer(hit: dict[str, Any]) -> str:
+    items = _faculty_items(hit)
     if not items:
         return hit.get("summary") or OUT_OF_SCOPE_MESSAGE
-    return "컴퓨터과학과 교수진 정보입니다.\n" + "\n".join(items)
+    lines = ["컴퓨터과학과 교수진 정보입니다.", f"총 {len(items)}명의 교수 정보를 확인했습니다."]
+    for item in items:
+        lines.extend(
+            [
+                "",
+                f"- {item['name']} {item['title']}",
+                f"  이메일: {item['email'] or '미확인'}",
+                f"  연락처: {item['phone'] or '미확인'}",
+                "  담당과목",
+                f"  - (대학) {', '.join(item['subjects_undergraduate']) or '미확인'}",
+                f"  - (대학원) {', '.join(item['subjects_graduate']) or '미확인'}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _list_answer_type(question: str) -> str:
+    patterns = (
+        ("notice", r"최근\s*공지|공지사항|학과\s*공지"),
+        ("curriculum", r"교육과정|교과과정|커리큘럼"),
+        ("schedule", r"학과\s*일정|학사\s*일정"),
+        ("faq", r"faq|자주\s*묻는\s*질문"),
+        ("certification", r"추천\s*자격증|자격증\s*추천"),
+        ("exam", r"시험\s*범위|시험범위"),
+    )
+    for answer_type, pattern in patterns:
+        if re.search(pattern, question, re.IGNORECASE):
+            return answer_type
+    return ""
+
+
+def _generic_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "title": hit.get("title") or "공식 정보",
+            "summary": hit.get("summary") or hit.get("body") or "",
+            "category": hit.get("category") or "",
+            "published_at": hit.get("published_at") or "",
+            "source_url": hit.get("source_url") or "",
+        }
+        for hit in hits[:10]
+    ]
 
 
 def _llm_prompt(question: str) -> str:
@@ -314,7 +386,7 @@ def answer_question(
             for hit in hits[:3]
             if hit.get("source_url")
         ]
-        return {
+        response = {
             "answer": _extractive_answer(search_question, hits),
             "mode": "DB검색",
             "sources": sources,
@@ -323,6 +395,36 @@ def answer_question(
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "search_results": hits[:3],
         }
+        if FACULTY_QUERY_RE.search(search_question):
+            faculty_hit = next(
+                (
+                    hit
+                    for hit in hits
+                    if hit.get("source_url") == FACULTY_URL
+                    or "교수진" in (hit.get("title") or "")
+                ),
+                hits[0],
+            )
+            items = _faculty_items(faculty_hit)
+            if items:
+                response.update(
+                    answer="컴퓨터과학과 교수진 정보입니다.",
+                    answer_type="faculty",
+                    items=items,
+                    total_count=len(items),
+                    source_urls=[faculty_hit.get("source_url") or FACULTY_URL],
+                )
+        else:
+            answer_type = _list_answer_type(search_question)
+            if answer_type:
+                items = _generic_items(hits)
+                response.update(
+                    answer_type=answer_type,
+                    items=items,
+                    total_count=len(items),
+                    source_urls=[source["url"] for source in sources],
+                )
+        return response
 
     if not allow_llm:
         return {

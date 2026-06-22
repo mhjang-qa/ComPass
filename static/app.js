@@ -118,25 +118,160 @@ function escapeHtml(value) {
   }[ch]));
 }
 
-function addMessage(role, text, sources = [], confirmation = false) {
+function scrollMessageIntoView(row, behavior = "smooth") {
+  requestAnimationFrame(() => {
+    row.scrollIntoView({ behavior, block: "end" });
+  });
+}
+
+function appendSourceLinks(container, sources = []) {
+  const unique = sources.filter(
+    (source, index, all) => source?.url && all.findIndex((item) => item?.url === source.url) === index,
+  );
+  if (!unique.length) return;
+  const sourceList = document.createElement("div");
+  sourceList.className = "source-list";
+  unique.forEach((source, index) => {
+    const link = document.createElement("a");
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const score = source.score === undefined ? "" : ` (${source.score}점)`;
+    link.textContent = `출처 ${index + 1}. ${source.title || "공식 페이지"}${score}`;
+    sourceList.appendChild(link);
+  });
+  container.appendChild(sourceList);
+}
+
+function appendField(container, label, value) {
+  if (!value) return;
+  const row = document.createElement("div");
+  row.className = "answer-field";
+  const strong = document.createElement("strong");
+  strong.textContent = `${label}:`;
+  const span = document.createElement("span");
+  span.textContent = value;
+  row.append(strong, span);
+  container.appendChild(row);
+}
+
+function appendSubjectList(container, item) {
+  const groups = [
+    ["(대학)", item.subjects_undergraduate || []],
+    ["(대학원)", item.subjects_graduate || []],
+  ].filter(([, subjects]) => subjects.length);
+  if (!groups.length) return;
+  const label = document.createElement("strong");
+  label.className = "subjects-label";
+  label.textContent = "담당과목";
+  container.appendChild(label);
+  const list = document.createElement("ul");
+  list.className = "subject-list";
+  groups.forEach(([level, subjects]) => {
+    const li = document.createElement("li");
+    const strong = document.createElement("strong");
+    strong.textContent = level;
+    li.append(strong, document.createTextNode(` ${subjects.join(", ")}`));
+    list.appendChild(li);
+  });
+  container.appendChild(list);
+}
+
+function appendExpandButton(container, cards, totalCount, answerType, messageRow) {
+  if (cards.length <= 3) return;
+  let expanded = false;
+  cards.slice(3).forEach((card) => card.classList.add("is-collapsed-item"));
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "answer-expand";
+  const expandedLabel = answerType === "faculty" ? `전체 교수진 보기 (${totalCount}명)` : `더보기 (${cards.length - 3}개)`;
+  button.textContent = expandedLabel;
+  button.setAttribute("aria-expanded", "false");
+  button.addEventListener("click", () => {
+    expanded = !expanded;
+    cards.slice(3).forEach((card) => card.classList.toggle("is-collapsed-item", !expanded));
+    button.textContent = expanded ? "간단히 보기" : expandedLabel;
+    button.setAttribute("aria-expanded", String(expanded));
+    scrollMessageIntoView(expanded ? cards[3] : messageRow);
+  });
+  container.appendChild(button);
+}
+
+function renderFacultyAnswer(bubble, payload, messageRow) {
+  const header = document.createElement("div");
+  header.className = "answer-heading";
+  const title = document.createElement("strong");
+  title.textContent = payload.answer || "컴퓨터과학과 교수진 정보입니다.";
+  const count = document.createElement("span");
+  count.textContent = `총 ${payload.total_count || payload.items.length}명의 교수 정보를 확인했습니다.`;
+  header.append(title, count);
+  bubble.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "answer-card-list faculty-list";
+  const cards = payload.items.map((item, index) => {
+    const card = document.createElement("article");
+    card.className = "answer-card faculty-card";
+    const heading = document.createElement("h3");
+    const badge = document.createElement("span");
+    badge.className = "faculty-number";
+    badge.textContent = String(index + 1);
+    heading.append(badge, document.createTextNode(`${item.name} ${item.title || "교수"}`));
+    card.appendChild(heading);
+    appendField(card, "이메일", item.email);
+    appendField(card, "연락처", item.phone);
+    appendSubjectList(card, item);
+    list.appendChild(card);
+    return card;
+  });
+  bubble.appendChild(list);
+  appendExpandButton(bubble, cards, payload.total_count || cards.length, "faculty", messageRow);
+}
+
+function renderGenericItems(bubble, payload, messageRow) {
+  const content = document.createElement("div");
+  content.className = "message-content answer-summary";
+  content.textContent = payload.answer || "";
+  bubble.appendChild(content);
+  const list = document.createElement("div");
+  list.className = "answer-card-list";
+  const cards = payload.items.map((item) => {
+    const card = document.createElement("article");
+    card.className = "answer-card";
+    const heading = document.createElement("h3");
+    heading.textContent = item.title || "공식 정보";
+    card.appendChild(heading);
+    appendField(card, "카테고리", item.category);
+    appendField(card, "게시일", item.published_at);
+    if (item.summary) {
+      const summary = document.createElement("p");
+      summary.className = "answer-card-summary";
+      summary.textContent = item.summary.length > 500 ? `${item.summary.slice(0, 500)}…` : item.summary;
+      card.appendChild(summary);
+    }
+    list.appendChild(card);
+    return card;
+  });
+  bubble.appendChild(list);
+  appendExpandButton(bubble, cards, payload.total_count || cards.length, payload.answer_type, messageRow);
+}
+
+function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
   const row = document.createElement("div");
   row.className = `message ${role}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = text;
-  if (sources.length) {
-    const sourceList = document.createElement("div");
-    sourceList.className = "source-list";
-    sources.forEach((source, index) => {
-      const link = document.createElement("a");
-      link.href = source.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = `출처 ${index + 1}. ${source.title || "공식 페이지"} (${source.score ?? "-"}점)`;
-      sourceList.appendChild(link);
-    });
-    bubble.appendChild(sourceList);
+  if (role === "bot" && payload.answer_type === "faculty" && Array.isArray(payload.items)) {
+    renderFacultyAnswer(bubble, payload, row);
+  } else if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
+    renderGenericItems(bubble, payload, row);
+  } else {
+    const content = document.createElement("div");
+    content.className = "message-content";
+    content.textContent = text;
+    bubble.appendChild(content);
   }
+  appendSourceLinks(bubble, sources);
   if (confirmation) {
     const actions = document.createElement("div");
     actions.className = "confirm-actions";
@@ -154,7 +289,8 @@ function addMessage(role, text, sources = [], confirmation = false) {
   }
   row.appendChild(bubble);
   messages.appendChild(row);
-  messages.scrollTop = messages.scrollHeight;
+  scrollMessageIntoView(row);
+  return row;
 }
 
 async function sendQuestion(raw, allowLlm = false) {
@@ -168,8 +304,9 @@ async function sendQuestion(raw, allowLlm = false) {
   $("#sendButton").disabled = true;
   const waiting = document.createElement("div");
   waiting.className = "message bot";
-  waiting.innerHTML = '<div class="bubble">공식 데이터를 검색하고 있습니다…</div>';
+  waiting.innerHTML = '<div class="bubble"><div class="message-content">공식 데이터를 검색하고 있습니다…</div></div>';
   messages.appendChild(waiting);
+  scrollMessageIntoView(waiting);
   try {
     const result = await jsonFetch("/api/chat", {
       method: "POST",
@@ -183,7 +320,7 @@ async function sendQuestion(raw, allowLlm = false) {
     } else if (result.mode === "INDEX_EMPTY") {
       answer = "백엔드 연결은 정상이지만 검색 인덱스가 비어 있습니다. 관리자 메뉴에서 크롤링 또는 인덱스 재생성을 실행해 주세요.";
     }
-    addMessage("bot", answer, result.sources || [], result.requires_llm_confirmation);
+    addMessage("bot", answer, result.sources || [], result.requires_llm_confirmation, result);
     history.push({ role: "assistant", content: result.answer });
   } catch (error) {
     waiting.remove();

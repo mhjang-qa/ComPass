@@ -149,10 +149,20 @@ def run_crawl_job(max_depth: int) -> None:
             },
         )
         notion_result = notion.upsert_many(documents)
+        job_state["crawl"].update(
+            message="Notion 저장 완료. 검색 인덱스를 갱신하고 있습니다.",
+            progress={**job_state["crawl"]["progress"], "percent": 98},
+        )
+        index_result = index.rebuild(notion.knowledge_documents())
         job_state["crawl"] = {
             "running": False,
-            "message": "크롤링 및 Notion 적재 완료",
-            "result": {"crawled": len(documents), "notion": notion_result, "max_depth": max_depth},
+            "message": "크롤링, 표준화 저장, 검색 인덱스 갱신 완료",
+            "result": {
+                "crawled": len(documents),
+                "notion": notion_result,
+                "index": index_result,
+                "max_depth": max_depth,
+            },
             "progress": {
                 **job_state["crawl"]["progress"],
                 "percent": 100,

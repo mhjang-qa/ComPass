@@ -24,6 +24,18 @@ logger = logging.getLogger(__name__)
 
 TRACKING_PARAMS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid"}
 EXCLUDED_HINTS = ("login", "logout", "sso", "signin", "javascript:", "mailto:", "tel:")
+TECHNICAL_LINE_PATTERNS = (
+    re.compile(r"^/?WEB.?INF/", re.IGNORECASE),
+    re.compile(r"^(?:fnctId|fnctNo|imageSlideSetupSeq|recentBbsSetupSeq)=", re.IGNORECASE),
+    re.compile(r"^(?:cs1_)?JW_[A-Z0-9_]+$", re.IGNORECASE),
+    re.compile(r"^(?:cnvrsVe|stopTime|pcCo|cnvrsMth|pcMgWidth|isImageNoHandlr)", re.IGNORECASE),
+)
+BOILERPLATE_LINES = {
+    "맞춤정보", "확대", "기본", "축소", "통합검색", "사이트맵", "모바일 메뉴 열기",
+    "모바일 메뉴 닫기", "Search", "검색", "닫기", "PREV", "NEXT", "슬라이드 재생",
+    "슬라이드 정지", "슬라이드 멈춤", "이전 슬라이드", "다음 슬라이드",
+    "오늘 하루 열지않기", "COPYRIGHTⓒKOREA NATIONAL OPEN UNIVERSITY. ALL RIGHTS RESERVED.",
+}
 DATE_PATTERNS = (
     re.compile(r"(20\d{2})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})"),
     re.compile(r"(20\d{2})(\d{2})(\d{2})"),
@@ -48,6 +60,7 @@ class CrawlDocument:
     content_hash: str = ""
     status: str = "신규"
     search_text: str = ""
+    document_type: str = "일반페이지"
 
     def finalize(self) -> "CrawlDocument":
         self.body = clean_text(self.body)
@@ -68,13 +81,23 @@ class CrawlDocument:
             sort_keys=True,
         )
         self.content_hash = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
+        self.document_type = classify_document_type(self.source_url, self.category)
         return self
 
 
 def clean_text(text: str) -> str:
     text = (text or "").replace("\u00a0", " ")
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
-    return "\n".join(line for line in lines if line).strip()
+    cleaned: list[str] = []
+    for line in lines:
+        if not line or line in BOILERPLATE_LINES:
+            continue
+        if any(pattern.search(line) for pattern in TECHNICAL_LINE_PATTERNS):
+            continue
+        if cleaned and cleaned[-1] == line:
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
 
 
 def summarize(text: str, limit: int = 500) -> str:
@@ -98,6 +121,17 @@ def extract_keywords(text: str, limit: int = 15) -> list[str]:
             continue
         counts[token] = counts.get(token, 0) + 1
     return [word for word, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+
+
+def classify_document_type(url: str, category: str) -> str:
+    path = urlsplit(url).path.lower()
+    if "artclview.do" in path:
+        return "게시물"
+    if "artcllist.do" in path or "게시판" in category or "공지" in category:
+        return "게시판목록"
+    if path.endswith("/index.do"):
+        return "메인"
+    return "일반페이지"
 
 
 def normalize_url(url: str, base_url: str = "") -> str:
@@ -263,10 +297,15 @@ class KnouCrawler:
         return [f"{action}{separator}page={page}" for page in range(1, total + 1)]
 
     def _parse_page(self, url: str, soup: BeautifulSoup) -> CrawlDocument | None:
-        for tag in soup.select("script, style, noscript, iframe, nav, footer, header"):
-            tag.decompose()
-
-        title_tag = soup.select_one("h1, .view-title, .board-view-title, .artclViewTitle, title")
+        page_text = soup.get_text(" ", strip=True)
+        title_tag = next(
+            (
+                soup.select_one(selector)
+                for selector in (".view-title", ".board-view-title", ".artclViewTitle", "h1", "title")
+                if soup.select_one(selector) is not None
+            ),
+            None,
+        )
         title = clean_text(title_tag.get_text(" ", strip=True) if title_tag else "")
         title = re.sub(r"\s*[-|]\s*컴퓨터과학과.*$", "", title).strip() or "제목 없음"
 
@@ -278,21 +317,22 @@ class KnouCrawler:
         if not category:
             category = self._guess_category(url, title)
 
-        content = soup.select_one(
-            ".artclView, .board-view, .view-content, .contents, #contents, #content, main, .sub-content"
-        )
-        content = content or soup.body
+        attachments = self._extract_attachments(url, soup)
+        content = self._select_content(url, soup)
         if content is None:
             return None
-        body = content.get_text("\n", strip=True)
-        published_at = self._extract_date(soup.get_text(" ", strip=True))
-        attachments = []
-        for tag in soup.select("a[href]"):
-            href = normalize_url(tag.get("href", ""), url)
-            label = tag.get_text(" ", strip=True).lower()
-            path = urlsplit(href).path.lower()
-            if href and (path.endswith(ATTACHMENT_EXTENSIONS) or "첨부" in label or "download" in href.lower()):
-                attachments.append(href)
+        content = BeautifulSoup(str(content), "lxml")
+        for tag in content.select(
+            "script, style, noscript, iframe, nav, footer, header, form, input, button, "
+            ".hidden, .control, .paging, .page-move, .board-search, .wrap-pop, "
+            ".view-util, .view-file, .prev-next, .btn-area"
+        ):
+            tag.decompose()
+        body = self._structured_text(content)
+        if not body:
+            return None
+
+        published_at = self._extract_date(page_text)
 
         return CrawlDocument(
             title=title[:300],
@@ -303,6 +343,70 @@ class KnouCrawler:
             published_at=published_at,
             attachments=list(dict.fromkeys(attachments)),
         )
+
+    @staticmethod
+    def _structured_text(content: BeautifulSoup) -> str:
+        blocks: list[str] = []
+        selectors = "h1, h2, h3, h4, p, li, tr, dt, dd"
+        for node in content.select(selectors):
+            if node.find_parent(["h1", "h2", "h3", "h4", "p", "li", "tr", "dt", "dd"]):
+                continue
+            if node.name == "tr":
+                cells = [
+                    clean_text(cell.get_text(" ", strip=True))
+                    for cell in node.find_all(["th", "td"], recursive=False)
+                ]
+                text = " | ".join(cell for cell in cells if cell)
+            else:
+                text = clean_text(node.get_text(" ", strip=True))
+            if text and (not blocks or blocks[-1] != text):
+                blocks.append(text)
+        if not blocks:
+            return clean_text(content.get_text(" ", strip=True))
+        return clean_text("\n\n".join(blocks))
+
+    @staticmethod
+    def _select_content(url: str, soup: BeautifulSoup):
+        path = urlsplit(url).path
+        if path.endswith("/index.do"):
+            sections = [
+                soup.select_one("#menu3316_obj155"),
+                soup.select_one("#multipleContentsDiv_templet_05_20"),
+                soup.select_one("#multipleContentsDiv_templet_05_21"),
+            ]
+            available = [section for section in sections if section is not None]
+            if available:
+                wrapper = BeautifulSoup("<main></main>", "lxml").main
+                for section in available:
+                    wrapper.append(BeautifulSoup(str(section), "lxml"))
+                return wrapper
+        if "artclView.do" in path:
+            board_info = soup.select_one(".board-view-info")
+            return board_info.find_parent("div", class_="_fnctWrap") if board_info else None
+        return (
+            soup.select_one("article#_contentBuilder")
+            or soup.select_one(".contents")
+            or soup.select_one(".sub-content")
+            or soup.select_one("#contents")
+            or soup.select_one("#content")
+            or soup.select_one("main")
+        )
+
+    @staticmethod
+    def _extract_attachments(url: str, soup: BeautifulSoup) -> list[str]:
+        attachments: list[str] = []
+        for tag in soup.select("a[href]"):
+            href = normalize_url(tag.get("href", ""), url)
+            label = tag.get_text(" ", strip=True).lower()
+            path = urlsplit(href).path.lower()
+            if href and (
+                path.endswith(ATTACHMENT_EXTENSIONS)
+                or "첨부" in label
+                or "download" in href.lower()
+                or "filedown" in href.lower()
+            ):
+                attachments.append(href)
+        return list(dict.fromkeys(attachments))
 
     @staticmethod
     def _extract_date(text: str) -> str:

@@ -16,6 +16,7 @@ from crawler import CrawlDocument
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
+    "문서유형": {"select": {}},
     "카테고리": {"select": {}},
     "본문": {"rich_text": {}},
     "요약": {"rich_text": {}},
@@ -26,6 +27,8 @@ KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
     "콘텐츠해시": {"rich_text": {}},
     "상태": {"select": {}},
     "검색용텍스트": {"rich_text": {}},
+    "첨부파일": {"rich_text": {}},
+    "본문길이": {"number": {"format": "number"}},
 }
 
 STATS_SCHEMA: dict[str, dict[str, Any]] = {
@@ -246,6 +249,7 @@ class NotionClient:
     def _properties(self, doc: CrawlDocument, status: str) -> dict[str, Any]:
         props: dict[str, Any] = {
             "제목": {"title": rich_text(doc.title, 300)},
+            "문서유형": {"select": {"name": doc.document_type}},
             "카테고리": {"select": {"name": (doc.category or "기타")[:100]}},
             "본문": {"rich_text": rich_text(doc.body)},
             "요약": {"rich_text": rich_text(doc.summary)},
@@ -255,6 +259,8 @@ class NotionClient:
             "콘텐츠해시": {"rich_text": rich_text(doc.content_hash, 100)},
             "상태": {"select": {"name": status}},
             "검색용텍스트": {"rich_text": rich_text(doc.search_text)},
+            "첨부파일": {"rich_text": rich_text("\n".join(doc.attachments))},
+            "본문길이": {"number": len(doc.body)},
         }
         if doc.published_at:
             props["게시일"] = {"date": {"start": doc.published_at}}
@@ -262,9 +268,35 @@ class NotionClient:
 
     @staticmethod
     def _body_blocks(doc: CrawlDocument) -> list[dict[str, Any]]:
-        text = doc.body
-        chunks = [text[i : i + 1900] for i in range(0, len(text), 1900)][:45]
-        blocks: list[dict[str, Any]] = []
+        paragraphs = [part.strip() for part in re.split(r"\n{2,}|\n", doc.body) if part.strip()]
+        blocks: list[dict[str, Any]] = [
+            {
+                "object": "block",
+                "type": "callout",
+                "callout": {
+                    "icon": {"type": "emoji", "emoji": "🧭"},
+                    "rich_text": rich_text(
+                        f"문서유형: {doc.document_type} | 카테고리: {doc.category} | "
+                        f"게시일: {doc.published_at or '미확인'} | 수집일: {doc.collected_at[:10]}"
+                    ),
+                },
+            },
+            {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": rich_text("본문")},
+            },
+        ]
+        for paragraph in paragraphs:
+            chunks = [paragraph[i : i + 1900] for i in range(0, len(paragraph), 1900)]
+            blocks.extend(
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": rich_text(chunk)},
+                }
+                for chunk in chunks
+            )
         if doc.attachments:
             blocks.append(
                 {
@@ -281,23 +313,29 @@ class NotionClient:
                         "bookmark": {"url": url},
                     }
                 )
-        if chunks:
-            blocks.append(
-                {
-                    "object": "block",
-                    "type": "heading_2",
-                    "heading_2": {"rich_text": rich_text("수집 본문")},
-                }
-            )
-            blocks.extend(
-                {
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {"rich_text": rich_text(chunk)},
-                }
-                for chunk in chunks
-            )
-        return blocks
+        blocks.append(
+            {
+                "object": "block",
+                "type": "bookmark",
+                "bookmark": {"url": doc.source_url},
+            }
+        )
+        return blocks[:95]
+
+    def replace_page_blocks(self, page_id: str, doc: CrawlDocument) -> None:
+        cursor = None
+        while True:
+            query = "?page_size=100"
+            if cursor:
+                query += f"&start_cursor={cursor}"
+            data = self.request("GET", f"/blocks/{page_id}/children{query}")
+            for block in data.get("results") or []:
+                if block.get("id"):
+                    self.request("DELETE", f"/blocks/{block['id']}")
+            if not data.get("has_more") or not data.get("next_cursor"):
+                break
+            cursor = data["next_cursor"]
+        self.request("PATCH", f"/blocks/{page_id}/children", {"children": self._body_blocks(doc)})
 
     def upsert_document(self, doc: CrawlDocument, database_id: str = config.NOTION_KNOWLEDGE_DB_ID) -> str:
         existing = self.find_by_url(database_id, doc.source_url)
@@ -306,20 +344,7 @@ class NotionClient:
             status = "유지" if old_hash == doc.content_hash else "변경"
             self.request("PATCH", f"/pages/{existing['id']}", {"properties": self._properties(doc, status)})
             if status == "변경":
-                update_blocks = [
-                    {
-                        "object": "block",
-                        "type": "divider",
-                        "divider": {},
-                    },
-                    {
-                        "object": "block",
-                        "type": "heading_2",
-                        "heading_2": {"rich_text": rich_text(f"변경 수집본 · {doc.collected_at[:19]}")},
-                    },
-                    *self._body_blocks(doc),
-                ]
-                self.request("PATCH", f"/blocks/{existing['id']}/children", {"children": update_blocks})
+                self.replace_page_blocks(existing["id"], doc)
             return status
         payload = {
             "parent": {"database_id": normalize_id(database_id)},
@@ -353,6 +378,7 @@ class NotionClient:
                     "page_id": page.get("id", ""),
                     "title": get("제목"),
                     "category": get("카테고리"),
+                    "document_type": get("문서유형"),
                     "body": get("본문"),
                     "summary": get("요약"),
                     "source_url": get("원본URL"),

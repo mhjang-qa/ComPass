@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 from pathlib import Path
 
-from crawler import KnouCrawler
+from crawler import KnouCrawler, clean_text
 
 
 class AllowAllRobots:
@@ -125,3 +125,17 @@ def test_crawl_respects_max_depth(tmp_path: Path, monkeypatch) -> None:
     assert [document.source_url for document in documents] == [start, child]
     assert all(item["depth"] <= 1 for item in progress)
     assert progress[-1]["documents"] == 2
+
+
+def test_clean_text_removes_site_technical_noise() -> None:
+    raw = """
+    맞춤정보
+    /WEB-INF/jsp/k2web/com/cop/site/layout.jsp
+    fnctId=imageSlide,fnctNo=2133
+    imageSlideSetupSeq=2133,cnvrsVe=1,stopTime=5
+    교육목표
+    교육목표
+    컴퓨터과학과의 교육목표입니다.
+    """
+
+    assert clean_text(raw) == "교육목표\n컴퓨터과학과의 교육목표입니다."

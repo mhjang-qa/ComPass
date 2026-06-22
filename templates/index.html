@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
   <title>ComPass · Computer + Compass</title>
-  <link rel="stylesheet" href="/static/style.css?v=7">
+  <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
   <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
@@ -136,6 +136,18 @@
         <div class="section-head">
           <div><p class="eyebrow">RETRIEVAL</p><h2>검색 인덱스</h2></div>
           <button id="rebuildIndex" class="primary">인덱스 재생성</button>
+        </div>
+        <div class="index-guide">
+          <strong>검색 인덱스란?</strong>
+          <p>
+            Notion 문서를 질문할 때마다 전부 읽지 않고 빠르게 찾도록 만든 로컬 검색 목록입니다.
+            제목·본문·카테고리·키워드를 분석해 관련 문서와 점수를 계산합니다.
+          </p>
+          <ol>
+            <li>크롤링 완료 후 자동으로 최신 문서를 검색용으로 정리합니다.</li>
+            <li>Notion에서 문서를 직접 수정했다면 <b>인덱스 재생성</b>을 누릅니다.</li>
+            <li>챗봇은 검색 점수가 충분한 공식 문서만 근거로 답변합니다.</li>
+          </ol>
         </div>
         <div id="indexStatus" class="metric-grid"></div>
         <form id="searchForm" class="search-test">

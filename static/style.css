@@ -162,6 +162,10 @@ th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid var(--li
 th { color: var(--muted); font-size: .77rem; }
 .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .metric strong { display: block; margin-top: 5px; font-size: 1.25rem; }
+.index-guide { margin-top: 20px; padding: 18px 20px; border: 1px solid #bcd7eb; border-radius: 16px; background: linear-gradient(135deg, #f2f9ff, #f2fffc); }
+.index-guide > strong { color: var(--navy); font-size: 1.03rem; }
+.index-guide p { margin: 8px 0; color: var(--muted); line-height: 1.6; }
+.index-guide ol { margin: 10px 0 0; padding-left: 20px; color: var(--ink); line-height: 1.7; font-size: .88rem; }
 .search-test { display: flex; gap: 10px; }
 .search-test input { flex: 1; }
 .result-card h3 { margin: 0 0 6px; }

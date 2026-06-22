@@ -65,6 +65,7 @@ class SearchIndex:
             text = doc.get("search_text") or " ".join(
                 [
                     doc.get("title", ""),
+                    doc.get("document_type", ""),
                     doc.get("category", ""),
                     doc.get("summary", ""),
                     " ".join(doc.get("keywords") or []),
@@ -137,4 +138,3 @@ class SearchIndex:
             "documents": len(self.payload.get("documents") or []),
             "path": str(self.path),
         }
-

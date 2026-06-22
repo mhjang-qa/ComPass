@@ -11,6 +11,9 @@ class FakeNotionClient:
     def upsert_curated_knowledge(self):
         return {"신규": 0, "변경": 0, "유지": 3, "실패": 0}
 
+    def upsert_many(self, documents):
+        return {"신규": len(list(documents)), "변경": 0, "유지": 0, "실패": 0}
+
     def knowledge_documents(self):
         return [
             {
@@ -29,6 +32,7 @@ class FakeNotionClient:
 def test_lazy_index_loading_from_notion(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(main, "index", SearchIndex(tmp_path / "index.json"))
     monkeypatch.setattr(main, "NotionClient", FakeNotionClient)
+    monkeypatch.setattr(main, "REQUIRED_DOCUMENT_URLS", ())
     monkeypatch.setattr(main.config, "NOTION_TOKEN", "test-token")
     main.runtime_state.update(
         loading=False,
@@ -48,4 +52,3 @@ def test_lazy_index_loading_from_notion(tmp_path: Path, monkeypatch) -> None:
     assert status["index_document_count"] == 1
     assert status["last_sync_at"]
     assert status["knowledge_db_id_masked"].startswith("38773f")
-

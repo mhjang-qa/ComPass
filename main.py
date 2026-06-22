@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 import config
 from chatbot import answer_question
-from crawler import KnouCrawler
+from crawler import REQUIRED_DOCUMENT_URLS, KnouCrawler
 from notion_client import NotionClient, notion_error_message
 from search_index import SearchIndex
 from stats import recent_stats, record_interaction_async
@@ -122,6 +122,20 @@ def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bo
         client = NotionClient()
         schema_result = client.ensure_knowledge_schema()
         curated_result = client.upsert_curated_knowledge()
+        required_documents = []
+        if REQUIRED_DOCUMENT_URLS:
+            required_crawler = KnouCrawler(max_pages=len(REQUIRED_DOCUMENT_URLS), max_depth=0)
+            for required_url in REQUIRED_DOCUMENT_URLS:
+                document = required_crawler.fetch_document(required_url)
+                if document:
+                    required_documents.append(document)
+        required_result = client.upsert_many(required_documents)
+        logger.info(
+            "[INDEX] required pages synchronized requested=%d loaded=%d result=%s",
+            len(REQUIRED_DOCUMENT_URLS),
+            len(required_documents),
+            required_result,
+        )
         documents = client.knowledge_documents()
         runtime_state.update(
             notion_connected=True,
@@ -152,6 +166,7 @@ def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bo
             "result": {
                 "knowledge": schema_result,
                 "curated": curated_result,
+                "required": required_result,
                 "documents": len(documents),
             },
         }

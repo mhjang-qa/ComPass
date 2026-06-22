@@ -274,6 +274,28 @@ class KnouCrawler:
         )
         return documents
 
+    def fetch_document(self, url: str) -> CrawlDocument | None:
+        """필수 공식 페이지 한 건을 수집한다. 앱 초기 지식 보장에 사용한다."""
+        normalized = normalize_url(url)
+        if not self.is_allowed(normalized):
+            logger.warning("필수 페이지 수집 제외 url=%s", normalized)
+            return None
+        try:
+            response = self.session.get(normalized, timeout=config.CRAWL_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            if "text/html" not in response.headers.get("content-type", ""):
+                logger.warning("필수 페이지가 HTML이 아닙니다 url=%s", normalized)
+                return None
+            response.encoding = response.apparent_encoding or response.encoding
+            document = self._parse_page(normalized, BeautifulSoup(response.text, "lxml"))
+            if not document or not document.body:
+                logger.warning("필수 페이지 본문을 찾지 못했습니다 url=%s", normalized)
+                return None
+            return document.finalize()
+        except Exception:
+            logger.exception("필수 페이지 수집 실패 url=%s", normalized)
+            return None
+
     def _extract_links(self, current_url: str, soup: BeautifulSoup) -> list[str]:
         links: list[str] = []
         for tag in soup.select("a[href]"):

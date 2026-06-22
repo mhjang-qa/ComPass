@@ -20,6 +20,23 @@ class NotionAPIError(RuntimeError):
     pass
 
 
+def notion_error_message(exc: Exception, database_label: str = "Notion DB") -> str:
+    """관리자 화면에 노출할 수 있는 실행 가능한 Notion 오류 문구를 반환한다."""
+    message = str(exc)
+    if "object_not_found" in message or "Could not find database" in message:
+        return (
+            f"{database_label}에 접근할 수 없습니다. "
+            "Notion에서 해당 데이터베이스를 연 뒤 우측 상단 ··· → 연결(Connections)에서 "
+            'Integration "장민호부장-api"를 추가하고, Render 환경변수의 DB ID가 실제 데이터베이스 ID와 '
+            "일치하는지 확인해 주세요."
+        )
+    if "unauthorized" in message.lower() or "401" in message:
+        return "NOTION_TOKEN이 유효하지 않습니다. Render의 NOTION_TOKEN 값을 다시 확인해 주세요."
+    if "NOTION_TOKEN" in message:
+        return "Render 환경변수에 NOTION_TOKEN이 설정되지 않았습니다."
+    return message
+
+
 def normalize_id(raw: str) -> str:
     value = (raw or "").strip()
     db_link_match = re.search(r"(?:/p/DB-|/p/)([0-9a-fA-F]{32})(?:[/?#]|$)", value)
@@ -78,6 +95,12 @@ class NotionClient:
 
     def database(self, database_id: str) -> dict[str, Any]:
         return self.request("GET", f"/databases/{normalize_id(database_id)}")
+
+    def validate_database(self, database_id: str, label: str) -> dict[str, Any]:
+        try:
+            return self.database(database_id)
+        except Exception as exc:
+            raise NotionAPIError(notion_error_message(exc, label)) from exc
 
     def query_all(
         self,

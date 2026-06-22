@@ -1,4 +1,4 @@
-"""KNOU-CS AI Navigator FastAPI 애플리케이션."""
+"""ComPass FastAPI 애플리케이션."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 import config
 from chatbot import answer_question
 from crawler import KnouCrawler
-from notion_client import NotionClient
+from notion_client import NotionClient, notion_error_message
 from search_index import SearchIndex
 from stats import recent_stats, record_interaction_async
 
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-app = FastAPI(title="KNOU-CS AI Navigator", version="1.0.0")
+app = FastAPI(title="ComPass", description="Computer + Compass, 학생들의 길잡이", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 index = SearchIndex()
@@ -62,13 +62,16 @@ def run_crawl_job() -> None:
         return
     job_state["crawl"] = {"running": True, "message": "홈페이지를 수집하고 있습니다.", "result": None}
     try:
+        notion = NotionClient()
+        job_state["crawl"]["message"] = "Notion 지식 DB 연결을 확인하고 있습니다."
+        notion.validate_database(config.NOTION_KNOWLEDGE_DB_ID, "지식 DB")
         crawler = KnouCrawler()
         documents = crawler.crawl(
             lambda visited, queued, url: job_state["crawl"].update(
                 message=f"{visited}개 URL 확인 · 대기 {queued}개 · {url[:80]}"
             )
         )
-        notion_result = NotionClient().upsert_many(documents)
+        notion_result = notion.upsert_many(documents)
         job_state["crawl"] = {
             "running": False,
             "message": "크롤링 및 Notion 적재 완료",
@@ -76,7 +79,11 @@ def run_crawl_job() -> None:
         }
     except Exception as exc:
         logger.exception("크롤링 작업 실패")
-        job_state["crawl"] = {"running": False, "message": f"실패: {exc}", "result": None}
+        job_state["crawl"] = {
+            "running": False,
+            "message": f"실패: {notion_error_message(exc, '지식 DB')}",
+            "result": None,
+        }
     finally:
         job_lock.release()
 
@@ -84,11 +91,16 @@ def run_crawl_job() -> None:
 def run_index_job() -> None:
     job_state["index"] = {"running": True, "message": "Notion 데이터를 읽고 있습니다.", "result": None}
     try:
+        NotionClient().validate_database(config.NOTION_KNOWLEDGE_DB_ID, "지식 DB")
         result = index.rebuild()
         job_state["index"] = {"running": False, "message": "검색 인덱스 생성 완료", "result": result}
     except Exception as exc:
         logger.exception("인덱스 생성 실패")
-        job_state["index"] = {"running": False, "message": f"실패: {exc}", "result": None}
+        job_state["index"] = {
+            "running": False,
+            "message": f"실패: {notion_error_message(exc, '지식 DB')}",
+            "result": None,
+        }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -152,7 +164,10 @@ def stats(limit: int = 30, x_admin_password: str | None = Header(default=None)):
     try:
         return {"items": recent_stats(max(1, min(limit, 100)))}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"통계 DB 조회 실패: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"통계 DB 조회 실패: {notion_error_message(exc, '통계 DB')}",
+        ) from exc
 
 
 @app.get("/api/knowledge/recent")
@@ -161,14 +176,18 @@ def recent_knowledge(limit: int = 20, x_admin_password: str | None = Header(defa
     try:
         return {"items": NotionClient().recent_knowledge(max(1, min(limit, 100)))}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"지식 DB 조회 실패: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"지식 DB 조회 실패: {notion_error_message(exc, '지식 DB')}",
+        ) from exc
 
 
 @app.get("/api/health")
 def health():
     return {
         "ok": True,
-        "service": "KNOU-CS AI Navigator",
+        "service": "ComPass",
+        "meaning": "Computer + Compass",
         "index": index.status(),
         "notion_configured": bool(config.NOTION_TOKEN),
         "llm_provider": config.LLM_PROVIDER,

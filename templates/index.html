@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
-  <title>KNOU-CS AI Navigator · 컴누리</title>
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <title>ComPass · Computer + Compass</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
   <div id="coldStart" class="cold-start">
     <div class="cold-card">
       <div class="loader" aria-hidden="true"></div>
-      <strong>컴누리를 깨우고 있습니다</strong>
+      <strong>ComPass를 준비하고 있습니다</strong>
       <p>무료 서버의 첫 접속은 최대 1분 정도 걸릴 수 있습니다.</p>
       <span id="coldStatus">서버 연결 확인 중…</span>
     </div>
@@ -21,9 +21,10 @@
     <header class="topbar">
       <div>
         <p class="eyebrow">Korea National Open University</p>
-        <h1>KNOU-CS AI Navigator</h1>
+        <h1>ComPass</h1>
+        <p class="brand-copy">Computer + Compass · 학생들의 길잡이</p>
       </div>
-      <div class="brand-badge"><span>컴</span>누리</div>
+      <div class="brand-badge"><span>C</span>ComPass</div>
     </header>
 
     <nav class="tabs" aria-label="주요 메뉴">
@@ -37,9 +38,9 @@
       <section id="panel-chat" class="panel active">
         <div class="chat-layout">
           <div class="chat-intro">
-            <div class="bot-mark">컴</div>
+            <div class="bot-mark">C</div>
             <div>
-              <h2>안녕하세요, 컴누리입니다.</h2>
+              <h2>안녕하세요, ComPass입니다.</h2>
               <p>한국방송통신대학교 컴퓨터과학과 홈페이지의 공식 정보를 찾아 안내합니다.</p>
             </div>
           </div>
@@ -69,6 +70,10 @@
         <div class="status-card">
           <strong>작업 상태</strong>
           <p id="crawlStatus">대기 중</p>
+          <p class="setup-help">
+            Notion 오류가 발생하면 지식 DB의 연결(Connections)에 Integration을 추가하고
+            Render의 <code>NOTION_KNOWLEDGE_DB_ID</code>를 확인하세요.
+          </p>
         </div>
         <div class="table-card">
           <div class="card-head"><h3>최근 수집 데이터</h3><button id="loadKnowledge">새로고침</button></div>
@@ -100,6 +105,6 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=1"></script>
+  <script src="/static/app.js?v=2"></script>
 </body>
 </html>

@@ -83,7 +83,7 @@ def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
 
 def _llm_prompt(question: str) -> str:
     return f"""
-너는 한국방송통신대학교 컴퓨터과학과 공식 정보만 안내하는 챗봇 '컴누리'다.
+너는 한국방송통신대학교 컴퓨터과학과 공식 정보만 안내하는 챗봇 'ComPass'다.
 질문에 답할 때 다음 규칙을 반드시 지켜라.
 1. 컴퓨터과학과 공식 정보 범위를 벗어나면 정확히 다음 문장만 답한다:
 {OUT_OF_SCOPE_MESSAGE}
@@ -232,4 +232,3 @@ def answer_question(
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "failure_reason": f"LLM 호출 실패: {type(exc).__name__}",
         }
-

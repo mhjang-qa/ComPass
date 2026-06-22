@@ -29,6 +29,7 @@ button { cursor: pointer; }
 }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 28px 36px; color: white; background: linear-gradient(125deg, var(--navy), #174f78 70%, var(--mint)); }
 .topbar h1 { margin: 3px 0 0; font-size: clamp(1.45rem, 4vw, 2.25rem); }
+.brand-copy { margin: 5px 0 0; color: #d7f4ff; font-size: .82rem; font-weight: 650; }
 .eyebrow { margin: 0; color: #75d5ff; font-size: .72rem; font-weight: 800; letter-spacing: .15em; }
 .brand-badge { display: flex; align-items: center; gap: 8px; font-size: 1.15rem; font-weight: 800; }
 .brand-badge span, .bot-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 15px; color: white; background: var(--mint); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
@@ -77,6 +78,8 @@ button { cursor: pointer; }
 .admin-auth input, .search-test input { min-height: 42px; padding: 8px 11px; border: 1px solid #b9cbd9; border-radius: 10px; }
 .admin-auth span { color: var(--muted); font-size: .8rem; }
 .status-card p { color: var(--muted); margin-bottom: 0; }
+.status-card .setup-help { padding-top: 12px; border-top: 1px solid var(--line); font-size: .82rem; line-height: 1.55; }
+.status-card code { color: var(--navy); font-weight: 700; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: .88rem; }
 th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }

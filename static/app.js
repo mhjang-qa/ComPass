@@ -188,7 +188,7 @@ async function wakeServer() {
       if (health.ok) {
         status.textContent = "연결되었습니다.";
         setTimeout(() => $("#coldStart").classList.add("hidden"), 250);
-        addMessage("bot", "무엇을 도와드릴까요? 컴퓨터과학과 공식 홈페이지 정보를 기준으로 답변합니다.");
+        addMessage("bot", "무엇을 도와드릴까요? ComPass는 컴퓨터과학과 공식 홈페이지 정보를 기준으로 학생들의 길을 안내합니다.");
         return;
       }
     } catch (_) {
@@ -199,4 +199,3 @@ async function wakeServer() {
   status.textContent = "서버 연결이 지연되고 있습니다. 잠시 후 새로고침해 주세요.";
 }
 wakeServer();
-

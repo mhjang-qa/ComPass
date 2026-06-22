@@ -29,11 +29,13 @@ SYNONYMS = {
     "FAQ": ["자주하는질문", "자주 묻는 질문"],
 }
 FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
+CURRICULUM_URL = "https://cs.knou.ac.kr/cs1/4789/subview.do"
+SCHEDULE_URL = "https://cs.knou.ac.kr/cs1/4792/subview.do"
 FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수", re.IGNORECASE)
 QUICK_INTENTS = (
-    (re.compile(r"교육과정|교과과정|커리큘럼", re.IGNORECASE), ("교육과정", "교과과정", "교과정보")),
-    (re.compile(r"최근\s*공지|공지사항|학과\s*공지", re.IGNORECASE), ("공지사항", "공지", "학과광장")),
-    (re.compile(r"학과\s*일정|학사\s*일정|일정", re.IGNORECASE), ("학과일정", "학사일정")),
+    ("curriculum", re.compile(r"교육과정|교과과정|커리큘럼", re.IGNORECASE), ("교육과정", "교과과정", "교과정보")),
+    ("notice", re.compile(r"최근\s*공지|공지사항|학과\s*공지", re.IGNORECASE), ("공지사항", "공지", "학과광장")),
+    ("schedule", re.compile(r"학과\s*일정|학사\s*일정|일정", re.IGNORECASE), ("학과일정", "학사일정")),
 )
 STOPWORDS = {
     "무엇", "뭐", "어떻게", "알려줘", "알려주세요", "대한", "관련", "있는", "있나요",
@@ -100,7 +102,10 @@ class SearchIndex:
         hits = []
         compact_query = re.sub(r"\s+", "", query.lower())
         faculty_intent = bool(FACULTY_QUERY_RE.search(query))
-        quick_intent_terms = next((terms for pattern, terms in QUICK_INTENTS if pattern.search(query)), ())
+        quick_intent, quick_intent_terms = next(
+            ((name, terms) for name, pattern, terms in QUICK_INTENTS if pattern.search(query)),
+            ("", ()),
+        )
 
         for doc in documents:
             tokens = doc.get("tokens") or []
@@ -152,15 +157,46 @@ class SearchIndex:
                 )
         ranked = sorted(hits, key=lambda item: item["score"], reverse=True)
         if faculty_intent:
+            official_faculty = [hit for hit in ranked if hit.get("source_url") == FACULTY_URL]
+            if official_faculty:
+                return official_faculty[:top_k]
             faculty_hits = [
                 hit
                 for hit in ranked
-                if hit.get("source_url") == FACULTY_URL
-                or "교수진" in (hit.get("title") or "")
+                if "교수진" in (hit.get("title") or "")
                 or "교수진" in (hit.get("category") or "")
             ]
             if faculty_hits:
                 return faculty_hits[:top_k]
+        if quick_intent == "curriculum":
+            official = [hit for hit in ranked if hit.get("source_url") == CURRICULUM_URL]
+            if official:
+                return official[:top_k]
+            general_pages = [
+                hit
+                for hit in ranked
+                if hit.get("document_type") == "일반페이지"
+                and any(term in f"{hit.get('title', '')} {hit.get('category', '')}" for term in ("교과과정", "교육과정"))
+            ]
+            if general_pages:
+                return general_pages[:top_k]
+        if quick_intent == "schedule":
+            official = [hit for hit in ranked if hit.get("source_url") == SCHEDULE_URL]
+            if official:
+                return official[:top_k]
+        if quick_intent == "notice":
+            notices = [
+                hit
+                for hit in ranked
+                if "공지사항" in (hit.get("category") or "")
+                or "공지사항" == (hit.get("title") or "").strip()
+            ]
+            if notices:
+                notices.sort(
+                    key=lambda hit: (hit.get("published_at") or "", hit.get("score") or 0),
+                    reverse=True,
+                )
+                return notices[:top_k]
         return ranked[:top_k]
 
     def status(self) -> dict[str, Any]:

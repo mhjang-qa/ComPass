@@ -5,15 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="한국방송통신대학교 컴퓨터과학과 공식 정보 안내 챗봇">
   <title>ComPass · Computer + Compass</title>
-  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
-  <div id="coldStart" class="cold-start">
-    <div class="cold-card">
-      <div class="loader" aria-hidden="true"></div>
-      <strong>ComPass를 준비하고 있습니다</strong>
-      <p>무료 서버의 첫 접속은 최대 1분 정도 걸릴 수 있습니다.</p>
-      <span id="coldStatus">서버 연결 확인 중…</span>
+  <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
+    <div class="knou-utility">
+      <span>한국방송통신대학교</span>
+      <span class="utility-right">맞춤정보　＋ 기본 －</span>
+    </div>
+    <header class="knou-header">
+      <img src="/static/knou-home/logo-header.png" alt="한국방송통신대학교 컴퓨터과학과">
+      <nav aria-label="컴퓨터과학과 주요 메뉴">
+        <span>학과소개</span><span>교과정보</span><span>학습정보</span><span>학생광장</span><span>학과광장</span>
+      </nav>
+      <span class="knou-menu">☰</span>
+    </header>
+    <section class="knou-hero">
+      <div class="knou-hero-shade"></div>
+      <div class="knou-copy">
+        <h1><strong>내인생</strong>을 즐거움으로 <strong>바꾼 대학</strong></h1>
+        <p>한국방송통신대학교 컴퓨터과학과</p>
+        <div><span>학과장인사말　›</span><span>교수진소개　›</span><span>학생회&amp;스터디　›</span></div>
+      </div>
+      <div class="knou-greenbar">전화상담 안내　　→</div>
+    </section>
+    <a class="knou-source" href="https://cs.knou.ac.kr/sites/cs1/index.do" target="_blank" rel="noopener noreferrer">
+      컴퓨터과학과 공식 홈페이지 열기
+    </a>
+  </div>
+
+  <div id="appReady" class="sr-only" aria-live="polite">ComPass 준비 완료</div>
     </div>
   </div>
 
@@ -116,6 +137,6 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>

@@ -205,6 +205,16 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 
 Render 무료 인스턴스의 파일시스템은 재배포 시 초기화될 수 있습니다. 따라서 재배포 후 검색 인덱스를 다시 생성해야 합니다. 운영 안정성이 필요하면 인덱스 JSON을 영구 디스크 또는 외부 저장소에 보관하십시오.
 
+### GitHub Pages 콜드 스타트 진입점
+
+사용자에게는 Render URL 대신 아래 GitHub Pages URL을 제공합니다.
+
+```text
+https://mhjang-qa.github.io/ComPass/
+```
+
+GitHub Pages 정적 화면은 즉시 컴퓨터과학과 메인 배경과 로딩 상태를 표시하고 Render의 `/api/health`를 호출합니다. Render가 준비되면 실제 ComPass 화면을 자동으로 불러옵니다. 저장소 Settings → Pages의 Source는 `GitHub Actions`로 설정합니다.
+
 ## 테스트 질문 예시
 
 - 컴퓨터과학과 교육목표를 알려줘.

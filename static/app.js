@@ -378,6 +378,7 @@ function renderGenericItems(bubble, payload, messageRow) {
       appendSimpleList(card, "추천 대상", item.recommended_for || []);
     } else if (payload.answer_type === "course_difficulty") {
       appendField(card, "공식 과목 정보", item.official_overview);
+      card.appendChild(document.createElement("br"));
       appendField(card, "참고용 학습 부담", item.difficulty_advice);
       const note = document.createElement("p");
       note.className = "answer-note";

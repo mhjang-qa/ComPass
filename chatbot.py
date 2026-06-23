@@ -905,12 +905,16 @@ def _gemini(prompt: str) -> str:
 
 def call_llm(question: str, *, prompt_override: str | None = None) -> str:
     prompt = prompt_override or _llm_prompt(question)
-    if config.LLM_PROVIDER == "gemini":
-        return _gemini(prompt)
-    if config.LLM_PROVIDER == "openai":
-        return _openai(prompt)
-    raise RuntimeError(f"지원하지 않는 LLM_PROVIDER: {config.LLM_PROVIDER}")
+    provider = (config.LLM_PROVIDER or "").strip().lower()
 
+    logger.info("LLM_PROVIDER=%r", provider)
+
+    if provider == "gemini":
+        return _gemini(prompt)
+    if provider == "openai":
+        return _openai(prompt)
+
+    raise RuntimeError(f"지원하지 않는 LLM_PROVIDER: {config.LLM_PROVIDER}")
 
 def answer_question(
     question: str,

@@ -202,9 +202,22 @@ class SearchIndex:
             notices = [
                 hit
                 for hit in ranked
-                if "공지사항" in (hit.get("category") or "")
-                or "공지사항" == (hit.get("title") or "").strip()
+                if (
+                    "공지사항" in (hit.get("category") or "")
+                    or "공지" in (hit.get("category") or "")
+                )
+                and (
+                    hit.get("document_type") == "게시물"
+                    or "artclView.do" in (hit.get("source_url") or "")
+                )
             ]
+            if not notices:
+                notices = [
+                    hit
+                    for hit in ranked
+                    if "공지사항" in (hit.get("category") or "")
+                    or "공지사항" == (hit.get("title") or "").strip()
+                ]
             if notices:
                 notices.sort(
                     key=lambda hit: (hit.get("published_at") or "", hit.get("score") or 0),

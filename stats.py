@@ -18,7 +18,16 @@ def record_interaction(question: str, result: dict[str, Any]) -> None:
     client = NotionClient()
     client.ensure_stats_schema()
     sources = result.get("sources") or []
-    reference_urls = "\n".join(source.get("url", "") for source in sources if source.get("url"))
+    item_urls = [
+        item.get("source_url") or item.get("fallback_url")
+        for item in (result.get("items") or [])
+    ]
+    all_urls = [
+        *(source.get("url", "") for source in sources),
+        *(result.get("source_urls") or []),
+        *item_urls,
+    ]
+    reference_urls = "\n".join(dict.fromkeys(url for url in all_urls if url))
     mode = result.get("mode", "SYSTEM")
     payload = {
         "parent": {"database_id": normalize_id(config.NOTION_STATS_DB_ID)},
@@ -35,6 +44,9 @@ def record_interaction(question: str, result: dict[str, Any]) -> None:
             "응답시간": {"number": float(result.get("elapsed_ms") or 0)},
             "검색점수": {"number": float(result.get("score") or 0)},
             "실패사유": {"rich_text": rich_text(result.get("failure_reason", ""))},
+            "응답유형": {"select": {"name": str(result.get("answer_type") or "text")[:100]}},
+            "응답요약": {"rich_text": rich_text(result.get("summary", ""), 1000)},
+            "표시항목수": {"number": min(len(result.get("items") or []), int(result.get("display_limit") or 3))},
         },
     }
     client.request("POST", "/pages", payload)

@@ -180,6 +180,24 @@ button { cursor: pointer; }
 .answer-note { margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; color: #56697a; background: #f3f7fa; font-size: .8rem; line-height: 1.55; }
 .answer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .answer-link { display: inline-flex; align-items: center; justify-content: center; padding: 9px 12px; border: 1px solid #bcd7eb; border-radius: 11px; color: var(--blue); background: #f8fcff; font-size: .84rem; font-weight: 750; text-decoration: none; }
+.answer-card-actions { display: flex; margin-top: 12px; padding-top: 10px; border-top: 1px solid #e4edf4; }
+.answer-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #bcd7eb;
+  border-radius: 10px;
+  color: var(--blue);
+  background: #f8fcff;
+  font-size: .82rem;
+  font-weight: 750;
+  text-align: center;
+  text-decoration: none;
+}
+.answer-link-button:hover { background: #eef8ff; }
 .source-list { display: grid; gap: 6px; margin-top: 10px; }
 .source-list a { color: var(--blue); font-size: .82rem; font-weight: 700; text-decoration: none; }
 .loading-bubble { display: flex; align-items: center; gap: 11px; min-width: min(310px, 88%); }

@@ -39,7 +39,7 @@ def test_faculty_intent_only_uses_faculty_document(tmp_path) -> None:
     assert result["mode"] == "DB검색"
     assert len(result["sources"]) == 1
     assert result["sources"][0]["url"] == FACULTY_URL
-    assert result["answer"] == "컴퓨터과학과 교수진 정보입니다."
+    assert result["answer"] == "컴퓨터과학과 교수진 안내입니다."
     assert [item["name"] for item in result["items"]] == ["손진곤", "이병래"]
     assert "전 산업 분야" not in result["answer"]
     assert result["answer_type"] == "faculty"
@@ -49,7 +49,9 @@ def test_faculty_intent_only_uses_faculty_document(tmp_path) -> None:
         "title": "교수",
         "email": "jgshon@knou.ac.kr",
         "phone": "02-3668-4656",
-        "subjects_undergraduate": ["이산수학"],
-        "subjects_graduate": [],
-        "source_url": FACULTY_URL,
-    }
+            "subjects_undergraduate": ["이산수학"],
+            "subjects_graduate": [],
+            "source_url": FACULTY_URL,
+            "fallback_url": FACULTY_URL,
+            "link_label": "교수진 페이지 바로가기",
+        }

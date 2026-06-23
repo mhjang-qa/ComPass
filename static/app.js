@@ -224,7 +224,9 @@ function appendSubjectList(container, item) {
     const li = document.createElement("li");
     const strong = document.createElement("strong");
     strong.textContent = level;
-    li.append(strong, document.createTextNode(` ${subjects.join(", ")}`));
+    const summary = subjects.slice(0, 3).join(", ");
+    const suffix = subjects.length > 3 ? " 등" : "";
+    li.append(strong, document.createTextNode(` ${summary}${suffix}`));
     list.appendChild(li);
   });
   container.appendChild(list);
@@ -270,7 +272,22 @@ function appendActionLinks(container, payload) {
   container.appendChild(actions);
 }
 
-function renderFacultyAnswer(bubble, payload, messageRow) {
+function appendItemLink(card, item, fallbackUrl = "", fallbackLabel = "자세히 보기") {
+  const url = item.source_url || item.fallback_url || fallbackUrl;
+  if (!url) return;
+  const actions = document.createElement("div");
+  actions.className = "answer-card-actions";
+  const link = document.createElement("a");
+  link.className = "answer-link-button";
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = `${item.link_label || fallbackLabel} ↗`;
+  actions.appendChild(link);
+  card.appendChild(actions);
+}
+
+function renderFacultyList(bubble, payload, messageRow) {
   const header = document.createElement("div");
   header.className = "answer-heading";
   const title = document.createElement("strong");
@@ -294,6 +311,7 @@ function renderFacultyAnswer(bubble, payload, messageRow) {
     appendField(card, "이메일", item.email);
     appendField(card, "연락처", item.phone);
     appendSubjectList(card, item);
+    appendItemLink(card, item, payload.source_urls?.[0], "교수진 페이지 바로가기");
     list.appendChild(card);
     return card;
   });
@@ -329,10 +347,7 @@ function renderGenericItems(bubble, payload, messageRow) {
     if (payload.answer_type === "course_table") {
       appendField(card, "학년/학기", [item.grade, item.semester].filter(Boolean).join(" "));
       appendField(card, "구분", item.category);
-      appendField(card, "코드", item.course_code);
-      appendField(card, "학점", item.credit ? `${item.credit}학점` : "");
-      appendField(card, "강의매체", (item.media || []).join(" / "));
-      appendField(card, "평가방법", (item.evaluation || []).join(", "));
+      appendField(card, "특징", item.feature);
     } else if (payload.answer_type === "course_recommendation") {
       appendField(card, "추천유형", item.group_name);
       appendField(card, "추천 이유", item.reason);
@@ -355,6 +370,7 @@ function renderGenericItems(bubble, payload, messageRow) {
       summary.textContent = item.summary.length > 500 ? `${item.summary.slice(0, 500)}…` : item.summary;
       card.appendChild(summary);
     }
+    appendItemLink(card, item, payload.source_urls?.[0], "자세히 보기");
     list.appendChild(card);
     return card;
   });
@@ -362,20 +378,49 @@ function renderGenericItems(bubble, payload, messageRow) {
   appendExpandButton(bubble, cards, payload.total_count || cards.length, payload.answer_type, messageRow, payload);
 }
 
+function renderNoticeList(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
+function renderCourseTable(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
+function renderScheduleList(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
+function renderRecommendation(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
+function renderGenericCards(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
+function renderTextAnswer(bubble, text) {
+  const content = document.createElement("div");
+  content.className = "message-content";
+  content.textContent = text;
+  bubble.appendChild(content);
+}
+
 function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
   const row = document.createElement("div");
   row.className = `message ${role}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  if (role === "bot" && payload.answer_type === "faculty" && Array.isArray(payload.items)) {
-    renderFacultyAnswer(bubble, payload, row);
-  } else if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
-    renderGenericItems(bubble, payload, row);
+  const renderers = {
+    faculty: renderFacultyList,
+    notice_list: renderNoticeList,
+    course_table: renderCourseTable,
+    schedule_list: renderScheduleList,
+    course_recommendation: renderRecommendation,
+  };
+  if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
+    (renderers[payload.answer_type] || renderGenericCards)(bubble, payload, row);
   } else {
-    const content = document.createElement("div");
-    content.className = "message-content";
-    content.textContent = text;
-    bubble.appendChild(content);
+    renderTextAnswer(bubble, text);
   }
   const hasLinkAction = (payload.actions || []).some((action) => action.type === "link" && action.url);
   if (!hasLinkAction) appendSourceLinks(bubble, sources);
@@ -669,7 +714,7 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  addMessage("bot", "안녕하세요, ComPass입니다.\n컴퓨터과학과 공식 정보를 쉽고 빠르게 안내합니다.");
+  addMessage("bot", "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.");
 }
 wakeServer();
 applyAppConstants();

@@ -1,4 +1,14 @@
 {
+  "response_policy": {
+    "philosophy": "공식 데이터를 학생이 이해하기 쉬운 형태로 재해석하여 안내하는 AI 학과 비서",
+    "display_limit": 3,
+    "rules": [
+      "원문 전체 출력 금지",
+      "핵심 요약 우선",
+      "개별 항목 및 전체 페이지 바로가기 제공",
+      "공식 데이터에 없는 내용은 추측하지 않음"
+    ]
+  },
   "items": [
     {
       "id": "graduation_credits",
@@ -21,9 +31,24 @@
       "title": "컴퓨터과학과 추천 자격증",
       "category": "진로 > 자격증",
       "intent": "career_certification",
+      "answer_type": "certification_list",
       "match_any": ["추천자격증", "자격증추천", "어떤자격증", "자격증"],
       "answer": "추천 자격증은 정보처리기사와 SQLD입니다.",
       "note": "학과의 필수 졸업요건이 아니라 컴퓨터·데이터 분야 진로를 위한 추천 정보입니다.",
+      "structured_items": [
+        {
+          "title": "정보처리기사",
+          "summary": "소프트웨어 개발과 정보시스템 분야의 국가기술자격입니다.",
+          "source_url": "https://www.q-net.or.kr/crf005.do?id=crf00503&jmCd=1320",
+          "link_label": "자격 정보 바로가기"
+        },
+        {
+          "title": "SQLD",
+          "summary": "데이터 모델링과 SQL 활용 역량을 확인하는 데이터 자격입니다.",
+          "source_url": "https://www.dataq.or.kr/www/sub/a_04.do",
+          "link_label": "자격 정보 바로가기"
+        }
+      ],
       "keywords": ["자격증", "정보처리기사", "SQLD", "진로"],
       "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#compass-recommended-certifications",
       "validity": "관리자 추천 기준",

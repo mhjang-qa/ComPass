@@ -5,7 +5,7 @@ def test_structured_answer_frontend_supports_cards_and_expand() -> None:
     script = Path("static/app.js").read_text(encoding="utf-8")
     style = Path("static/style.css").read_text(encoding="utf-8")
 
-    assert 'payload.answer_type === "faculty"' in script
+    assert "faculty: renderFacultyList" in script
     assert "cards.slice(limit)" in script
     assert "전체 교수진 보기" in script
     assert "간단히 보기" in script
@@ -47,3 +47,24 @@ def test_actions_support_expand_link_and_confirm_llm() -> None:
     assert 'action.type === "link"' in script
     assert 'action.type === "confirm_llm"' in script
     assert "confirm-actions" in script
+
+
+def test_answer_type_renderers_and_per_item_links_are_present() -> None:
+    script = Path("static/app.js").read_text(encoding="utf-8")
+    style = Path("static/style.css").read_text(encoding="utf-8")
+
+    for renderer in (
+        "renderNoticeList",
+        "renderFacultyList",
+        "renderCourseTable",
+        "renderScheduleList",
+        "renderRecommendation",
+        "renderGenericCards",
+        "renderTextAnswer",
+    ):
+        assert f"function {renderer}" in script
+    assert "item.source_url || item.fallback_url || fallbackUrl" in script
+    assert "subjects.slice(0, 3)" in script
+    assert 'link.rel = "noopener noreferrer"' in script
+    assert ".answer-link-button" in style
+    assert "min-height: 40px" in style

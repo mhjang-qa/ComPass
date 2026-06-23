@@ -33,6 +33,7 @@ def curated_documents() -> list[CrawlDocument]:
                 f"공식답변: {item.get('answer', '')}",
                 f"근거설명: {item.get('note', '')}",
                 f"구조화데이터: {json.dumps(item.get('recommendation_groups', []), ensure_ascii=False)}",
+                f"구조화항목: {json.dumps(item.get('structured_items', []), ensure_ascii=False)}",
             ]
         )
         document = CrawlDocument(
@@ -47,7 +48,7 @@ def curated_documents() -> list[CrawlDocument]:
             {**course, "group_name": group.get("group_name", "")}
             for group in item.get("recommendation_groups", [])
             for course in group.get("items", [])
-        ]
+        ] or item.get("structured_items", [])
         document.finalize()
         document.document_type = "검증지식"
         document.summary = item.get("answer", document.summary)

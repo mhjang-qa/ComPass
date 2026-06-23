@@ -26,6 +26,7 @@ from search_index import (
 
 logger = logging.getLogger(__name__)
 
+DEPARTMENT_HOME_URL = "https://cs.knou.ac.kr/sites/cs1/index.do"
 OUT_OF_SCOPE_MESSAGE = (
     "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다. "
     "컴퓨터과학과 홈페이지에 등록된 공식 정보 기준으로만 안내할 수 있습니다."
@@ -159,6 +160,124 @@ def is_course_recommendation(question: str) -> bool:
     return bool(COURSE_RECOMMENDATION_RE.search(question))
 
 
+def classify_intent(question: str) -> str:
+    """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
+    if casual_response(question):
+        return "smalltalk"
+    if FACULTY_QUERY_RE.search(question):
+        return "faculty"
+    if is_course_recommendation(question):
+        return "course_recommendation"
+    return _list_answer_type(question) or "text"
+
+
+def retrieve_documents(
+    index: SearchIndex,
+    question: str,
+    intent: str,
+) -> list[dict[str, Any]]:
+    """의도별 검색 범위와 결과 수를 고정해 다른 카테고리 문서 혼입을 줄인다."""
+    top_k = 20 if intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
+    filters: dict[str, Any] | None = None
+    if intent == "course_recommendation":
+        filters = {
+            "document_types": ["교육과정표", "교과목", "검증지식"],
+            "exclude_categories": ["공지사항", "게시판", "일반공지"],
+        }
+    return index.search(question, top_k=top_k, filters=filters)
+
+
+def _item_url(item: dict[str, Any], category_url: str = "") -> str:
+    return item.get("source_url") or item.get("fallback_url") or category_url or DEPARTMENT_HOME_URL
+
+
+def normalize_results(
+    intent: str,
+    hits: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """검색 원문을 화면에 직접 노출하지 않는 학생용 항목으로 변환한다."""
+    if intent == "faculty":
+        faculty_hit = next(
+            (
+                hit
+                for hit in hits
+                if hit.get("source_url") == FACULTY_URL or "교수진" in (hit.get("title") or "")
+            ),
+            hits[0] if hits else {},
+        )
+        return _faculty_items(faculty_hit)
+    if intent == "course_table":
+        return _course_items(hits)
+    if intent == "notice_list":
+        return _notice_items(hits)
+    if intent == "schedule_list":
+        return _schedule_items(hits)
+    return _generic_items(hits)
+
+
+def summarize_for_student(intent: str, items: list[dict[str, Any]]) -> str:
+    """검색 결과라는 표현 대신 학생에게 필요한 안내 문장을 만든다."""
+    count = len(items)
+    summaries = {
+        "faculty": f"총 {count}명의 교수진 중 주요 정보 3명을 먼저 안내드립니다.",
+        "course_table": "학년·학기별 주요 과목 3개를 먼저 안내드립니다.",
+        "notice_list": "최근 공지 중 학생이 먼저 확인할 내용 3개를 안내드립니다.",
+        "schedule_list": "다가오는 주요 일정 3개를 먼저 안내드립니다.",
+        "faq_list": "자주 확인하는 질문 3개를 먼저 안내드립니다.",
+        "certification_list": "진로에 도움이 되는 대표 자격증을 먼저 안내드립니다.",
+        "course_recommendation": "선수지식과 학습 부담을 고려한 과목 3개를 먼저 안내드립니다.",
+    }
+    return summaries.get(intent, "공식 데이터에서 핵심 내용만 정리해 안내드립니다.")
+
+
+def build_actions(
+    answer_type: str,
+    items: list[dict[str, Any]],
+    source_url: str = "",
+) -> list[dict[str, Any]]:
+    return _actions(answer_type, items, source_url)
+
+
+def build_structured_response(
+    answer_type: str,
+    items: list[dict[str, Any]],
+    *,
+    source_url: str,
+    sources: list[dict[str, Any]],
+    score: float,
+    keywords: list[str],
+    started: float,
+) -> dict[str, Any]:
+    titles = {
+        "faculty": "컴퓨터과학과 교수진 안내입니다.",
+        "course_table": "컴퓨터과학과 교육과정 안내입니다.",
+        "notice_list": "최근 공지사항 안내입니다.",
+        "schedule_list": "학과 일정 안내입니다.",
+        "faq_list": "자주 묻는 질문 안내입니다.",
+        "certification_list": "컴퓨터과학과 추천 자격증 안내입니다.",
+    }
+    return {
+        "answer": titles.get(answer_type, "컴퓨터과학과 공식 정보 안내입니다."),
+        "answer_type": answer_type,
+        "summary": summarize_for_student(answer_type, items),
+        "items": items,
+        "display_limit": 3,
+        "total_count": len(items),
+        "source_urls": list(dict.fromkeys(_item_url(item, source_url) for item in items)),
+        "actions": build_actions(answer_type, items, source_url),
+        "mode": "DB검색",
+        "sources": sources,
+        "score": score,
+        "keywords": keywords,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def render_fallback_text(question: str, hits: list[dict[str, Any]]) -> str:
+    """구조화 대상이 아닌 공식 문서도 최대 세 문장으로만 요약한다."""
+    return _extractive_answer(question, hits)
+
+
 def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
     if FACULTY_QUERY_RE.search(question):
         faculty_hit = next(
@@ -233,6 +352,8 @@ def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
                 "subjects_undergraduate": subjects(undergraduate_match),
                 "subjects_graduate": subjects(graduate_match),
                 "source_url": hit.get("source_url") or FACULTY_URL,
+                "fallback_url": FACULTY_URL,
+                "link_label": "교수진 페이지 바로가기",
             }
         )
         index += 2
@@ -278,10 +399,12 @@ def _generic_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "title": hit.get("title") or "공식 정보",
-            "summary": (hit.get("summary") or hit.get("body") or "")[:320],
+            "summary": (hit.get("summary") or hit.get("body") or "")[:160],
             "category": hit.get("category") or "",
             "published_at": hit.get("published_at") or "",
             "source_url": hit.get("source_url") or "",
+            "fallback_url": DEPARTMENT_HOME_URL,
+            "link_label": "자세히 보기",
         }
         for hit in hits[:10]
     ]
@@ -327,6 +450,8 @@ def _notice_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "date": hit.get("published_at") or "",
                 "description": _clean_notice_summary(hit),
                 "source_url": source_url,
+                "fallback_url": NOTICE_URL,
+                "link_label": "공지 바로가기",
             }
         )
     return items
@@ -352,6 +477,8 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "description": event.get("description") or "학과 공식 일정",
                     "category": "학과일정",
                     "source_url": hit.get("source_url") or SCHEDULE_URL,
+                    "fallback_url": SCHEDULE_URL,
+                    "link_label": "학과 일정 바로가기",
                 }
             )
 
@@ -367,6 +494,18 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     upcoming = [item for item in items if is_upcoming(item)]
     selected = upcoming or items
     return sorted(selected, key=lambda item: (item["start_date"], item["title"]))
+
+
+def _course_feature(course: dict[str, Any]) -> str:
+    name = course.get("course_name") or "해당 과목"
+    grade = course.get("grade") or ""
+    category = course.get("category") or ""
+    if any(term in name for term in ("기초", "이해", "입문")):
+        return "전공의 기본 개념을 익히는 입문 과목입니다."
+    if category == "전공":
+        prefix = f"{grade} 수준에서 " if grade else ""
+        return f"{prefix}컴퓨터과학 전공 역량을 단계적으로 학습하는 과목입니다."
+    return "공식 교육과정에 편성된 교과목입니다."
 
 
 def _course_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -386,7 +525,10 @@ def _course_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "credit": course.get("credit", ""),
                     "media": course.get("media") or [],
                     "evaluation": course.get("evaluation") or [],
+                    "feature": _course_feature(course),
                     "source_url": hit.get("source_url") or "",
+                    "fallback_url": CURRICULUM_URL,
+                    "link_label": "교육과정 바로가기",
                 }
             )
     return items
@@ -412,11 +554,12 @@ def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = ""
     if source_url:
         link_labels = {
             "faculty": "교수진 페이지 바로가기",
-            "course_table": "교육과정 페이지 바로가기",
+            "course_table": "전체 교육과정 바로가기",
             "course_recommendation": "교육과정 바로가기",
-            "notice_list": "공지사항 바로가기",
+            "notice_list": "전체 공지 바로가기",
             "schedule_list": "학과 일정 바로가기",
             "faq_list": "FAQ 바로가기",
+            "certification_list": "진로 정보 바로가기",
         }
         actions.append(
             {
@@ -429,6 +572,7 @@ def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = ""
 
 
 def _course_recommendation_response(curated: dict[str, Any], started: float) -> dict[str, Any]:
+    source_url = curated.get("source_url", "") or CURRICULUM_URL
     items = [
         {
             "title": course.get("course_name", ""),
@@ -438,11 +582,13 @@ def _course_recommendation_response(curated: dict[str, Any], started: float) -> 
             "difficulty_hint": course.get("difficulty_hint", ""),
             "workload_hint": course.get("workload_hint", ""),
             "credit": course.get("credit", ""),
+            "source_url": source_url,
+            "fallback_url": CURRICULUM_URL,
+            "link_label": "교육과정 바로가기",
         }
         for group in curated.get("recommendation_groups", [])
         for course in group.get("items", [])
     ]
-    source_url = curated.get("source_url", "")
     return {
         "answer": curated.get("answer", "편입생 및 입문자 기준 추천 과목입니다."),
         "answer_type": "course_recommendation",
@@ -450,7 +596,7 @@ def _course_recommendation_response(curated: dict[str, Any], started: float) -> 
         "items": items,
         "display_limit": 3,
         "total_count": len(items),
-        "actions": _actions("course_recommendation", items, source_url),
+        "actions": build_actions("course_recommendation", items, source_url),
         "source_urls": [source_url] if source_url else [],
         "sources": [{"title": curated.get("title"), "url": source_url, "score": 100}] if source_url else [],
         "mode": "DB검색",
@@ -564,6 +710,30 @@ def answer_question(
     if curated:
         if curated.get("answer_type") == "course_recommendation":
             return _course_recommendation_response(curated, started)
+        if curated.get("answer_type") == "certification_list" and curated.get("structured_items"):
+            source_url = curated.get("source_url") or DEPARTMENT_HOME_URL
+            items = [
+                {
+                    **item,
+                    "source_url": item.get("source_url") or source_url,
+                    "fallback_url": source_url,
+                    "link_label": item.get("link_label") or "자격증 정보 바로가기",
+                }
+                for item in curated.get("structured_items", [])
+            ]
+            response = build_structured_response(
+                "certification_list",
+                items,
+                source_url=source_url,
+                sources=[{"title": curated.get("title"), "url": source_url, "score": 100}],
+                score=100,
+                keywords=curated.get("keywords", tokenize(clean_question)),
+                started=started,
+            )
+            response["structured_intent"] = curated.get("intent")
+            response["validity"] = curated.get("validity")
+            response["note"] = curated.get("note", "")
+            return response
         return {
             "answer": curated["answer"],
             "answer_type": curated.get("answer_type", "text"),
@@ -571,7 +741,7 @@ def answer_question(
             "items": [],
             "total_count": 0,
             "source_urls": [curated["source_url"]] if curated.get("source_url") else [],
-            "actions": _actions("text", [], curated.get("source_url", "")),
+            "actions": build_actions("text", [], curated.get("source_url", "")),
             "mode": "DB검색",
             "sources": [
                 {
@@ -588,13 +758,7 @@ def answer_question(
         }
     if is_course_recommendation(clean_question):
         index = index or SearchIndex()
-        hits = index.search(
-            clean_question,
-            filters={
-                "document_types": ["교육과정표", "교과목", "검증지식"],
-                "exclude_categories": ["공지사항", "게시판", "일반공지"],
-            },
-        )
+        hits = retrieve_documents(index, clean_question, "course_recommendation")
         course_items = _course_items(hits)
         if course_items:
             source_url = next((item.get("source_url") for item in course_items if item.get("source_url")), "")
@@ -604,6 +768,9 @@ def answer_question(
                     "reason": "공식 교육과정에 등록된 과목입니다. 세부 난이도는 개인별 배경지식에 따라 달라질 수 있습니다.",
                     "difficulty_hint": "개인차 있음",
                     "workload_hint": "강의계획서와 평가방법 확인 필요",
+                    "source_url": item.get("source_url") or source_url or CURRICULUM_URL,
+                    "fallback_url": CURRICULUM_URL,
+                    "link_label": "교육과정 바로가기",
                 }
                 for item in course_items
             ]
@@ -614,7 +781,7 @@ def answer_question(
                 "items": items,
                 "display_limit": 3,
                 "total_count": len(items),
-                "actions": _actions("course_recommendation", items, source_url),
+                "actions": build_actions("course_recommendation", items, source_url),
                 "source_urls": [source_url] if source_url else [],
                 "sources": [{"title": "컴퓨터과학과 교육과정", "url": source_url, "score": 100}] if source_url else [],
                 "mode": "DB검색",
@@ -659,10 +826,9 @@ def answer_question(
         }
 
     search_question = contextualize(clean_question, history)
-    requested_answer_type = _list_answer_type(search_question)
+    requested_answer_type = classify_intent(search_question)
     index = index or SearchIndex()
-    list_top_k = 20 if requested_answer_type in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
-    hits = index.search(search_question, top_k=list_top_k)
+    hits = retrieve_documents(index, search_question, requested_answer_type)
     best_score = hits[0]["score"] if hits else 0
     if hits and best_score >= config.SEARCH_MIN_SCORE:
         sources = [
@@ -671,7 +837,7 @@ def answer_question(
             if hit.get("source_url")
         ]
         response = {
-            "answer": _extractive_answer(search_question, hits),
+            "answer": render_fallback_text(search_question, hits),
             "answer_type": "text",
             "summary": "",
             "items": [],
@@ -695,55 +861,36 @@ def answer_question(
                 ),
                 hits[0],
             )
-            items = _faculty_items(faculty_hit)
+            items = normalize_results("faculty", hits)
             if items:
-                response.update(
-                    answer="컴퓨터과학과 교수진 정보입니다.",
-                    answer_type="faculty",
-                    summary=f"총 {len(items)}명의 교수진 중 주요 정보 3명만 먼저 보여드립니다.",
-                    items=items,
-                    display_limit=3,
-                    total_count=len(items),
-                    source_urls=[faculty_hit.get("source_url") or FACULTY_URL],
-                    actions=_actions("faculty", items, faculty_hit.get("source_url") or FACULTY_URL),
-                )
+                response.update(build_structured_response(
+                    "faculty",
+                    items,
+                    source_url=faculty_hit.get("source_url") or FACULTY_URL,
+                    sources=sources,
+                    score=best_score,
+                    keywords=tokenize(clean_question),
+                    started=started,
+                ))
         else:
             answer_type = requested_answer_type
-            if answer_type:
-                if answer_type == "course_table":
-                    items = _course_items(hits)
-                    source_url = CURRICULUM_URL
-                elif answer_type == "notice_list":
-                    items = _notice_items(hits)
-                    source_url = NOTICE_URL
-                elif answer_type == "schedule_list":
-                    items = _schedule_items(hits)
-                    source_url = SCHEDULE_URL
-                else:
-                    items = _generic_items(hits)
-                    source_url = sources[0]["url"] if sources else ""
-                summaries = {
-                    "course_table": "학년·학기별 대표 과목 3개를 먼저 안내드립니다.",
-                    "notice_list": "최근 공지 중 관련도 높은 3개를 먼저 안내드립니다.",
-                    "schedule_list": "다가오는 주요 일정 3개를 먼저 안내드립니다.",
-                    "faq_list": "관련 FAQ 3개를 먼저 안내드립니다.",
+            if answer_type in {"course_table", "notice_list", "schedule_list", "faq_list"}:
+                category_urls = {
+                    "course_table": CURRICULUM_URL,
+                    "notice_list": NOTICE_URL,
+                    "schedule_list": SCHEDULE_URL,
+                    "faq_list": sources[0]["url"] if sources else DEPARTMENT_HOME_URL,
                 }
-                answers = {
-                    "course_table": "컴퓨터과학과 교육과정 안내입니다.",
-                    "notice_list": "최근 공지사항입니다.",
-                    "schedule_list": "다가오는 학과 일정입니다.",
-                    "faq_list": "자주 묻는 질문 안내입니다.",
-                }
-                response.update(
-                    answer=answers.get(answer_type, response["answer"]),
-                    answer_type=answer_type,
-                    summary=summaries.get(answer_type, "관련 정보 3개를 먼저 안내드립니다."),
-                    items=items,
-                    display_limit=3,
-                    total_count=len(items),
-                    source_urls=[source["url"] for source in sources],
-                    actions=_actions(answer_type, items, source_url),
-                )
+                items = normalize_results(answer_type, hits)
+                response.update(build_structured_response(
+                    answer_type,
+                    items,
+                    source_url=category_urls[answer_type],
+                    sources=sources,
+                    score=best_score,
+                    keywords=tokenize(clean_question),
+                    started=started,
+                ))
         return response
 
     if not allow_llm:

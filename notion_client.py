@@ -34,6 +34,7 @@ KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
     "table_headers": {"rich_text": {}},
     "table_rows": {"rich_text": {}},
     "normalized_items": {"rich_text": {}},
+    "응답가이드": {"rich_text": {}},
 }
 
 STATS_SCHEMA: dict[str, dict[str, Any]] = {
@@ -46,6 +47,9 @@ STATS_SCHEMA: dict[str, dict[str, Any]] = {
     "응답시간": {"number": {"format": "number"}},
     "검색점수": {"number": {"format": "number"}},
     "실패사유": {"rich_text": {}},
+    "응답유형": {"select": {}},
+    "응답요약": {"rich_text": {}},
+    "표시항목수": {"number": {"format": "number"}},
 }
 
 
@@ -272,6 +276,9 @@ class NotionClient:
             "table_headers": {"rich_text": rich_text(json.dumps(doc.table_headers, ensure_ascii=False))},
             "table_rows": {"rich_text": rich_text(json.dumps(doc.table_rows, ensure_ascii=False))},
             "normalized_items": {"rich_text": rich_text(json.dumps(doc.normalized_items, ensure_ascii=False))},
+            "응답가이드": {
+                "rich_text": rich_text("원문 전체 출력 금지 · 학생용 핵심 요약 · 최대 3개 우선 표시 · 공식 링크 제공")
+            },
         }
         if doc.published_at:
             props["게시일"] = {"date": {"start": doc.published_at}}
@@ -394,6 +401,7 @@ class NotionClient:
             get = lambda name: self._property_text(props.get(name, {}))
             keywords_prop = props.get("키워드", {})
             keywords = [x.get("name", "") for x in keywords_prop.get("multi_select", [])]
+            source_url = get("원본URL") or config.CRAWL_START_URL
             documents.append(
                 {
                     "page_id": page.get("id", ""),
@@ -402,7 +410,7 @@ class NotionClient:
                     "document_type": get("문서유형"),
                     "body": get("본문"),
                     "summary": get("요약"),
-                    "source_url": get("원본URL"),
+                    "source_url": source_url,
                     "published_at": get("게시일"),
                     "collected_at": get("수집일"),
                     "keywords": keywords,
@@ -412,6 +420,7 @@ class NotionClient:
                     "table_headers": self._json_property(get("table_headers"), []),
                     "table_rows": self._json_property(get("table_rows"), []),
                     "normalized_items": self._json_property(get("normalized_items"), []),
+                    "response_guide": get("응답가이드"),
                 }
             )
         return documents

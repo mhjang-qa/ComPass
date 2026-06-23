@@ -24,7 +24,10 @@ def test_recommended_certifications_follow_up(tmp_path) -> None:
         index=empty_index(tmp_path),
     )
 
-    assert result["answer"] == "추천 자격증은 정보처리기사와 SQLD입니다."
+    assert result["answer"] == "컴퓨터과학과 추천 자격증 안내입니다."
+    assert result["answer_type"] == "certification_list"
+    assert [item["title"] for item in result["items"]] == ["정보처리기사", "SQLD"]
+    assert all(item["source_url"] for item in result["items"])
     assert result["structured_intent"] == "career_certification"
 
 

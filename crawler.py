@@ -29,6 +29,8 @@ TECHNICAL_LINE_PATTERNS = (
     re.compile(r"^(?:fnctId|fnctNo|imageSlideSetupSeq|recentBbsSetupSeq)=", re.IGNORECASE),
     re.compile(r"^(?:cs1_)?JW_[A-Z0-9_]+$", re.IGNORECASE),
     re.compile(r"^(?:cnvrsVe|stopTime|pcCo|cnvrsMth|pcMgWidth|isImageNoHandlr)", re.IGNORECASE),
+    re.compile(r"^(?:글번호|조회수)\s*[:：]?\s*\d+\s*$"),
+    re.compile(r"^(?:작성자|카테고리|게시일)\s*[:：]\s*$"),
 )
 BOILERPLATE_LINES = {
     "맞춤정보", "확대", "기본", "축소", "통합검색", "사이트맵", "모바일 메뉴 열기",
@@ -115,6 +117,9 @@ def clean_text(text: str) -> str:
         if any(pattern.search(line) for pattern in TECHNICAL_LINE_PATTERNS):
             continue
         if cleaned and cleaned[-1] == line:
+            continue
+        line = re.sub(r"^[★☆■□◆◇▶▷●○]+\s*", "", line).strip()
+        if not line:
             continue
         cleaned.append(line)
     return "\n".join(cleaned).strip()

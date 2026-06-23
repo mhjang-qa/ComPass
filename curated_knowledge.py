@@ -32,6 +32,7 @@ def curated_documents() -> list[CrawlDocument]:
                 f"적용기준: {item.get('validity', '')}",
                 f"공식답변: {item.get('answer', '')}",
                 f"근거설명: {item.get('note', '')}",
+                f"구조화데이터: {json.dumps(item.get('recommendation_groups', []), ensure_ascii=False)}",
             ]
         )
         document = CrawlDocument(
@@ -41,7 +42,13 @@ def curated_documents() -> list[CrawlDocument]:
             source_url=item.get("source_url", config.CRAWL_START_URL),
             collected_at=item.get("updated_at", "2026-06-22T00:00:00+09:00"),
             published_at=item.get("published_at", ""),
-        ).finalize()
+        )
+        document.normalized_items = [
+            {**course, "group_name": group.get("group_name", "")}
+            for group in item.get("recommendation_groups", [])
+            for course in group.get("items", [])
+        ]
+        document.finalize()
         document.document_type = "검증지식"
         document.summary = item.get("answer", document.summary)
         document.keywords = item.get("keywords", document.keywords)

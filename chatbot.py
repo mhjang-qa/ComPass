@@ -69,6 +69,12 @@ CASUAL_CHAT_RE = re.compile(
     r"점심\s*(뭐|추천)|저녁\s*(뭐|추천)|뭐\s*먹",
     re.IGNORECASE,
 )
+COURSE_RECOMMENDATION_RE = re.compile(
+    r"듣기\s*편한\s*과목|쉬운\s*과목|편한\s*과목|과목\s*추천|수강\s*추천|추천\s*과목|"
+    r"3\s*학점|3\s*학년\s*편입|편입생|처음\s*(들을|수강)|입문\s*과목|직장인\s*추천|"
+    r"부담\s*적은\s*과목|난이도\s*낮은\s*과목|수강하기\s*좋은\s*과목",
+    re.IGNORECASE,
+)
 OUT_OF_SCOPE_PATTERNS = re.compile(
     r"날씨|주가|환율|맛집|연애|운세|로또|코딩\s*(해줘|대행)|다른\s*학교|타\s*학교|"
     r"타\s*학과|의학|법률\s*상담|투자\s*추천|정치",
@@ -104,6 +110,12 @@ def casual_response(question: str) -> dict[str, Any] | None:
         return None
     return {
         "answer": answer,
+        "answer_type": "smalltalk",
+        "summary": answer.splitlines()[0],
+        "items": [],
+        "total_count": 0,
+        "source_urls": [],
+        "actions": [],
         "mode": "일상대화",
         "sources": [],
         "score": 0,
@@ -131,6 +143,10 @@ def is_out_of_scope(question: str) -> bool:
     if OUT_OF_SCOPE_PATTERNS.search(question):
         return True
     return not bool(SCOPE_PATTERNS.search(question))
+
+
+def is_course_recommendation(question: str) -> bool:
+    return bool(COURSE_RECOMMENDATION_RE.search(question))
 
 
 def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
@@ -164,11 +180,11 @@ def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
     for _, sentence in sorted(candidates, key=lambda item: item[0], reverse=True):
         if sentence not in selected:
             selected.append(sentence)
-        if len(selected) >= 5:
+        if len(selected) >= 3:
             break
     if not selected:
         selected = [hit.get("summary", "") for hit in hits[:2] if hit.get("summary")]
-    return "\n".join(f"- {sentence[:500]}" for sentence in selected) or OUT_OF_SCOPE_MESSAGE
+    return "\n".join(f"- {sentence[:260]}" for sentence in selected) or OUT_OF_SCOPE_MESSAGE
 
 
 def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
@@ -235,12 +251,12 @@ def _faculty_answer(hit: dict[str, Any]) -> str:
 
 def _list_answer_type(question: str) -> str:
     patterns = (
-        ("notice", r"최근\s*공지|공지사항|학과\s*공지"),
-        ("curriculum", r"교육과정|교과과정|커리큘럼"),
-        ("schedule", r"학과\s*일정|학사\s*일정"),
-        ("faq", r"faq|자주\s*묻는\s*질문"),
-        ("certification", r"추천\s*자격증|자격증\s*추천"),
-        ("exam", r"시험\s*범위|시험범위"),
+        ("notice_list", r"최근\s*공지|공지사항|학과\s*공지"),
+        ("course_table", r"교육과정|교과과정|커리큘럼"),
+        ("schedule_list", r"학과\s*일정|학사\s*일정"),
+        ("faq_list", r"faq|자주\s*묻는\s*질문"),
+        ("certification_list", r"추천\s*자격증|자격증\s*추천"),
+        ("exam_list", r"시험\s*범위|시험범위"),
     )
     for answer_type, pattern in patterns:
         if re.search(pattern, question, re.IGNORECASE):
@@ -252,13 +268,105 @@ def _generic_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "title": hit.get("title") or "공식 정보",
-            "summary": hit.get("summary") or hit.get("body") or "",
+            "summary": (hit.get("summary") or hit.get("body") or "")[:320],
             "category": hit.get("category") or "",
             "published_at": hit.get("published_at") or "",
             "source_url": hit.get("source_url") or "",
         }
         for hit in hits[:10]
     ]
+
+
+def _course_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for hit in hits:
+        for course in hit.get("normalized_items") or []:
+            if not course.get("course_name"):
+                continue
+            items.append(
+                {
+                    "title": course.get("course_name"),
+                    "course_name": course.get("course_name"),
+                    "grade": course.get("grade", ""),
+                    "semester": course.get("semester", ""),
+                    "category": course.get("category", ""),
+                    "course_code": course.get("course_code", ""),
+                    "credit": course.get("credit", ""),
+                    "media": course.get("media") or [],
+                    "evaluation": course.get("evaluation") or [],
+                    "source_url": hit.get("source_url") or "",
+                }
+            )
+    return items
+
+
+def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = "") -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    if len(items) > 3:
+        labels = {
+            "faculty": f"전체 교수진 보기 ({len(items)}명)",
+            "course_table": f"전체 교육과정 보기 ({len(items)}개)",
+            "course_recommendation": f"추천 과목 더보기 ({len(items)}개)",
+        }
+        actions.append(
+            {
+                "type": "expand",
+                "label": labels.get(answer_type, f"전체 보기 ({len(items)}개)"),
+                "target": "items",
+            }
+        )
+    if source_url:
+        link_labels = {
+            "faculty": "교수진 페이지 바로가기",
+            "course_table": "교육과정 페이지 바로가기",
+            "course_recommendation": "교육과정 바로가기",
+            "notice_list": "공지사항 바로가기",
+            "schedule_list": "학과 일정 바로가기",
+            "faq_list": "FAQ 바로가기",
+        }
+        actions.append(
+            {
+                "type": "link",
+                "label": link_labels.get(answer_type, "공식 페이지 바로가기"),
+                "url": source_url,
+            }
+        )
+    return actions
+
+
+def _course_recommendation_response(curated: dict[str, Any], started: float) -> dict[str, Any]:
+    items = [
+        {
+            "title": course.get("course_name", ""),
+            "course_name": course.get("course_name", ""),
+            "group_name": group.get("group_name", ""),
+            "reason": course.get("reason", ""),
+            "difficulty_hint": course.get("difficulty_hint", ""),
+            "workload_hint": course.get("workload_hint", ""),
+            "credit": course.get("credit", ""),
+        }
+        for group in curated.get("recommendation_groups", [])
+        for course in group.get("items", [])
+    ]
+    source_url = curated.get("source_url", "")
+    return {
+        "answer": curated.get("answer", "편입생 및 입문자 기준 추천 과목입니다."),
+        "answer_type": "course_recommendation",
+        "summary": curated.get("summary") or curated.get("note", ""),
+        "items": items,
+        "display_limit": 3,
+        "total_count": len(items),
+        "actions": _actions("course_recommendation", items, source_url),
+        "source_urls": [source_url] if source_url else [],
+        "sources": [{"title": curated.get("title"), "url": source_url, "score": 100}] if source_url else [],
+        "mode": "DB검색",
+        "score": 100,
+        "keywords": curated.get("keywords", []),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "structured_intent": curated.get("intent"),
+        "validity": curated.get("validity"),
+        "note": curated.get("note", ""),
+    }
 
 
 def _llm_prompt(question: str) -> str:
@@ -342,15 +450,34 @@ def answer_question(
     started = time.perf_counter()
     clean_question = sanitize_input(question)
     if not clean_question:
-        return {"answer": "질문을 입력해 주세요.", "mode": "SYSTEM", "sources": [], "score": 0}
+        return {
+            "answer": "질문을 입력해 주세요.",
+            "answer_type": "text",
+            "summary": "",
+            "items": [],
+            "total_count": 0,
+            "source_urls": [],
+            "actions": [],
+            "mode": "SYSTEM",
+            "sources": [],
+            "score": 0,
+        }
     casual = casual_response(clean_question)
     if casual:
         casual["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
         return casual
     curated = match_curated(clean_question, history)
     if curated:
+        if curated.get("answer_type") == "course_recommendation":
+            return _course_recommendation_response(curated, started)
         return {
             "answer": curated["answer"],
+            "answer_type": curated.get("answer_type", "text"),
+            "summary": curated.get("note", ""),
+            "items": [],
+            "total_count": 0,
+            "source_urls": [curated["source_url"]] if curated.get("source_url") else [],
+            "actions": _actions("text", [], curated.get("source_url", "")),
             "mode": "DB검색",
             "sources": [
                 {
@@ -365,9 +492,70 @@ def answer_question(
             "structured_intent": curated.get("intent"),
             "validity": curated.get("validity"),
         }
+    if is_course_recommendation(clean_question):
+        index = index or SearchIndex()
+        hits = index.search(
+            clean_question,
+            filters={
+                "document_types": ["교육과정표", "교과목", "검증지식"],
+                "exclude_categories": ["공지사항", "게시판", "일반공지"],
+            },
+        )
+        course_items = _course_items(hits)
+        if course_items:
+            source_url = next((item.get("source_url") for item in course_items if item.get("source_url")), "")
+            items = [
+                {
+                    **item,
+                    "reason": "공식 교육과정에 등록된 과목입니다. 세부 난이도는 개인별 배경지식에 따라 달라질 수 있습니다.",
+                    "difficulty_hint": "개인차 있음",
+                    "workload_hint": "강의계획서와 평가방법 확인 필요",
+                }
+                for item in course_items
+            ]
+            return {
+                "answer": "편입생 및 입문자 기준 추천 가능한 과목입니다.",
+                "answer_type": "course_recommendation",
+                "summary": "공식 교육과정 데이터에서 확인한 과목 3개를 먼저 안내드립니다.",
+                "items": items,
+                "display_limit": 3,
+                "total_count": len(items),
+                "actions": _actions("course_recommendation", items, source_url),
+                "source_urls": [source_url] if source_url else [],
+                "sources": [{"title": "컴퓨터과학과 교육과정", "url": source_url, "score": 100}] if source_url else [],
+                "mode": "DB검색",
+                "score": hits[0]["score"] if hits else 0,
+                "keywords": tokenize(clean_question),
+                "elapsed_ms": round((time.perf_counter() - started) * 1000),
+                "structured_intent": "course_recommendation",
+                "validity": "학기별 개설 과목 및 학점은 공식 교육과정표 확인 필요",
+            }
+        return {
+            "answer": "과목 추천을 위해 필요한 구조화된 교육과정 데이터를 아직 충분히 찾지 못했습니다.",
+            "answer_type": "course_recommendation",
+            "summary": "교육과정 데이터를 다시 크롤링하거나 관리자 화면에서 인덱스를 재생성해 주세요.",
+            "items": [],
+            "display_limit": 3,
+            "total_count": 0,
+            "actions": [],
+            "source_urls": [],
+            "sources": [],
+            "mode": "DB검색",
+            "score": 0,
+            "keywords": tokenize(clean_question),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "structured_intent": "course_recommendation",
+            "failure_reason": "구조화 교육과정 데이터 없음",
+        }
     if is_out_of_scope(clean_question):
         return {
             "answer": OUT_OF_SCOPE_MESSAGE,
+            "answer_type": "out_of_scope",
+            "summary": OUT_OF_SCOPE_MESSAGE,
+            "items": [],
+            "total_count": 0,
+            "source_urls": [],
+            "actions": [],
             "mode": "SYSTEM",
             "sources": [],
             "score": 0,
@@ -388,6 +576,12 @@ def answer_question(
         ]
         response = {
             "answer": _extractive_answer(search_question, hits),
+            "answer_type": "text",
+            "summary": "",
+            "items": [],
+            "total_count": 0,
+            "source_urls": [source["url"] for source in sources],
+            "actions": [],
             "mode": "DB검색",
             "sources": sources,
             "score": best_score,
@@ -410,19 +604,39 @@ def answer_question(
                 response.update(
                     answer="컴퓨터과학과 교수진 정보입니다.",
                     answer_type="faculty",
+                    summary=f"총 {len(items)}명의 교수진 중 주요 정보 3명만 먼저 보여드립니다.",
                     items=items,
+                    display_limit=3,
                     total_count=len(items),
                     source_urls=[faculty_hit.get("source_url") or FACULTY_URL],
+                    actions=_actions("faculty", items, faculty_hit.get("source_url") or FACULTY_URL),
                 )
         else:
             answer_type = _list_answer_type(search_question)
             if answer_type:
-                items = _generic_items(hits)
+                items = _course_items(hits) if answer_type == "course_table" else _generic_items(hits)
+                source_url = sources[0]["url"] if sources else ""
+                summaries = {
+                    "course_table": "학년·학기별 대표 과목 3개를 먼저 안내드립니다.",
+                    "notice_list": "최근 공지 중 관련도 높은 3개를 먼저 안내드립니다.",
+                    "schedule_list": "주요 일정 3개를 먼저 안내드립니다.",
+                    "faq_list": "관련 FAQ 3개를 먼저 안내드립니다.",
+                }
+                answers = {
+                    "course_table": "컴퓨터과학과 교육과정 안내입니다.",
+                    "notice_list": "최근 공지사항 안내입니다.",
+                    "schedule_list": "컴퓨터과학과 학과 일정 안내입니다.",
+                    "faq_list": "자주 묻는 질문 안내입니다.",
+                }
                 response.update(
+                    answer=answers.get(answer_type, response["answer"]),
                     answer_type=answer_type,
+                    summary=summaries.get(answer_type, "관련 정보 3개를 먼저 안내드립니다."),
                     items=items,
+                    display_limit=3,
                     total_count=len(items),
                     source_urls=[source["url"] for source in sources],
+                    actions=_actions(answer_type, items, source_url),
                 )
         return response
 
@@ -432,6 +646,12 @@ def answer_question(
                 "공식 지식 DB에서 충분한 근거를 찾지 못했습니다. "
                 "제한된 범위에서 LLM 보조 검색을 진행할까요?"
             ),
+            "answer_type": "text",
+            "summary": "공식 지식 DB 검색 결과가 부족합니다.",
+            "items": [],
+            "total_count": 0,
+            "source_urls": [],
+            "actions": [{"type": "confirm_llm", "label": "LLM 보조 검색", "target": "allow_llm"}],
             "mode": "LLM확인",
             "requires_llm_confirmation": True,
             "sources": [],
@@ -447,6 +667,12 @@ def answer_question(
             answer = OUT_OF_SCOPE_MESSAGE
         return {
             "answer": answer,
+            "answer_type": "text",
+            "summary": "",
+            "items": [],
+            "total_count": 0,
+            "source_urls": [],
+            "actions": [],
             "mode": "LLM",
             "sources": [],
             "score": best_score,
@@ -457,6 +683,12 @@ def answer_question(
         logger.exception("LLM fallback 실패: %s", exc)
         return {
             "answer": OUT_OF_SCOPE_MESSAGE,
+            "answer_type": "out_of_scope",
+            "summary": OUT_OF_SCOPE_MESSAGE,
+            "items": [],
+            "total_count": 0,
+            "source_urls": [],
+            "actions": [],
             "mode": "LLM",
             "sources": [],
             "score": best_score,

@@ -7,7 +7,7 @@
   <meta property="og:title" content="{{ app_name }}">
   <meta property="og:description" content="{{ app_subtitle }}">
   <title>{{ app_name }} · {{ app_subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v=11">
+  <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
   <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
@@ -77,14 +77,14 @@
             </div>
           </div>
           <div id="messages" class="messages" aria-live="polite"></div>
-          <div class="suggestions">
+          <div class="suggestions quick-actions">
             <button data-question="컴퓨터과학과 교육과정을 알려줘">교육과정</button>
             <button data-question="컴퓨터과학과 교수진 정보를 알려줘">교수진</button>
             <button data-question="컴퓨터과학과 최근 공지를 알려줘">최근 공지</button>
             <button data-question="컴퓨터과학과 학과 일정을 알려줘">학과 일정</button>
           </div>
           <form id="chatForm" class="composer">
-            <textarea id="question" rows="1" maxlength="1000" placeholder="컴퓨터과학과 공식 정보에 대해 질문하세요"></textarea>
+            <textarea id="question" rows="1" maxlength="1000" placeholder="궁금한 컴퓨터과학과 정보를 질문해보세요"></textarea>
             <button id="sendButton" type="submit">전송</button>
           </form>
         </div>
@@ -187,6 +187,6 @@
   </div>
   <script src="/static/config.js?v=1"></script>
   <script src="/static/time.js?v=1"></script>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

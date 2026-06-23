@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 import config
 from chatbot import answer_question, casual_response, sanitize_input
 from crawler import REQUIRED_DOCUMENT_URLS, KnouCrawler
+from curated_knowledge import match_curated
 from notion_client import NotionClient, notion_error_message
 from search_index import SearchIndex
 from stats import recent_stats, record_interaction_async
@@ -422,11 +423,21 @@ def search_test(req: SearchRequest, x_admin_password: str | None = Header(defaul
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    casual = casual_response(sanitize_input(req.question))
+    clean_question = sanitize_input(req.question)
+    casual = casual_response(clean_question)
     if casual:
         casual["elapsed_ms"] = 0
         record_interaction_async(req.question, casual)
         return casual
+    if match_curated(clean_question, req.history):
+        result = answer_question(
+            clean_question,
+            history=req.history,
+            allow_llm=req.allow_llm,
+            index=index,
+        )
+        record_interaction_async(req.question, result)
+        return result
     if index.status()["documents"] == 0:
         logger.warning(
             "[CHAT] empty index detected; attempting lazy load question=%r notion_connected=%s",
@@ -443,6 +454,12 @@ def chat(req: ChatRequest):
             )
             result = {
                 "answer": answer,
+                "answer_type": "text",
+                "summary": runtime_state["last_error"] or "검색 인덱스를 사용할 수 없습니다.",
+                "items": [],
+                "total_count": 0,
+                "source_urls": [],
+                "actions": [],
                 "mode": mode,
                 "sources": [],
                 "score": 0,

@@ -13,7 +13,7 @@ DATA_DIR.mkdir(exist_ok=True)
 load_dotenv(BASE_DIR / ".env")
 
 APP_NAME = "ComPass"
-APP_SUBTITLE = "Computer Science + Compass\n학생들의 길잡이"
+APP_SUBTITLE = "Computer Science + Compass · 학생들의 길잡이"
 
 
 def env(name: str, default: str = "") -> str:

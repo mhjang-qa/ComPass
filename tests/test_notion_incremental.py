@@ -71,3 +71,17 @@ def test_new_document_is_created() -> None:
     assert status == "신규"
     assert len(client.calls) == 1
     assert client.calls[0][0:2] == ("POST", "/pages")
+
+
+def test_structured_table_properties_are_saved() -> None:
+    doc = document()
+    doc.table_headers = ["교과목명", "교과목 코드"]
+    doc.table_rows = [["컴퓨터의이해", "34172"]]
+    doc.normalized_items = [{"course_name": "컴퓨터의이해", "course_code": "34172"}]
+    client = FakeNotionClient(None)
+
+    properties = client._properties(doc, "신규")
+
+    assert properties["table_headers"]["rich_text"]
+    assert properties["table_rows"]["rich_text"]
+    assert properties["normalized_items"]["rich_text"]

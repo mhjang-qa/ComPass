@@ -146,3 +146,38 @@ def test_professor_page_is_always_seeded() -> None:
     from crawler import REQUIRED_DOCUMENT_URLS
 
     assert "https://cs.knou.ac.kr/cs1/4786/subview.do" in REQUIRED_DOCUMENT_URLS
+    assert "https://cs.knou.ac.kr/cs1/4789/subview.do" in REQUIRED_DOCUMENT_URLS
+
+
+def test_curriculum_table_is_normalized() -> None:
+    soup = BeautifulSoup(
+        """
+        <table>
+          <tr>
+            <th rowspan="2">학년 학기</th><th rowspan="2">교과 구분</th>
+            <th rowspan="2">교과목명</th><th rowspan="2">교과목 코드</th>
+            <th colspan="2">강의매체</th><th colspan="2">평가방법</th>
+          </tr>
+          <tr><th>TV</th><th>웹강의</th><th>중간평가</th><th>기말평가</th></tr>
+          <tr><td>1-1 (2026)</td><td>전공</td><td>컴퓨터의이해</td><td>34172</td><td>O</td><td>O</td><td>O</td><td>O</td></tr>
+        </table>
+        """,
+        "lxml",
+    )
+
+    headers, rows, items = KnouCrawler._extract_tables(soup)
+
+    assert "강의매체 / TV" in headers
+    assert rows[0][2] == "컴퓨터의이해"
+    assert items == [
+        {
+            "course_name": "컴퓨터의이해",
+            "grade": "1학년",
+            "semester": "1학기",
+            "category": "전공",
+            "course_code": "34172",
+            "credit": "",
+            "media": ["TV", "웹강의"],
+            "evaluation": ["중간평가", "기말평가"],
+        }
+    ]

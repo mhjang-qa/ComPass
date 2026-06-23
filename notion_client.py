@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -30,6 +31,9 @@ KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
     "검색용텍스트": {"rich_text": {}},
     "첨부파일": {"rich_text": {}},
     "본문길이": {"number": {"format": "number"}},
+    "table_headers": {"rich_text": {}},
+    "table_rows": {"rich_text": {}},
+    "normalized_items": {"rich_text": {}},
 }
 
 STATS_SCHEMA: dict[str, dict[str, Any]] = {
@@ -76,9 +80,12 @@ def normalize_id(raw: str) -> str:
     return matches[-1] if matches else compact
 
 
-def rich_text(text: str, limit: int = 1900) -> list[dict[str, Any]]:
+def rich_text(text: str, limit: int = 19000) -> list[dict[str, Any]]:
     value = (text or "").strip()[:limit]
-    return [{"type": "text", "text": {"content": value}}] if value else []
+    return [
+        {"type": "text", "text": {"content": value[index : index + 1900]}}
+        for index in range(0, len(value), 1900)
+    ]
 
 
 class NotionClient:
@@ -262,6 +269,9 @@ class NotionClient:
             "검색용텍스트": {"rich_text": rich_text(doc.search_text)},
             "첨부파일": {"rich_text": rich_text("\n".join(doc.attachments))},
             "본문길이": {"number": len(doc.body)},
+            "table_headers": {"rich_text": rich_text(json.dumps(doc.table_headers, ensure_ascii=False))},
+            "table_rows": {"rich_text": rich_text(json.dumps(doc.table_rows, ensure_ascii=False))},
+            "normalized_items": {"rich_text": rich_text(json.dumps(doc.normalized_items, ensure_ascii=False))},
         }
         if doc.published_at:
             props["게시일"] = {"date": {"start": doc.published_at}}
@@ -399,9 +409,19 @@ class NotionClient:
                     "content_hash": get("콘텐츠해시"),
                     "status": get("상태"),
                     "search_text": get("검색용텍스트"),
+                    "table_headers": self._json_property(get("table_headers"), []),
+                    "table_rows": self._json_property(get("table_rows"), []),
+                    "normalized_items": self._json_property(get("normalized_items"), []),
                 }
             )
         return documents
+
+    @staticmethod
+    def _json_property(value: str, default: Any) -> Any:
+        try:
+            return json.loads(value) if value else default
+        except (TypeError, json.JSONDecodeError):
+            return default
 
     def recent_knowledge(self, limit: int = 20) -> list[dict[str, Any]]:
         self.ensure_knowledge_schema()

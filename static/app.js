@@ -9,6 +9,7 @@ const APP_CONFIG = window.COMPASS_CONFIG;
 let pendingQuestion = "";
 let pendingAdminTab = "";
 let adminPassword = "";
+const mobilePointer = window.matchMedia("(pointer: coarse)");
 
 // 새로고침 시 인증을 반드시 다시 받는다. 비밀번호는 브라우저 저장소에 보관하지 않는다.
 sessionStorage.removeItem("admin_auth");
@@ -25,15 +26,42 @@ function applyAppConstants() {
   $$("[data-app-subtitle]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitle; });
 }
 
+function isMobileDevice() {
+  return (
+    window.innerWidth <= 768
+    || mobilePointer.matches
+    || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  );
+}
+
+function updateAppHeight() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty("--app-height", `${viewportHeight}px`);
+  const keyboardOpen = isMobileDevice() && viewportHeight < window.innerHeight - 120;
+  document.body.classList.toggle("keyboard-open", keyboardOpen);
+  if (keyboardOpen) scrollMessageIntoView(messages.lastElementChild || messages, "auto");
+}
+
+function setWindowMode(fullscreen) {
+  appShell.classList.toggle("fullscreen", fullscreen);
+  appShell.classList.toggle("widget-window", !fullscreen);
+  appShell.classList.toggle("mobile-fullscreen", fullscreen && isMobileDevice());
+  $("#toggleFullscreen").hidden = fullscreen && isMobileDevice();
+  $("#toggleFullscreen").textContent = fullscreen ? "↙" : "⛶";
+  $("#toggleFullscreen").setAttribute("aria-label", fullscreen ? "창 모드로 보기" : "전체 화면으로 보기");
+  $("#toggleFullscreen").setAttribute("title", fullscreen ? "창 모드" : "전체 화면");
+}
+
 function openChatWindow() {
-  appShell.classList.remove("is-hidden", "fullscreen");
-  appShell.classList.add("widget-window");
+  appShell.classList.remove("is-hidden");
+  setWindowMode(isMobileDevice());
   chatLauncher.classList.add("is-hidden");
   chatLauncher.setAttribute("aria-expanded", "true");
-  $("#toggleFullscreen").textContent = "⛶";
-  $("#toggleFullscreen").setAttribute("aria-label", "전체 화면으로 보기");
   activateTab("chat");
-  requestAnimationFrame(() => $("#question").focus());
+  updateAppHeight();
+  if (!isMobileDevice()) {
+    requestAnimationFrame(() => $("#question").focus({ preventScroll: true }));
+  }
 }
 
 function minimizeChat() {
@@ -44,17 +72,21 @@ function minimizeChat() {
 }
 
 function toggleFullscreen() {
+  if (isMobileDevice()) {
+    setWindowMode(true);
+    return;
+  }
   const expanding = !appShell.classList.contains("fullscreen");
-  appShell.classList.toggle("fullscreen", expanding);
-  appShell.classList.toggle("widget-window", !expanding);
-  $("#toggleFullscreen").textContent = expanding ? "↙" : "⛶";
-  $("#toggleFullscreen").setAttribute("aria-label", expanding ? "창 모드로 보기" : "전체 화면으로 보기");
-  $("#toggleFullscreen").setAttribute("title", expanding ? "창 모드" : "전체 화면");
+  setWindowMode(expanding);
 }
 
 chatLauncher.addEventListener("click", openChatWindow);
 $("#minimizeChat").addEventListener("click", minimizeChat);
 $("#toggleFullscreen").addEventListener("click", toggleFullscreen);
+window.addEventListener("resize", updateAppHeight);
+window.addEventListener("orientationchange", updateAppHeight);
+window.visualViewport?.addEventListener("resize", updateAppHeight);
+window.visualViewport?.addEventListener("scroll", updateAppHeight);
 
 function adminHeaders() {
   return { "X-Admin-Password": adminPassword };
@@ -177,24 +209,44 @@ function appendSubjectList(container, item) {
   container.appendChild(list);
 }
 
-function appendExpandButton(container, cards, totalCount, answerType, messageRow) {
-  if (cards.length <= 3) return;
+function appendExpandButton(container, cards, totalCount, answerType, messageRow, payload = {}) {
+  const limit = Number(payload.display_limit || 3);
+  if (cards.length <= limit) return;
   let expanded = false;
-  cards.slice(3).forEach((card) => card.classList.add("is-collapsed-item"));
+  cards.slice(limit).forEach((card) => card.classList.add("is-collapsed-item"));
   const button = document.createElement("button");
   button.type = "button";
   button.className = "answer-expand";
-  const expandedLabel = answerType === "faculty" ? `전체 교수진 보기 (${totalCount}명)` : `더보기 (${cards.length - 3}개)`;
+  const action = (payload.actions || []).find((item) => item.type === "expand");
+  const expandedLabel = action?.label
+    || (answerType === "faculty" ? `전체 교수진 보기 (${totalCount}명)` : `전체 보기 (${totalCount}개)`);
   button.textContent = expandedLabel;
   button.setAttribute("aria-expanded", "false");
   button.addEventListener("click", () => {
     expanded = !expanded;
-    cards.slice(3).forEach((card) => card.classList.toggle("is-collapsed-item", !expanded));
+    cards.slice(limit).forEach((card) => card.classList.toggle("is-collapsed-item", !expanded));
     button.textContent = expanded ? "간단히 보기" : expandedLabel;
     button.setAttribute("aria-expanded", String(expanded));
-    scrollMessageIntoView(expanded ? cards[3] : messageRow);
+    scrollMessageIntoView(expanded ? cards[limit] : messageRow);
   });
   container.appendChild(button);
+}
+
+function appendActionLinks(container, payload) {
+  const links = (payload.actions || []).filter((action) => action.type === "link" && action.url);
+  if (!links.length) return;
+  const actions = document.createElement("div");
+  actions.className = "answer-actions";
+  links.forEach((action) => {
+    const link = document.createElement("a");
+    link.className = "answer-link";
+    link.href = action.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = `${action.label || "바로가기"} ↗`;
+    actions.appendChild(link);
+  });
+  container.appendChild(actions);
 }
 
 function renderFacultyAnswer(bubble, payload, messageRow) {
@@ -203,7 +255,7 @@ function renderFacultyAnswer(bubble, payload, messageRow) {
   const title = document.createElement("strong");
   title.textContent = payload.answer || "컴퓨터과학과 교수진 정보입니다.";
   const count = document.createElement("span");
-  count.textContent = `총 ${payload.total_count || payload.items.length}명의 교수 정보를 확인했습니다.`;
+  count.textContent = payload.summary || `총 ${payload.total_count || payload.items.length}명의 교수 정보를 확인했습니다.`;
   header.append(title, count);
   bubble.appendChild(header);
 
@@ -225,7 +277,7 @@ function renderFacultyAnswer(bubble, payload, messageRow) {
     return card;
   });
   bubble.appendChild(list);
-  appendExpandButton(bubble, cards, payload.total_count || cards.length, "faculty", messageRow);
+  appendExpandButton(bubble, cards, payload.total_count || cards.length, "faculty", messageRow, payload);
 }
 
 function renderGenericItems(bubble, payload, messageRow) {
@@ -233,6 +285,18 @@ function renderGenericItems(bubble, payload, messageRow) {
   content.className = "message-content answer-summary";
   content.textContent = payload.answer || "";
   bubble.appendChild(content);
+  if (payload.summary) {
+    const summary = document.createElement("p");
+    summary.className = "answer-lead";
+    summary.textContent = payload.summary;
+    bubble.appendChild(summary);
+  }
+  if (payload.note) {
+    const note = document.createElement("p");
+    note.className = "answer-note";
+    note.textContent = payload.note;
+    bubble.appendChild(note);
+  }
   const list = document.createElement("div");
   list.className = "answer-card-list";
   const cards = payload.items.map((item) => {
@@ -241,9 +305,24 @@ function renderGenericItems(bubble, payload, messageRow) {
     const heading = document.createElement("h3");
     heading.textContent = item.title || "공식 정보";
     card.appendChild(heading);
-    appendField(card, "카테고리", item.category);
-    appendField(card, "게시일", item.published_at);
-    if (item.summary) {
+    if (payload.answer_type === "course_table") {
+      appendField(card, "학년/학기", [item.grade, item.semester].filter(Boolean).join(" "));
+      appendField(card, "구분", item.category);
+      appendField(card, "코드", item.course_code);
+      appendField(card, "학점", item.credit ? `${item.credit}학점` : "");
+      appendField(card, "강의매체", (item.media || []).join(" / "));
+      appendField(card, "평가방법", (item.evaluation || []).join(", "));
+    } else if (payload.answer_type === "course_recommendation") {
+      appendField(card, "추천유형", item.group_name);
+      appendField(card, "추천 이유", item.reason);
+      appendField(card, "난이도", item.difficulty_hint);
+      appendField(card, "학습 부담", item.workload_hint);
+      appendField(card, "학점", item.credit ? `${item.credit}학점` : "");
+    } else {
+      appendField(card, "카테고리", item.category);
+      appendField(card, "게시일", item.published_at);
+    }
+    if (item.summary && payload.answer_type !== "course_table") {
       const summary = document.createElement("p");
       summary.className = "answer-card-summary";
       summary.textContent = item.summary.length > 500 ? `${item.summary.slice(0, 500)}…` : item.summary;
@@ -253,7 +332,7 @@ function renderGenericItems(bubble, payload, messageRow) {
     return card;
   });
   bubble.appendChild(list);
-  appendExpandButton(bubble, cards, payload.total_count || cards.length, payload.answer_type, messageRow);
+  appendExpandButton(bubble, cards, payload.total_count || cards.length, payload.answer_type, messageRow, payload);
 }
 
 function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
@@ -272,7 +351,9 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     bubble.appendChild(content);
   }
   appendSourceLinks(bubble, sources);
-  if (confirmation) {
+  appendActionLinks(bubble, payload);
+  const needsConfirmation = confirmation || (payload.actions || []).some((action) => action.type === "confirm_llm");
+  if (needsConfirmation) {
     const actions = document.createElement("div");
     actions.className = "confirm-actions";
     const yes = document.createElement("button");
@@ -348,6 +429,10 @@ $("#question").addEventListener("keydown", (event) => {
     event.preventDefault();
     $("#chatForm").requestSubmit();
   }
+});
+$("#question").addEventListener("focus", () => {
+  updateAppHeight();
+  scrollMessageIntoView(messages.lastElementChild || messages, "auto");
 });
 $$("[data-question]").forEach((button) => button.addEventListener("click", () => sendQuestion(button.dataset.question)));
 
@@ -504,30 +589,6 @@ $("#searchForm").addEventListener("submit", async (event) => {
   } catch (error) { $("#searchResults").innerHTML = `<article class="result-card">${escapeHtml(error.message)}</article>`; }
 });
 
-async function typeMessage(role, text, speed = 30) {
-
-  const messageEl = addMessage(role, "");
-
-  let result = "";
-
-  for (const char of text) {
-
-    result += char;
-
-    // 줄바꿈 처리
-
-    messageEl.innerHTML = result.replace(/\n/g, "<br>");
-
-    await new Promise(resolve =>
-
-      setTimeout(resolve, speed)
-
-    );
-
-  }
-
-}
-
 async function loadStats() {
   const tbody = $("#statsRows");
   tbody.innerHTML = '<tr><td colspan="5">불러오는 중…</td></tr>';
@@ -542,11 +603,9 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  await typeMessage(
-    "bot",
-    "안녕하세요, ComPass입니다.\n컴퓨터과학과 공식 정보를 쉽고 빠르게 안내합니다."
-  );
+  addMessage("bot", "안녕하세요, ComPass입니다.\n컴퓨터과학과 공식 정보를 쉽고 빠르게 안내합니다.");
 }
 wakeServer();
 applyAppConstants();
 updateAdminUi();
+updateAppHeight();

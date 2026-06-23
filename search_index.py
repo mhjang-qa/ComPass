@@ -90,11 +90,24 @@ class SearchIndex:
         self.path.write_text(json.dumps(self.payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"built_at": self.payload["built_at"], "documents": len(indexed)}
 
-    def search(self, query: str, top_k: int = config.SEARCH_TOP_K) -> list[dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = config.SEARCH_TOP_K,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         query_tokens = tokenize(query)
         if not query_tokens:
             return []
-        documents = self.payload.get("documents") or []
+        filters = filters or {}
+        allowed_types = set(filters.get("document_types") or [])
+        excluded_categories = [value.lower() for value in filters.get("exclude_categories") or []]
+        documents = [
+            doc
+            for doc in (self.payload.get("documents") or [])
+            if (not allowed_types or doc.get("document_type") in allowed_types)
+            and not any(term in (doc.get("category") or "").lower() for term in excluded_categories)
+        ]
         document_frequency = Counter()
         for doc in documents:
             document_frequency.update(set(doc.get("tokens") or []))

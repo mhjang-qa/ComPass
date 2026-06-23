@@ -13,6 +13,7 @@
   --quick-menu-height: 56px;
   --bottom-nav-height: 0px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-height: 100dvh;
 }
 
 * { box-sizing: border-box; }
@@ -91,9 +92,20 @@ button { cursor: pointer; }
   inset: 0;
   width: 100%;
   height: 100vh;
-  height: 100dvh;
+  height: var(--app-height, 100dvh);
   min-height: 640px;
   overflow: hidden;
+  border-radius: 0;
+}
+.app-shell.mobile-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: var(--app-height, 100dvh);
+  max-height: none;
+  min-height: 0;
+  border: 0;
   border-radius: 0;
 }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 28px 36px; color: white; background: linear-gradient(125deg, var(--navy), #174f78 70%, var(--mint)); }
@@ -173,14 +185,22 @@ button { cursor: pointer; }
 .answer-expand:hover { background: #f2f8fd; }
 .is-collapsed-item { display: none; }
 .answer-summary { margin-bottom: 10px; }
+.answer-lead { margin: -3px 0 12px; color: var(--muted); font-size: .86rem; line-height: 1.55; }
+.answer-note { margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; color: #56697a; background: #f3f7fa; font-size: .8rem; line-height: 1.55; }
+.answer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.answer-link { display: inline-flex; align-items: center; justify-content: center; padding: 9px 12px; border: 1px solid #bcd7eb; border-radius: 11px; color: var(--blue); background: #f8fcff; font-size: .84rem; font-weight: 750; text-decoration: none; }
 .source-list { display: grid; gap: 6px; margin-top: 10px; }
 .source-list a { color: var(--blue); font-size: .82rem; font-weight: 700; text-decoration: none; }
 .confirm-actions { display: flex; gap: 8px; margin-top: 10px; }
 .confirm-actions button, .suggestions button { border: 1px solid #bcd7eb; border-radius: 999px; padding: 8px 12px; color: var(--blue); background: white; }
 .suggestions button, .confirm-actions button { font-size: 15px; }
 .suggestions { display: flex; gap: 8px; padding: 10px 18px; overflow-x: auto; border-top: 1px solid var(--line); }
+.quick-actions { flex-wrap: nowrap; white-space: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.quick-actions::-webkit-scrollbar { display: none; }
+.quick-actions button { flex: 0 0 auto; }
 .composer { display: flex; gap: 10px; padding: 14px 18px 18px; }
 .composer textarea { flex: 1; resize: none; min-height: 48px; max-height: 140px; padding: 13px 15px; border: 1px solid #b9cbd9; border-radius: 14px; outline: none; font-size: 14px; }
+.composer textarea::placeholder { overflow: hidden; color: #8493a1; font-size: clamp(12px, 3.2vw, 14px); text-overflow: ellipsis; white-space: nowrap; }
 .composer textarea:focus, input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(23,105,170,.12); }
 .composer button, .primary, .search-test button { border: 0; border-radius: 12px; padding: 0 20px; color: white; background: var(--blue); font-weight: 800; }
 .section-head, .card-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
@@ -253,7 +273,7 @@ th { color: var(--muted); font-size: .77rem; }
 .widget-window .composer { padding: 10px 12px 12px; }
 .widget-window .composer textarea { min-width: 0; }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .knou-utility { height: 36px; padding: 9px 12px; }
   .knou-utility > span:first-child { padding: 11px 10px; }
   .utility-right { display: none; }
@@ -276,7 +296,14 @@ th { color: var(--muted); font-size: .77rem; }
     min-height: 480px;
     border-radius: 20px;
   }
-  .app-shell.fullscreen { min-height: 560px; }
+  .app-shell.fullscreen, .app-shell.mobile-fullscreen { height: var(--app-height, 100dvh); min-height: 0; }
+  .mobile-fullscreen .topbar { padding: max(14px, env(safe-area-inset-top)) 16px 14px; }
+  .mobile-fullscreen .topbar .eyebrow { display: none; }
+  .mobile-fullscreen .topbar h1 { margin: 0; font-size: 1.2rem; }
+  .mobile-fullscreen .brand-copy { font-size: .68rem; }
+  .mobile-fullscreen > main { overflow: hidden; }
+  .mobile-fullscreen #panel-chat { padding: 0; }
+  .mobile-fullscreen .chat-layout { max-width: none; border: 0; border-radius: 0; }
   .topbar { padding: 22px 18px; }
   .tabs { padding: 0 8px; }
   .tab { padding-inline: 14px; }
@@ -304,4 +331,13 @@ th { color: var(--muted); font-size: .77rem; }
   .metric-grid { grid-template-columns: 1fr; }
   .search-test { flex-direction: column; }
   .search-test button { min-height: 42px; }
+}
+
+body.keyboard-open .app-shell.mobile-fullscreen { height: var(--app-height); }
+body.keyboard-open .app-shell.mobile-fullscreen .tabs,
+body.keyboard-open .app-shell.mobile-fullscreen .suggestions { display: none; }
+body.keyboard-open .app-shell.mobile-fullscreen .chat-intro { padding-block: 10px; }
+body.keyboard-open .app-shell.mobile-fullscreen .composer {
+  padding-bottom: max(8px, var(--safe-bottom));
+  background: white;
 }

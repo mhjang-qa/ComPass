@@ -26,6 +26,18 @@ def quick_index(tmp_path: Path) -> SearchIndex:
                 "source_url": CURRICULUM_URL,
                 "keywords": ["교육과정"],
                 "search_text": "컴퓨터과학과 교육과정 교과과정",
+                "normalized_items": [
+                    {
+                        "course_name": "컴퓨터의이해",
+                        "grade": "1학년",
+                        "semester": "1학기",
+                        "category": "전공",
+                        "course_code": "34172",
+                        "credit": "3",
+                        "media": ["TV", "웹강의"],
+                        "evaluation": ["중간평가", "기말평가"],
+                    }
+                ],
             },
             {
                 "title": "공지사항",
@@ -102,6 +114,11 @@ def test_all_quick_menu_queries_find_db_documents(tmp_path: Path) -> None:
         "https://cs.knou.ac.kr/cs1/4812/subview.do",
         SCHEDULE_URL,
     ]
+    assert results[1]["answer_type"] == "course_table"
+    assert results[1]["items"][0]["course_name"] == "컴퓨터의이해"
+    assert "학년 | 학기" not in results[1]["answer"]
+    assert results[2]["answer_type"] == "notice_list"
+    assert results[3]["answer_type"] == "schedule_list"
 
 
 def test_frontend_uses_required_quick_queries() -> None:

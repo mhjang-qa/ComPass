@@ -46,6 +46,7 @@ ATTACHMENT_EXTENSIONS = (
 )
 REQUIRED_DOCUMENT_URLS = (
     "https://cs.knou.ac.kr/cs1/4786/subview.do",
+    "https://cs.knou.ac.kr/cs1/4789/subview.do",
 )
 
 
@@ -64,13 +65,21 @@ class CrawlDocument:
     status: str = "신규"
     search_text: str = ""
     document_type: str = "일반페이지"
+    table_headers: list[str] = field(default_factory=list)
+    table_rows: list[list[str]] = field(default_factory=list)
+    normalized_items: list[dict[str, Any]] = field(default_factory=list)
 
     def finalize(self) -> "CrawlDocument":
         self.body = clean_text(self.body)
         self.summary = summarize(self.body)
         self.keywords = extract_keywords(f"{self.title} {self.category} {self.body}")
+        normalized_text = " ".join(
+            " ".join(str(value) for value in item.values() if value)
+            for item in self.normalized_items
+        )
+        searchable_body = normalized_text or self.summary or self.body[:1000]
         self.search_text = clean_text(
-            " ".join([self.title, self.category, self.summary, " ".join(self.keywords), self.body])
+            " ".join([self.title, self.category, self.summary, " ".join(self.keywords), searchable_body])
         )
         digest_source = json.dumps(
             {
@@ -79,12 +88,17 @@ class CrawlDocument:
                 "body": self.body,
                 "published_at": self.published_at,
                 "attachments": sorted(self.attachments),
+                "table_headers": self.table_headers,
+                "table_rows": self.table_rows,
+                "normalized_items": self.normalized_items,
             },
             ensure_ascii=False,
             sort_keys=True,
         )
         self.content_hash = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
         self.document_type = classify_document_type(self.source_url, self.category)
+        if self.normalized_items and any(item.get("course_name") for item in self.normalized_items):
+            self.document_type = "교육과정표"
         return self
 
 
@@ -354,6 +368,7 @@ class KnouCrawler:
             ".view-util, .view-file, .prev-next, .btn-area"
         ):
             tag.decompose()
+        table_headers, table_rows, normalized_items = self._extract_tables(content)
         body = self._structured_text(content)
         if not body:
             return None
@@ -368,7 +383,133 @@ class KnouCrawler:
             collected_at=datetime.now().astimezone().isoformat(),
             published_at=published_at,
             attachments=list(dict.fromkeys(attachments)),
+            table_headers=table_headers,
+            table_rows=table_rows,
+            normalized_items=normalized_items,
         )
+
+    @classmethod
+    def _extract_tables(
+        cls,
+        content: BeautifulSoup,
+    ) -> tuple[list[str], list[list[str]], list[dict[str, Any]]]:
+        """HTML 표를 열 병합을 보존한 행렬과 검색/응답용 과목 데이터로 변환한다."""
+        best_headers: list[str] = []
+        best_rows: list[list[str]] = []
+        best_items: list[dict[str, Any]] = []
+        for table in content.select("table"):
+            matrix, header_flags = cls._table_matrix(table)
+            if not matrix:
+                continue
+            header_count = 0
+            for is_header in header_flags:
+                if is_header:
+                    header_count += 1
+                else:
+                    break
+            if header_count == 0:
+                header_count = 1
+            width = max(len(row) for row in matrix)
+            header_rows = [row + [""] * (width - len(row)) for row in matrix[:header_count]]
+            headers = []
+            for column in range(width):
+                labels = []
+                for row in header_rows:
+                    label = row[column].strip()
+                    if label and label not in labels:
+                        labels.append(label)
+                headers.append(" / ".join(labels) or f"열{column + 1}")
+            rows = [
+                row + [""] * (width - len(row))
+                for row in matrix[header_count:]
+                if any(cell.strip() for cell in row)
+            ]
+            items = [item for row in rows if (item := cls._normalize_course_row(headers, row))]
+            if len(items) > len(best_items) or (not best_rows and len(rows) > len(best_rows)):
+                best_headers, best_rows, best_items = headers, rows, items
+        return best_headers, best_rows, best_items
+
+    @staticmethod
+    def _table_matrix(table: BeautifulSoup) -> tuple[list[list[str]], list[bool]]:
+        matrix: list[list[str]] = []
+        header_flags: list[bool] = []
+        spans: dict[int, tuple[int, str]] = {}
+        for tr in table.find_all("tr"):
+            row: list[str] = []
+            column = 0
+
+            def consume_spans() -> None:
+                nonlocal column
+                while column in spans:
+                    remaining, value = spans[column]
+                    row.append(value)
+                    if remaining <= 1:
+                        spans.pop(column)
+                    else:
+                        spans[column] = (remaining - 1, value)
+                    column += 1
+
+            consume_spans()
+            cells = tr.find_all(["th", "td"], recursive=False)
+            for cell in cells:
+                consume_spans()
+                value = clean_text(cell.get_text(" ", strip=True))
+                try:
+                    colspan = max(1, int(cell.get("colspan", 1)))
+                    rowspan = max(1, int(cell.get("rowspan", 1)))
+                except (TypeError, ValueError):
+                    colspan = rowspan = 1
+                for _ in range(colspan):
+                    row.append(value)
+                    if rowspan > 1:
+                        spans[column] = (rowspan - 1, value)
+                    column += 1
+            consume_spans()
+            if row:
+                matrix.append(row)
+                header_flags.append(bool(cells) and all(cell.name == "th" for cell in cells))
+        return matrix, header_flags
+
+    @staticmethod
+    def _normalize_course_row(headers: list[str], row: list[str]) -> dict[str, Any] | None:
+        pairs = list(zip(headers, row))
+
+        def value_for(*terms: str) -> str:
+            return next(
+                (value.strip() for header, value in pairs if value.strip() and any(term in header for term in terms)),
+                "",
+            )
+
+        course_name = value_for("교과목명", "과목명")
+        if not course_name or course_name in {"교과목명", "과목명"}:
+            return None
+        grade_semester = value_for("학년", "학기")
+        grade_match = re.search(r"([1-4])\s*[-학년]", grade_semester)
+        semester_match = re.search(r"[-학기]\s*([12])", grade_semester)
+        if not grade_match:
+            grade_match = re.search(r"([1-4])\s*학년", grade_semester)
+        if not semester_match:
+            semester_match = re.search(r"([12])\s*학기", grade_semester)
+        media = [
+            header.split("/")[-1].strip()
+            for header, value in pairs
+            if value.upper() in {"O", "○", "Y"} and any(term in header for term in ("TV", "오디오", "웹강의", "멀티", "출석", "온라인"))
+        ]
+        evaluations = [
+            header.split("/")[-1].strip()
+            for header, value in pairs
+            if value.upper() in {"O", "○", "Y"} and any(term in header for term in ("형성", "중간", "기말", "실습", "과제", "시험"))
+        ]
+        return {
+            "course_name": course_name,
+            "grade": f"{grade_match.group(1)}학년" if grade_match else "",
+            "semester": f"{semester_match.group(1)}학기" if semester_match else "",
+            "category": value_for("교과구분", "교과 구분", "구분"),
+            "course_code": value_for("교과목코드", "교과목 코드", "과목코드"),
+            "credit": value_for("학점"),
+            "media": list(dict.fromkeys(media)),
+            "evaluation": list(dict.fromkeys(evaluations)),
+        }
 
     @staticmethod
     def _structured_text(content: BeautifulSoup) -> str:

@@ -5,14 +5,24 @@ from __future__ import annotations
 import logging
 import re
 import time
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
 import config
+from crawler import extract_schedule_items
 from curated_knowledge import match_curated
-from search_index import SearchIndex, tokenize
-from search_index import FACULTY_QUERY_RE, FACULTY_URL
+from search_index import (
+    CURRICULUM_URL,
+    FACULTY_QUERY_RE,
+    FACULTY_URL,
+    NOTICE_URL,
+    SCHEDULE_URL,
+    SearchIndex,
+    tokenize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +287,88 @@ def _generic_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _clean_notice_summary(hit: dict[str, Any], limit: int = 80) -> str:
+    """공지 원문에서 번호·첨부·메타데이터를 제거하고 한 줄로 요약한다."""
+    title = re.sub(r"\s+", " ", hit.get("title") or "").strip()
+    text = hit.get("body") or hit.get("summary") or ""
+    candidates: list[str] = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip(" -·")
+        if not line or line == title:
+            continue
+        if re.match(r"^(글번호|카테고리|게시일|작성자|조회수|첨부파일|첨부|다운로드)\s*[:：]?", line):
+            continue
+        if re.search(r"첨부파일|파일\s*다운로드|바로가기", line):
+            continue
+        candidates.append(line)
+    summary = " ".join(candidates)
+    if not summary:
+        summary = title
+    return summary if len(summary) <= limit else summary[: limit - 1].rstrip() + "…"
+
+
+def _notice_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen = set()
+    for hit in hits:
+        title = re.sub(
+            r"^\s*(?:글번호\s*[:：]?\s*)?\d{1,6}[.)]\s*",
+            "",
+            hit.get("title") or "공지사항",
+        ).strip()
+        source_url = hit.get("source_url") or ""
+        key = source_url or title
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "title": title,
+                "date": hit.get("published_at") or "",
+                "description": _clean_notice_summary(hit),
+                "source_url": source_url,
+            }
+        )
+    return items
+
+
+def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen = set()
+    for hit in hits:
+        structured = hit.get("normalized_items") or extract_schedule_items(hit.get("body") or "")
+        for event in structured:
+            if not event.get("start_date"):
+                continue
+            key = (event.get("title"), event.get("start_date"), event.get("end_date"))
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                {
+                    "title": event.get("title") or "학과 일정",
+                    "start_date": event.get("start_date") or "",
+                    "end_date": event.get("end_date") or event.get("start_date") or "",
+                    "description": event.get("description") or "학과 공식 일정",
+                    "category": "학과일정",
+                    "source_url": hit.get("source_url") or SCHEDULE_URL,
+                }
+            )
+
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    def is_upcoming(item: dict[str, Any]) -> bool:
+        if not item["end_date"]:
+            return True
+        try:
+            return date.fromisoformat(item["end_date"]) >= today
+        except ValueError:
+            return False
+
+    upcoming = [item for item in items if is_upcoming(item)]
+    selected = upcoming or items
+    return sorted(selected, key=lambda item: (item["start_date"], item["title"]))
+
+
 def _course_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for hit in hits:
@@ -307,6 +399,8 @@ def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = ""
             "faculty": f"전체 교수진 보기 ({len(items)}명)",
             "course_table": f"전체 교육과정 보기 ({len(items)}개)",
             "course_recommendation": f"추천 과목 더보기 ({len(items)}개)",
+            "notice_list": f"전체 공지 보기 ({len(items)}개)",
+            "schedule_list": f"전체 일정 보기 ({len(items)}개)",
         }
         actions.append(
             {
@@ -565,8 +659,10 @@ def answer_question(
         }
 
     search_question = contextualize(clean_question, history)
+    requested_answer_type = _list_answer_type(search_question)
     index = index or SearchIndex()
-    hits = index.search(search_question)
+    list_top_k = 20 if requested_answer_type in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
+    hits = index.search(search_question, top_k=list_top_k)
     best_score = hits[0]["score"] if hits else 0
     if hits and best_score >= config.SEARCH_MIN_SCORE:
         sources = [
@@ -612,20 +708,30 @@ def answer_question(
                     actions=_actions("faculty", items, faculty_hit.get("source_url") or FACULTY_URL),
                 )
         else:
-            answer_type = _list_answer_type(search_question)
+            answer_type = requested_answer_type
             if answer_type:
-                items = _course_items(hits) if answer_type == "course_table" else _generic_items(hits)
-                source_url = sources[0]["url"] if sources else ""
+                if answer_type == "course_table":
+                    items = _course_items(hits)
+                    source_url = CURRICULUM_URL
+                elif answer_type == "notice_list":
+                    items = _notice_items(hits)
+                    source_url = NOTICE_URL
+                elif answer_type == "schedule_list":
+                    items = _schedule_items(hits)
+                    source_url = SCHEDULE_URL
+                else:
+                    items = _generic_items(hits)
+                    source_url = sources[0]["url"] if sources else ""
                 summaries = {
                     "course_table": "학년·학기별 대표 과목 3개를 먼저 안내드립니다.",
                     "notice_list": "최근 공지 중 관련도 높은 3개를 먼저 안내드립니다.",
-                    "schedule_list": "주요 일정 3개를 먼저 안내드립니다.",
+                    "schedule_list": "다가오는 주요 일정 3개를 먼저 안내드립니다.",
                     "faq_list": "관련 FAQ 3개를 먼저 안내드립니다.",
                 }
                 answers = {
                     "course_table": "컴퓨터과학과 교육과정 안내입니다.",
-                    "notice_list": "최근 공지사항 안내입니다.",
-                    "schedule_list": "컴퓨터과학과 학과 일정 안내입니다.",
+                    "notice_list": "최근 공지사항입니다.",
+                    "schedule_list": "다가오는 학과 일정입니다.",
                     "faq_list": "자주 묻는 질문 안내입니다.",
                 }
                 response.update(

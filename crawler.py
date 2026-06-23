@@ -99,6 +99,9 @@ class CrawlDocument:
         self.document_type = classify_document_type(self.source_url, self.category)
         if self.normalized_items and any(item.get("course_name") for item in self.normalized_items):
             self.document_type = "교육과정표"
+        elif self.normalized_items and any(item.get("start_date") for item in self.normalized_items):
+            self.document_type = "학과일정"
+            self.category = "학과일정"
         return self
 
 
@@ -138,6 +141,64 @@ def extract_keywords(text: str, limit: int = 15) -> list[str]:
             continue
         counts[token] = counts.get(token, 0) + 1
     return [word for word, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+
+
+def extract_schedule_items(text: str) -> list[dict[str, str]]:
+    """월간 달력 원문에서 실제 일정 행만 추출한다."""
+    if not text:
+        return []
+
+    year_match = re.search(r"(20\d{2})\s*년", text)
+    default_year = int(year_match.group(1)) if year_match else datetime.now().year
+    pattern = re.compile(
+        r"(?P<start>\d{1,2}\.\d{1,2})"
+        r"(?:\s*~\s*(?P<end>\d{1,2}\.\d{1,2}))?"
+        r"\s*\|\s*(?P<title>[^\n|]+)"
+    )
+    items: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for match in pattern.finditer(text):
+        raw_title = clean_text(match.group("title")).strip("-· ")
+        if not raw_title:
+            continue
+        title_year = re.search(r"(20\d{2})", raw_title)
+        year = int(title_year.group(1)) if title_year else default_year
+        title = re.sub(r"^20\d{2}[.\s년]*", "", raw_title).strip() or raw_title
+
+        def to_iso(value: str, target_year: int) -> str:
+            month, day = (int(part) for part in value.split(".", 1))
+            return datetime(target_year, month, day).date().isoformat()
+
+        try:
+            start_date = to_iso(match.group("start"), year)
+            end_raw = match.group("end")
+            end_year = year
+            if end_raw:
+                start_month = int(match.group("start").split(".", 1)[0])
+                end_month = int(end_raw.split(".", 1)[0])
+                if end_month < start_month:
+                    end_year += 1
+                end_date = to_iso(end_raw, end_year)
+            else:
+                end_date = start_date
+        except ValueError:
+            continue
+
+        key = (title, start_date, end_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "title": title,
+                "start_date": start_date,
+                "end_date": end_date,
+                "description": f"{title} 관련 학과 일정",
+                "category": "학과일정",
+            }
+        )
+    return items
 
 
 def classify_document_type(url: str, category: str) -> str:
@@ -372,6 +433,8 @@ class KnouCrawler:
         body = self._structured_text(content)
         if not body:
             return None
+        if not normalized_items and ("학과일정" in category or "/4792/" in url):
+            normalized_items = extract_schedule_items(body)
 
         published_at = self._extract_date(page_text)
 

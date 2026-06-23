@@ -31,6 +31,7 @@ SYNONYMS = {
 FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
 CURRICULUM_URL = "https://cs.knou.ac.kr/cs1/4789/subview.do"
 SCHEDULE_URL = "https://cs.knou.ac.kr/cs1/4792/subview.do"
+NOTICE_URL = "https://cs.knou.ac.kr/cs1/4812/subview.do"
 FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수", re.IGNORECASE)
 QUICK_INTENTS = (
     ("curriculum", re.compile(r"교육과정|교과과정|커리큘럼", re.IGNORECASE), ("교육과정", "교과과정", "교과정보")),

@@ -156,6 +156,27 @@ function scrollMessageIntoView(row, behavior = "smooth") {
   });
 }
 
+function formatDateOnly(value) {
+  return value ? String(value).slice(0, 10) : "";
+}
+
+function formatSchedulePeriod(item) {
+  const start = formatDateOnly(item.start_date);
+  const end = formatDateOnly(item.end_date);
+  if (!start) return "";
+  if (!end || start === end) return start;
+  return `${start.slice(5)} ~ ${end.slice(5)}`;
+}
+
+const chatChromeObserver = new ResizeObserver(() => {
+  const lastMessage = messages.lastElementChild;
+  if (lastMessage) scrollMessageIntoView(lastMessage, "auto");
+});
+[".chat-intro", ".suggestions", ".composer"].forEach((selector) => {
+  const node = $(selector);
+  if (node) chatChromeObserver.observe(node);
+});
+
 function appendSourceLinks(container, sources = []) {
   const unique = sources.filter(
     (source, index, all) => source?.url && all.findIndex((item) => item?.url === source.url) === index,
@@ -318,6 +339,12 @@ function renderGenericItems(bubble, payload, messageRow) {
       appendField(card, "난이도", item.difficulty_hint);
       appendField(card, "학습 부담", item.workload_hint);
       appendField(card, "학점", item.credit ? `${item.credit}학점` : "");
+    } else if (payload.answer_type === "notice_list") {
+      appendField(card, "게시일", formatDateOnly(item.date));
+      appendField(card, "요약", item.description);
+    } else if (payload.answer_type === "schedule_list") {
+      appendField(card, "기간", formatSchedulePeriod(item));
+      appendField(card, "설명", item.description);
     } else {
       appendField(card, "카테고리", item.category);
       appendField(card, "게시일", item.published_at);
@@ -350,7 +377,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     content.textContent = text;
     bubble.appendChild(content);
   }
-  appendSourceLinks(bubble, sources);
+  const hasLinkAction = (payload.actions || []).some((action) => action.type === "link" && action.url);
+  if (!hasLinkAction) appendSourceLinks(bubble, sources);
   appendActionLinks(bubble, payload);
   const needsConfirmation = confirmation || (payload.actions || []).some((action) => action.type === "confirm_llm");
   if (needsConfirmation) {
@@ -374,6 +402,48 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
   return row;
 }
 
+function createSearchLoading() {
+  const row = document.createElement("div");
+  row.className = "message bot search-loading";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble loading-bubble";
+  const icon = document.createElement("span");
+  icon.className = "loading-icon";
+  icon.textContent = "🔎";
+  const copy = document.createElement("div");
+  copy.className = "loading-copy";
+  const title = document.createElement("strong");
+  const subtitle = document.createElement("span");
+  subtitle.textContent = "잠시만 기다려주세요.";
+  copy.append(title, subtitle);
+  bubble.append(icon, copy);
+  row.appendChild(bubble);
+  messages.appendChild(row);
+
+  const phrase = "공식 데이터를 검색하고 있습니다";
+  let index = 0;
+  let dots = 0;
+  const typingTimer = window.setInterval(() => {
+    index += 1;
+    title.textContent = phrase.slice(0, index);
+    if (index >= phrase.length) window.clearInterval(typingTimer);
+  }, 40);
+  const dotTimer = window.setInterval(() => {
+    if (index < phrase.length) return;
+    dots = (dots + 1) % 4;
+    title.textContent = `${phrase}${".".repeat(dots)}`;
+  }, 800);
+  scrollMessageIntoView(row);
+
+  return {
+    remove() {
+      window.clearInterval(typingTimer);
+      window.clearInterval(dotTimer);
+      row.remove();
+    },
+  };
+}
+
 async function sendQuestion(raw, allowLlm = false) {
   const question = raw.trim();
   if (!question) return;
@@ -383,11 +453,7 @@ async function sendQuestion(raw, allowLlm = false) {
     pendingQuestion = question;
   }
   $("#sendButton").disabled = true;
-  const waiting = document.createElement("div");
-  waiting.className = "message bot";
-  waiting.innerHTML = '<div class="bubble"><div class="message-content">공식 데이터를 검색하고 있습니다…</div></div>';
-  messages.appendChild(waiting);
-  scrollMessageIntoView(waiting);
+  const waiting = createSearchLoading();
   try {
     const result = await jsonFetch("/api/chat", {
       method: "POST",

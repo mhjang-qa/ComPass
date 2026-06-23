@@ -28,32 +28,42 @@ logger = logging.getLogger(__name__)
 
 DEPARTMENT_HOME_URL = "https://cs.knou.ac.kr/sites/cs1/index.do"
 OUT_OF_SCOPE_MESSAGE = (
-    "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다. "
-    "컴퓨터과학과 홈페이지에 등록된 공식 정보 기준으로만 안내할 수 있습니다."
+    "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다.\n"
+    "ComPass는 컴퓨터과학과 홈페이지에 등록된 공식 정보를 기준으로만 안내할 수 있습니다."
 )
 GREETING_MESSAGE = (
     "안녕하세요 👋\n"
     "저는 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이, ComPass입니다.\n"
-    "공지사항, 교육과정, 교수진, 졸업요건, 학사일정 같은 공식 정보를 안내해 드릴 수 있습니다."
+    "공식 홈페이지 정보를 바탕으로 공지사항, 교육과정, 교수진, 졸업요건, 학과 일정 등을 이해하기 쉽게 안내해드립니다."
 )
 IDENTITY_MESSAGE = (
-    "저는 ComPass입니다.\n"
-    "Computer Science와 Compass(나침반)를 결합한 이름으로, "
-    "한국방송통신대학교 컴퓨터과학과 학생들이 필요한 공식 정보를 쉽게 찾도록 돕는 "
-    "RAG 기반 학과 안내 챗봇입니다."
+    "안녕하세요 👋 저는 ComPass입니다.\n"
+    "Computer Science와 Compass(나침반)를 결합해 만든 이름으로,\n"
+    "🧭 컴퓨터과학과 학생들의 길잡이가 되어 학과 생활에 필요한 정보를 쉽고 빠르게 안내하는 AI 학과 도우미입니다.\n"
+    "공식 홈페이지 정보를 기반으로 정확한 내용을 찾아 이해하기 쉽게 안내해드립니다."
 )
 CAPABILITY_MESSAGE = (
-    "ComPass는 컴퓨터과학과 공식 홈페이지 정보를 기반으로 다음 내용을 안내할 수 있습니다.\n\n"
-    "- 공지사항\n- 교육과정\n- 교수진\n- 학사일정\n- 졸업요건\n- FAQ\n- 추천 자격증\n- 시험범위\n\n"
-    "궁금한 내용을 자연스럽게 질문해 주세요."
+    "📚 ComPass는 한국방송통신대학교 컴퓨터과학과 공식 정보를 바탕으로 다음 내용을 안내할 수 있습니다.\n\n"
+    "• 공지사항\n"
+    "• 교육과정\n"
+    "• 교수진\n"
+    "• 학사일정\n"
+    "• 졸업요건\n"
+    "• FAQ\n"
+    "• 과목 정보\n"
+    "• 시험 관련 정보\n\n"
+    "궁금한 내용을 자연스럽게 질문해 주세요.\n"
+    "어렵고 복잡한 정보도 이해하기 쉽게 안내해드립니다 😊"
 )
 THANKS_MESSAGE = (
     "도움이 되었다니 다행입니다 😊\n"
-    "컴퓨터과학과 관련해서 더 궁금한 내용이 있으면 언제든지 질문해 주세요."
+    "앞으로도 컴퓨터과학과와 관련된 궁금한 내용을 쉽고 빠르게 안내해드릴게요.\n"
+    "언제든지 편하게 질문해 주세요!"
 )
 CASUAL_LIMIT_MESSAGE = (
-    "저는 일상 대화보다는 한국방송통신대학교 컴퓨터과학과 공식 정보를 안내하는 역할에 집중하고 있습니다.\n"
-    "컴퓨터과학과 교육과정, 교수진, 졸업요건, 학사일정 등이 궁금하시면 바로 안내해 드릴게요."
+    "🧭 저는 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이 역할에 집중하고 있습니다.\n\n"
+    "교육과정, 교수진, 공지사항, 학사일정, 졸업요건 등 학과와 관련된 내용을 질문해 주시면 "
+    "공식 정보를 바탕으로 이해하기 쉽게 안내해드릴게요."
 )
 GREETING_RE = re.compile(
     r"^(안녕|안녕하세요|하이|hi|hello|헬로|ㅎㅇ|반가워|반갑습니다|잘\s*부탁해(?:요)?)[.!?~\s]*$",
@@ -483,6 +493,7 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
 
     today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+
     def is_upcoming(item: dict[str, Any]) -> bool:
         if not item["end_date"]:
             return True
@@ -863,15 +874,17 @@ def answer_question(
             )
             items = normalize_results("faculty", hits)
             if items:
-                response.update(build_structured_response(
-                    "faculty",
-                    items,
-                    source_url=faculty_hit.get("source_url") or FACULTY_URL,
-                    sources=sources,
-                    score=best_score,
-                    keywords=tokenize(clean_question),
-                    started=started,
-                ))
+                response.update(
+                    build_structured_response(
+                        "faculty",
+                        items,
+                        source_url=faculty_hit.get("source_url") or FACULTY_URL,
+                        sources=sources,
+                        score=best_score,
+                        keywords=tokenize(clean_question),
+                        started=started,
+                    )
+                )
         else:
             answer_type = requested_answer_type
             if answer_type in {"course_table", "notice_list", "schedule_list", "faq_list"}:
@@ -882,29 +895,31 @@ def answer_question(
                     "faq_list": sources[0]["url"] if sources else DEPARTMENT_HOME_URL,
                 }
                 items = normalize_results(answer_type, hits)
-                response.update(build_structured_response(
-                    answer_type,
-                    items,
-                    source_url=category_urls[answer_type],
-                    sources=sources,
-                    score=best_score,
-                    keywords=tokenize(clean_question),
-                    started=started,
-                ))
+                response.update(
+                    build_structured_response(
+                        answer_type,
+                        items,
+                        source_url=category_urls[answer_type],
+                        sources=sources,
+                        score=best_score,
+                        keywords=tokenize(clean_question),
+                        started=started,
+                    )
+                )
         return response
 
     if not allow_llm:
         return {
             "answer": (
-                "공식 지식 DB에서 충분한 근거를 찾지 못했습니다. "
-                "제한된 범위에서 LLM 보조 검색을 진행할까요?"
+                "공식 지식 DB에서 충분한 근거를 찾지 못했습니다.\n"
+                "공식 정보 범위 안에서 AI 보조 답변을 시도해볼까요?"
             ),
             "answer_type": "text",
-            "summary": "공식 지식 DB 검색 결과가 부족합니다.",
+            "summary": "공식 데이터에서 충분한 근거를 찾지 못했습니다.",
             "items": [],
             "total_count": 0,
             "source_urls": [],
-            "actions": [{"type": "confirm_llm", "label": "LLM 보조 검색", "target": "allow_llm"}],
+            "actions": [{"type": "confirm_llm", "label": "AI 보조 답변", "target": "allow_llm"}],
             "mode": "LLM확인",
             "requires_llm_confirmation": True,
             "sources": [],

@@ -12,6 +12,28 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("컴퓨터과학과 최근 공지를 알려줘") == "notice_list"
     assert classify_intent("컴퓨터과학과 학과 일정을 알려줘") == "schedule_list"
     assert classify_intent("편입생 과목 추천") == "course_recommendation"
+    assert classify_intent("인공지능은 무슨 과목이야?") == "course_detail"
+
+
+def test_ai_course_detail_is_student_friendly_and_does_not_mix_documents(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    result = answer_question(
+        "인공지능은 무슨 과목이야?",
+        index=SearchIndex(tmp_path / "empty.json"),
+    )
+
+    assert result["answer_type"] == "course_detail"
+    assert result["answer"] == "인공지능 과목 안내입니다."
+    assert result["total_count"] == 1
+    assert result["items"][0]["title"] == "인공지능"
+    assert "탐색 알고리즘" in result["items"][0]["topics"]
+    assert result["items"][0]["link_label"] == "인공지능 과목 바로가기"
+    combined = str(result)
+    assert "교수 이메일" not in combined
+    assert "경진대회" not in combined
+    assert "글번호" not in combined
 
 
 def test_course_normalization_uses_student_friendly_feature_and_link() -> None:

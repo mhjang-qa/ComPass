@@ -59,6 +59,7 @@ def test_answer_type_renderers_and_per_item_links_are_present() -> None:
         "renderCourseTable",
         "renderScheduleList",
         "renderRecommendation",
+        "renderCourseDetail",
         "renderGenericCards",
         "renderTextAnswer",
     ):

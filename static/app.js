@@ -19,11 +19,13 @@ const { formatKstDateTime } = window.ComPassTime;
 function activateTab(tabName) {
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === tabName));
   $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tabName}`));
+  appShell.classList.toggle("admin-mode", ADMIN_TABS.has(tabName));
 }
 
 function applyAppConstants() {
   $$("[data-app-name]").forEach((node) => { node.textContent = APP_CONFIG.appName; });
-  $$("[data-app-subtitle]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitle; });
+  $$("[data-app-subtitle-line1]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitleLine1; });
+  $$("[data-app-subtitle-line2]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitleLine2; });
 }
 
 function isMobileDevice() {
@@ -232,6 +234,21 @@ function appendSubjectList(container, item) {
   container.appendChild(list);
 }
 
+function appendSimpleList(container, labelText, values = []) {
+  if (!values.length) return;
+  const label = document.createElement("strong");
+  label.className = "subjects-label";
+  label.textContent = labelText;
+  const list = document.createElement("ul");
+  list.className = "subject-list";
+  values.slice(0, 5).forEach((value) => {
+    const item = document.createElement("li");
+    item.textContent = value;
+    list.appendChild(item);
+  });
+  container.append(label, list);
+}
+
 function appendExpandButton(container, cards, totalCount, answerType, messageRow, payload = {}) {
   const limit = Number(payload.display_limit || 3);
   if (cards.length <= limit) return;
@@ -354,6 +371,11 @@ function renderGenericItems(bubble, payload, messageRow) {
       appendField(card, "난이도", item.difficulty_hint);
       appendField(card, "학습 부담", item.workload_hint);
       appendField(card, "학점", item.credit ? `${item.credit}학점` : "");
+    } else if (payload.answer_type === "course_detail") {
+      appendField(card, "과목 개요", item.overview);
+      appendField(card, "쉽게 말하면", item.easy_explanation);
+      appendSimpleList(card, "주요 학습 내용", item.topics || []);
+      appendSimpleList(card, "추천 대상", item.recommended_for || []);
     } else if (payload.answer_type === "notice_list") {
       appendField(card, "게시일", formatDateOnly(item.date));
       appendField(card, "요약", item.description);
@@ -394,6 +416,10 @@ function renderRecommendation(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
 
+function renderCourseDetail(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
 function renderGenericCards(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
@@ -416,6 +442,7 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     course_table: renderCourseTable,
     schedule_list: renderScheduleList,
     course_recommendation: renderRecommendation,
+    course_detail: renderCourseDetail,
   };
   if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
     (renderers[payload.answer_type] || renderGenericCards)(bubble, payload, row);

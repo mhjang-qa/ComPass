@@ -1,12 +1,16 @@
 # ComPass
 
-**ComPass = Computer Science + Compass(나침반)**
+**ComPass = Computer Science X Compass(나침반)**
 
 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이가 되는 공식 정보 RAG 챗봇입니다. 홈페이지 공개 정보를 수집해 Notion 지식 DB에 적재하고 공식 데이터 검색을 우선합니다.
 
 ComPass는 단순 검색 결과 제공 챗봇이 아닙니다. 공식 데이터를 학생이 이해하기 쉬운 형태로 재해석하여 안내하는 AI 학과 비서입니다.
 
 모든 응답은 공식 데이터 우선, 원문 전체 출력 금지, 핵심 요약 우선, 최대 3개 먼저 표시, 더보기 제공, 개별·전체 바로가기 제공, 모바일 가독성 우선 원칙을 따릅니다.
+
+질문은 답변 전에 `smalltalk`, `faculty`, `curriculum`, `course_detail`, `course_recommendation`, `notice_list`, `schedule_list`, `faq`, `certification`, `graduation`, `out_of_scope` 의도로 분류합니다. 결정된 의도와 관련된 공식 데이터만 선별하며, 서로 다른 문서 유형을 한 답변에 섞지 않습니다.
+
+과목 상세 질문은 교수진이나 공지사항을 함께 출력하지 않고, 과목 개요·쉬운 설명·주요 학습 내용·추천 대상·공식 바로가기로 재구성합니다.
 
 ## 주요 기능
 

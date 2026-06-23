@@ -700,14 +700,15 @@ $("#runCrawl").addEventListener("click", async () => {
 
 async function loadKnowledge() {
   const tbody = $("#knowledgeRows");
-  tbody.innerHTML = '<tr><td colspan="4">불러오는 중…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5">불러오는 중…</td></tr>';
   try {
     const data = await jsonFetch("/api/knowledge/recent?limit=30", { headers: adminHeaders() });
     tbody.innerHTML = data.items.map((item) => `<tr>
       <td><a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a></td>
+      <td>${item.source_type === "community" ? "비공식 커뮤니티" : "공식"}</td>
       <td>${escapeHtml(item.category)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(formatKstDateTime(item.collected_at))}</td>
-    </tr>`).join("") || '<tr><td colspan="4">데이터가 없습니다.</td></tr>';
-  } catch (error) { tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(error.message)}</td></tr>`; }
+    </tr>`).join("") || '<tr><td colspan="5">데이터가 없습니다.</td></tr>';
+  } catch (error) { tbody.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`; }
 }
 $("#loadKnowledge").addEventListener("click", loadKnowledge);
 

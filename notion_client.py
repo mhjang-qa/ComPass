@@ -18,6 +18,8 @@ from curated_knowledge import curated_documents
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
+    "출처구분": {"select": {}},
+    "출처명": {"rich_text": {}},
     "문서유형": {"select": {}},
     "카테고리": {"select": {}},
     "본문": {"rich_text": {}},
@@ -261,6 +263,12 @@ class NotionClient:
     def _properties(self, doc: CrawlDocument, status: str) -> dict[str, Any]:
         props: dict[str, Any] = {
             "제목": {"title": rich_text(doc.title, 300)},
+            "출처구분": {
+                "select": {
+                    "name": "공식" if doc.source_type == "official" else "비공식 커뮤니티"
+                }
+            },
+            "출처명": {"rich_text": rich_text(doc.source_label, 300)},
             "문서유형": {"select": {"name": doc.document_type}},
             "카테고리": {"select": {"name": (doc.category or "기타")[:100]}},
             "본문": {"rich_text": rich_text(doc.body)},
@@ -277,7 +285,14 @@ class NotionClient:
             "table_rows": {"rich_text": rich_text(json.dumps(doc.table_rows, ensure_ascii=False))},
             "normalized_items": {"rich_text": rich_text(json.dumps(doc.normalized_items, ensure_ascii=False))},
             "응답가이드": {
-                "rich_text": rich_text("원문 전체 출력 금지 · 학생용 핵심 요약 · 최대 3개 우선 표시 · 공식 링크 제공")
+                "rich_text": rich_text(
+                    "원문 전체 출력 금지 · 학생용 핵심 요약 · 최대 3개 우선 표시 · "
+                    + (
+                        "공식 링크 제공"
+                        if doc.source_type == "official"
+                        else "비공식 참고자료로 명시 · 공식 사실 근거로 사용 금지"
+                    )
+                )
             },
         }
         if doc.published_at:
@@ -294,6 +309,8 @@ class NotionClient:
                 "callout": {
                     "icon": {"type": "emoji", "emoji": "🧭"},
                     "rich_text": rich_text(
+                        f"출처: {doc.source_label} "
+                        f"({'공식' if doc.source_type == 'official' else '비공식'}) | "
                         f"문서유형: {doc.document_type} | 카테고리: {doc.category} | "
                         f"게시일: {doc.published_at or '미확인'} | 수집일: {doc.collected_at[:10]}"
                     ),
@@ -430,6 +447,15 @@ class NotionClient:
                     "normalized_items": normalized_items,
                     "course_names": course_names,
                     "response_guide": get("응답가이드"),
+                    "source_type": (
+                        "community"
+                        if get("출처구분") == "비공식 커뮤니티"
+                        else "official"
+                    ),
+                    "source_label": (
+                        get("출처명")
+                        or "한국방송통신대학교 컴퓨터과학과 공식 홈페이지"
+                    ),
                 }
             )
         return documents
@@ -459,6 +485,12 @@ class NotionClient:
                     "source_url": get("원본URL"),
                     "collected_at": get("수집일"),
                     "status": get("상태"),
+                    "source_type": (
+                        "community"
+                        if get("출처구분") == "비공식 커뮤니티"
+                        else "official"
+                    ),
+                    "source_label": get("출처명"),
                 }
             )
         return documents

@@ -251,15 +251,15 @@ def retrieve_documents(
 ) -> list[dict[str, Any]]:
     """의도별 검색 범위와 결과 수를 고정해 다른 카테고리 문서 혼입을 줄인다."""
     top_k = 20 if intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
-    filters: dict[str, Any] | None = None
+    filters: dict[str, Any] = {"source_types": ["official"]}
     if intent in {"course_recommendation", "course_detail", "course_difficulty"}:
         course = index.detect_course(question)
-        filters = {
+        filters.update({
             "document_types": list(COURSE_DOCUMENT_TYPES),
             "exclude_document_types": ["교수진", "공지사항", "게시물", "게시판목록", "학과일정"],
             "exclude_categories": ["공지사항", "게시판", "일반공지"],
             "course_name": (course or {}).get("course_name") or detect_course_name(question),
-        }
+        })
     return index.search(question, top_k=top_k, filters=filters)
 
 

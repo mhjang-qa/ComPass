@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 from pathlib import Path
 
-from crawler import KnouCrawler, clean_text
+from crawler import CommunityCrawler, KnouCrawler, clean_text
 
 
 class AllowAllRobots:
@@ -148,6 +148,59 @@ def test_professor_page_is_always_seeded() -> None:
     assert "https://cs.knou.ac.kr/cs1/4786/subview.do" in REQUIRED_DOCUMENT_URLS
     assert "https://cs.knou.ac.kr/cs1/4789/subview.do" in REQUIRED_DOCUMENT_URLS
     assert "https://cs.knou.ac.kr/cs1/4791/subview.do" in REQUIRED_DOCUMENT_URLS
+
+
+def community_crawler_without_network() -> CommunityCrawler:
+    crawler = object.__new__(CommunityCrawler)
+    crawler.robots = AllowAllRobots()
+    return crawler
+
+
+def test_community_crawler_allows_only_public_board_routes() -> None:
+    crawler = community_crawler_without_network()
+
+    assert crawler.is_allowed("https://c-knou.com/computer_science")
+    assert crawler.is_allowed("https://c-knou.com/computer_science/page/2")
+    assert crawler.is_allowed("https://c-knou.com/computer_science/2883728", detail_only=True)
+    assert not crawler.is_allowed("https://c-knou.com/computer_science/write")
+    assert not crawler.is_allowed("https://c-knou.com/computer_science?search_keyword=시험")
+    assert not crawler.is_allowed("https://c-knou.com/computer_science/comment/123/reply")
+    assert not crawler.is_allowed("https://c-knou.com/other_board/123")
+
+
+def test_community_parser_stores_excerpt_without_author_or_comments() -> None:
+    crawler = community_crawler_without_network()
+    soup = BeautifulSoup(
+        """
+        <div class="rd_hd">
+          <strong class="catefl"><a>[질문]</a></strong>
+          <span class="date">2026.06.22 09:22</span>
+          <span class="np_16px"><a><strong>계절학기 난이도</strong></a></span>
+          <a class="nick">작성자닉네임</a>
+        </div>
+        <div class="rd_body">
+          <article>
+            <div class="rhymix_content"><p>직장과 병행하며 계절학기를 준비하고 있습니다.</p></div>
+          </article>
+        </div>
+        <div class="comment_1 rhymix_content">댓글 개인정보</div>
+        """,
+        "lxml",
+    )
+
+    document = crawler._parse_detail(
+        "https://c-knou.com/computer_science/2883728",
+        soup,
+    )
+
+    assert document is not None
+    assert document.title == "계절학기 난이도"
+    assert document.category == "비공식 커뮤니티 > 질문"
+    assert document.published_at == "2026-06-22"
+    assert document.source_type == "community"
+    assert document.document_type == "커뮤니티게시물"
+    assert "작성자닉네임" not in document.body
+    assert "댓글 개인정보" not in document.body
 
 
 def test_course_detail_specs_are_extracted_from_javascript_links() -> None:

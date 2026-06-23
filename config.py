@@ -34,6 +34,11 @@ def env_float(name: str, default: float) -> float:
         return default
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = env(name, "true" if default else "false").lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 NOTION_TOKEN = env("NOTION_TOKEN") or env("NOTION_API_KEY")
 NOTION_TOKEN_SOURCE = "NOTION_TOKEN" if env("NOTION_TOKEN") else ("NOTION_API_KEY" if env("NOTION_API_KEY") else "")
 NOTION_KNOWLEDGE_DB_ID = (
@@ -60,6 +65,12 @@ USER_AGENT = env(
     "CRAWL_USER_AGENT",
     "KNOU-CS-AI-Navigator/1.0 (+https://cs.knou.ac.kr/sites/cs1/index.do)",
 )
+COMMUNITY_CRAWL_ENABLED = env_bool("COMMUNITY_CRAWL_ENABLED", True)
+COMMUNITY_START_URL = env("COMMUNITY_START_URL", "https://c-knou.com/computer_science")
+COMMUNITY_ALLOWED_DOMAIN = env("COMMUNITY_ALLOWED_DOMAIN", "c-knou.com")
+COMMUNITY_LIST_PAGES = env_int("COMMUNITY_LIST_PAGES", 5)
+COMMUNITY_MAX_DOCUMENTS = env_int("COMMUNITY_MAX_DOCUMENTS", 100)
+COMMUNITY_DELAY_SECONDS = env_float("COMMUNITY_DELAY_SECONDS", 1.5)
 
 ADMIN_PASSWORD = env("ADMIN_PASSWORD")
 SEARCH_TOP_K = env_int("SEARCH_TOP_K", 5)

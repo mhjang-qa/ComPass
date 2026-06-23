@@ -73,6 +73,8 @@ class CrawlDocument:
     table_headers: list[str] = field(default_factory=list)
     table_rows: list[list[str]] = field(default_factory=list)
     normalized_items: list[dict[str, Any]] = field(default_factory=list)
+    source_type: str = "official"
+    source_label: str = "한국방송통신대학교 컴퓨터과학과 공식 홈페이지"
 
     def finalize(self) -> "CrawlDocument":
         self.body = clean_text(self.body)
@@ -101,8 +103,11 @@ class CrawlDocument:
             sort_keys=True,
         )
         self.content_hash = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
-        self.document_type = classify_document_type(self.source_url, self.category)
-        if self.normalized_items and any(item.get("overview") for item in self.normalized_items):
+        if self.source_type == "community":
+            self.document_type = "커뮤니티게시물"
+        else:
+            self.document_type = classify_document_type(self.source_url, self.category)
+        if self.source_type != "community" and self.normalized_items and any(item.get("overview") for item in self.normalized_items):
             self.document_type = "과목상세"
             self.category = "교과정보 > 교과목안내 > 과목상세"
         elif self.source_url.startswith(COURSE_GUIDE_URL):
@@ -843,3 +848,191 @@ class KnouCrawler:
             ),
             encoding="utf-8",
         )
+
+
+class CommunityCrawler:
+    """c-knou 공개 게시판의 최근 글을 비공식 보조 지식으로 수집한다."""
+
+    DETAIL_PATH_RE = re.compile(r"^/computer_science/\d+/?$")
+    LIST_PATH_RE = re.compile(r"^/computer_science(?:/page/\d+)?/?$")
+
+    def __init__(
+        self,
+        start_url: str = config.COMMUNITY_START_URL,
+        list_pages: int = config.COMMUNITY_LIST_PAGES,
+        max_documents: int = config.COMMUNITY_MAX_DOCUMENTS,
+        delay: float = config.COMMUNITY_DELAY_SECONDS,
+    ) -> None:
+        self.start_url = normalize_url(start_url)
+        self.list_pages = max(1, list_pages)
+        self.max_documents = max(1, max_documents)
+        self.delay = max(delay, 1.0)
+        self.session = requests.Session()
+        self.session.headers.update(
+            {"User-Agent": config.USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9"}
+        )
+        self.robots = self._load_robots()
+
+    def _load_robots(self) -> RobotFileParser:
+        parser = RobotFileParser()
+        robots_url = f"https://{config.COMMUNITY_ALLOWED_DOMAIN}/robots.txt"
+        parser.set_url(robots_url)
+        try:
+            response = self.session.get(robots_url, timeout=config.CRAWL_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            parser.parse(response.text.splitlines())
+        except requests.RequestException:
+            logger.exception("커뮤니티 robots.txt 확인 실패")
+            parser.parse(["User-agent: *", "Disallow: /"])
+        return parser
+
+    @staticmethod
+    def _is_private_path(path: str) -> bool:
+        lowered = (path or "").lower()
+        return any(
+            token in lowered
+            for token in (
+                "/login",
+                "/logout",
+                "/signup",
+                "/write",
+                "/comment/",
+                "/member",
+                "/disp",
+                "/admin",
+                "/download",
+            )
+        )
+
+    def is_allowed(self, url: str, *, detail_only: bool = False) -> bool:
+        normalized = normalize_url(url)
+        parts = urlsplit(normalized)
+        if (
+            not normalized
+            or parts.netloc != config.COMMUNITY_ALLOWED_DOMAIN
+            or parts.query
+            or parts.fragment
+            or self._is_private_path(parts.path)
+        ):
+            return False
+        path_allowed = bool(self.DETAIL_PATH_RE.fullmatch(parts.path))
+        if not detail_only:
+            path_allowed = path_allowed or bool(self.LIST_PATH_RE.fullmatch(parts.path))
+        return path_allowed and self.robots.can_fetch(config.USER_AGENT, normalized)
+
+    def _list_urls(self) -> list[str]:
+        return [
+            self.start_url if page == 1 else f"{self.start_url.rstrip('/')}/page/{page}"
+            for page in range(1, self.list_pages + 1)
+        ]
+
+    def _detail_links(self, soup: BeautifulSoup, base_url: str) -> list[str]:
+        links: list[str] = []
+        # 상단 고정 공지는 다른 게시판(/info 등)으로 리다이렉트될 수 있으므로
+        # 현재 컴퓨터과학과 목록의 일반 게시물 행(hx)만 대상으로 삼는다.
+        for anchor in soup.select('table.bd_lst tr:not(.notice) td.title a.hx[href]'):
+            url = normalize_url(anchor.get("href", ""), base_url)
+            if self.is_allowed(url, detail_only=True):
+                links.append(url)
+        return list(dict.fromkeys(links))
+
+    def _parse_detail(self, url: str, soup: BeautifulSoup) -> CrawlDocument | None:
+        content = soup.select_one(".rd_body article .rhymix_content, .rd_body article .xe_content")
+        title_node = soup.select_one(".rd_hd .np_16px")
+        if content is None or title_node is None:
+            return None
+        title = clean_text(title_node.get_text(" ", strip=True))
+        body = clean_text(content.get_text("\n", strip=True))
+        if not title or not body:
+            return None
+        category_node = soup.select_one(".rd_hd .catefl")
+        date_node = soup.select_one(".rd_hd .date")
+        category_name = (
+            clean_text(category_node.get_text(" ", strip=True)).strip("[] ")
+            if category_node
+            else "일반"
+        )
+        published_at = KnouCrawler._extract_date(
+            date_node.get_text(" ", strip=True) if date_node else ""
+        )
+        # 외부 커뮤니티 원문을 복제하지 않고 검색 가능한 짧은 공개 요약만 저장한다.
+        excerpt = summarize(body, limit=800)
+        return CrawlDocument(
+            title=title[:300],
+            category=f"비공식 커뮤니티 > {category_name}"[:200],
+            body=excerpt,
+            source_url=url,
+            collected_at=datetime.now().astimezone().isoformat(),
+            published_at=published_at,
+            attachments=[],
+            source_type="community",
+            source_label="c-knou 컴퓨터과학과 학생 커뮤니티",
+        ).finalize()
+
+    def crawl(
+        self,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[CrawlDocument]:
+        detail_urls: list[str] = []
+        for page_number, list_url in enumerate(self._list_urls(), start=1):
+            if not self.is_allowed(list_url):
+                continue
+            try:
+                response = self.session.get(list_url, timeout=config.CRAWL_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                response.encoding = response.apparent_encoding or response.encoding
+                for url in self._detail_links(BeautifulSoup(response.text, "lxml"), list_url):
+                    if url not in detail_urls:
+                        detail_urls.append(url)
+                if progress:
+                    progress(
+                        {
+                            "visited": page_number,
+                            "queued": max(0, self.list_pages - page_number),
+                            "documents": 0,
+                            "depth": page_number,
+                            "max_depth": self.list_pages,
+                            "url": list_url,
+                            "percent": min(35, round(page_number / self.list_pages * 35)),
+                            "source": "community",
+                        }
+                    )
+            except requests.RequestException:
+                logger.exception("커뮤니티 목록 수집 실패 url=%s", list_url)
+            time.sleep(self.delay)
+
+        documents: list[CrawlDocument] = []
+        targets = detail_urls[: self.max_documents]
+        for index, url in enumerate(targets, start=1):
+            try:
+                response = self.session.get(url, timeout=config.CRAWL_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                response.encoding = response.apparent_encoding or response.encoding
+                document = self._parse_detail(url, BeautifulSoup(response.text, "lxml"))
+                if document:
+                    documents.append(document)
+                if progress:
+                    progress(
+                        {
+                            "visited": index,
+                            "queued": len(targets) - index,
+                            "documents": len(documents),
+                            "depth": self.list_pages,
+                            "max_depth": self.list_pages,
+                            "url": url,
+                            "percent": 35 + round(index / max(len(targets), 1) * 59),
+                            "source": "community",
+                        }
+                    )
+            except requests.RequestException:
+                logger.exception("커뮤니티 게시물 수집 실패 url=%s", url)
+            except Exception:
+                logger.exception("커뮤니티 게시물 파싱 실패 url=%s", url)
+            time.sleep(self.delay)
+        logger.info(
+            "커뮤니티 크롤링 완료: 목록페이지=%d 발견=%d 저장=%d",
+            self.list_pages,
+            len(detail_urls),
+            len(documents),
+        )
+        return documents

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 import config
 from chatbot import answer_question, casual_response, classify_intent, sanitize_input
-from crawler import REQUIRED_DOCUMENT_URLS, KnouCrawler
+from crawler import CommunityCrawler, REQUIRED_DOCUMENT_URLS, KnouCrawler
 from curated_knowledge import match_curated
 from notion_client import NotionClient, notion_error_message
 from search_index import SearchIndex
@@ -271,6 +271,31 @@ def run_crawl_job(max_depth: int) -> None:
             )
 
         documents = crawler.crawl(update_crawl_progress)
+        official_count = len(documents)
+        community_count = 0
+        if config.COMMUNITY_CRAWL_ENABLED and max_depth >= 1:
+            job_state["crawl"]["message"] = (
+                "공식 사이트 수집 완료. 비공식 학생 커뮤니티 공개 글을 "
+                "보조 지식으로 수집하고 있습니다."
+            )
+
+            def update_community_progress(progress: dict[str, Any]) -> None:
+                job_state["crawl"].update(
+                    message=(
+                        "비공식 커뮤니티 공개 글 수집중입니다. "
+                        f"방문 {progress['visited']} · 대기 {progress['queued']} · "
+                        f"수집 {progress['documents']}"
+                    ),
+                    progress={
+                        **progress,
+                        "percent": 94,
+                        "max_depth": max_depth,
+                    },
+                )
+
+            community_documents = CommunityCrawler().crawl(update_community_progress)
+            community_count = len(community_documents)
+            documents.extend(community_documents)
         job_state["crawl"].update(
             message="크롤링 완료. Notion DB에 저장하고 있습니다.",
             progress={
@@ -302,6 +327,8 @@ def run_crawl_job(max_depth: int) -> None:
                 "notion": notion_result,
                 "index": index_result,
                 "max_depth": max_depth,
+                "official_documents": official_count,
+                "community_documents": community_count,
             },
             "progress": {
                 **job_state["crawl"]["progress"],

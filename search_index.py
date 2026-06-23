@@ -89,6 +89,11 @@ class SearchIndex:
         documents = documents if documents is not None else NotionClient().knowledge_documents()
         indexed = []
         for doc in documents:
+            doc = {
+                **doc,
+                "source_type": doc.get("source_type") or "official",
+                "source_label": doc.get("source_label") or "",
+            }
             text = doc.get("search_text") or " ".join(
                 [
                     doc.get("title", ""),
@@ -178,6 +183,7 @@ class SearchIndex:
         allowed_types = set(filters.get("document_types") or [])
         excluded_types = set(filters.get("exclude_document_types") or [])
         excluded_categories = [value.lower() for value in filters.get("exclude_categories") or []]
+        allowed_source_types = set(filters.get("source_types") or [])
         course_name = (filters.get("course_name") or "").strip()
 
         def matches_course(doc: dict[str, Any]) -> bool:
@@ -195,6 +201,10 @@ class SearchIndex:
             doc
             for doc in (self.payload.get("documents") or [])
             if (not allowed_types or doc.get("document_type") in allowed_types)
+            and (
+                not allowed_source_types
+                or (doc.get("source_type") or "official") in allowed_source_types
+            )
             and doc.get("document_type") not in excluded_types
             and not any(term in (doc.get("category") or "").lower() for term in excluded_categories)
             and matches_course(doc)

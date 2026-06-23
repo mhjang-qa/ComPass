@@ -855,6 +855,13 @@ def _llm_prompt(question: str) -> str:
 3. 존재를 확신하지 못하는 날짜, 규정, 사람, URL을 만들지 않는다.
 4. 일반 지식이나 개인 조언으로 답변 범위를 넓히지 않는다.
 5. 답변은 한국어로 간결하게 작성한다.
+6. 인사말과 자기소개를 하지 않는다.
+7. 답변은 반드시 아래 3개 항목을 모두 포함한다.
+   - 체감 난이도
+   - 필요한 준비
+   - 학습 팁
+8. 각 항목은 완결된 문장 1~2개로 작성한다.
+9. 문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
 
 사용자 질문: {question}
 """.strip()
@@ -894,7 +901,7 @@ def _gemini(prompt: str) -> str:
         params={"key": config.GEMINI_API_KEY},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 600},
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 900},
         },
         timeout=45,
     )

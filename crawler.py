@@ -493,12 +493,13 @@ class KnouCrawler:
         media = [
             header.split("/")[-1].strip()
             for header, value in pairs
-            if value.upper() in {"O", "○", "Y"} and any(term in header for term in ("TV", "오디오", "웹강의", "멀티", "출석", "온라인"))
+            if value.upper() in {"O", "○", "Y"}
+            and any(group in header for group in ("강의매체", "수업유형"))
         ]
         evaluations = [
             header.split("/")[-1].strip()
             for header, value in pairs
-            if value.upper() in {"O", "○", "Y"} and any(term in header for term in ("형성", "중간", "기말", "실습", "과제", "시험"))
+            if value.upper() in {"O", "○", "Y"} and "평가방법" in header
         ]
         return {
             "course_name": course_name,

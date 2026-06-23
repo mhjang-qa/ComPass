@@ -791,14 +791,27 @@ def _course_difficulty_prompt(
 3. 체감 난이도와 공부량은 공식 정보가 아니므로 반드시 참고용이라고 표현한다.
 4. 개인의 선수지식과 프로그래밍 경험에 따라 달라질 수 있다고 안내한다.
 5. 과제 대행이나 코딩 대행은 제공하지 않는다.
-6. 아래 답변 형식을 반드시 그대로 사용한다.
+6. 검색 결과를 붙여넣지 말고 학생이 이해하기 쉬운 말로 재구성한다.
 7. 각 항목은 1~2문장으로 작성한다.
 8. 문장이 중간에 끊기지 않게 완결된 문장으로 끝낸다.
+9. 아래 답변 형식을 반드시 그대로 사용한다.
 
 답변 형식:
-체감 난이도: 
-필요한 준비: 
-학습 팁: 
+**{course_name} 학습 부담 안내입니다.**
+
+공식 과목 정보와 일반적인 학습 조언을 구분해 안내합니다.
+
+참고용 학습 부담
+
+| 항목 | 안내 |
+|---|---|
+| 체감 난이도 | 한 문장으로 설명 |
+| 필요한 준비 | 한 문장으로 설명 |
+| 학습 팁 | 한 문장으로 설명 |
+
+안내
+
+난이도와 학습 부담은 공식 기준이 아닌 참고용 정보이며, 개인의 배경지식에 따라 달라질 수 있습니다.
 """.strip()
 
 
@@ -853,23 +866,134 @@ def _course_difficulty_response(
 def _llm_prompt(question: str) -> str:
     return f"""
 너는 한국방송통신대학교 컴퓨터과학과 공식 정보만 안내하는 챗봇 'ComPass'다.
+ComPass는 검색 결과를 그대로 보여주는 챗봇이 아니라 학생이 이해하기 쉽게 재해석해서 안내하는 AI 학과 비서다.
 질문에 답할 때 다음 규칙을 반드시 지켜라.
 1. 컴퓨터과학과 공식 정보 범위를 벗어나면 정확히 다음 문장만 답한다:
 {OUT_OF_SCOPE_MESSAGE}
 2. 확실하지 않거나 최신 공식 정보 확인이 필요한 내용은 추측하지 말고 위 거절 문장을 답한다.
 3. 존재를 확신하지 못하는 날짜, 규정, 사람, URL을 만들지 않는다.
 4. 일반 지식이나 개인 조언으로 답변 범위를 넓히지 않는다.
-5. 답변은 한국어로 간결하게 작성한다.
+5. 답변은 한국어로 간결하고 완결된 문장으로 작성한다.
 6. 인사말과 자기소개를 하지 않는다.
-7. 답변은 반드시 아래 3개 항목을 모두 포함한다.
-   - 체감 난이도
-   - 필요한 준비
-   - 학습 팁
-8. 각 항목은 완결된 문장 1~2개로 작성한다.
-9. 문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
+7. 검색 결과 원문, 키워드 나열, 불완전한 문장, 긴 단락을 출력하지 않는다.
+8. 답변은 반드시 아래 구조를 따른다.
+   제목 → 1~2줄 설명 → 표 또는 목록 → 참고 안내 → 바로가기 안내
+9. 표는 최대 5행까지만 작성한다.
+10. 문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
+
+답변 형식 예시:
+**과목 안내입니다.**
+
+이 과목은 무엇을 배우는지 학생 관점에서 1~2문장으로 설명합니다.
+
+주요 학습 내용
+
+| 항목 | 설명 |
+|---|---|
+| 핵심 개념 | 쉬운 설명 |
+
+참고 안내
+
+공식 데이터에서 확인되지 않는 난이도나 학습 부담은 참고용으로만 안내합니다.
+
+바로가기
+
+- 교과목 안내 바로가기
 
 사용자 질문: {question}
 """.strip()
+
+
+def _dedupe_lines(text: str) -> str:
+    """LLM 출력의 의미 없는 반복 라인을 제거한다."""
+    lines: list[str] = []
+    seen_recent: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        key = re.sub(r"\s+", " ", line).strip()
+        if not key:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if key in seen_recent:
+            continue
+        lines.append(line)
+        seen_recent.add(key)
+        if len(seen_recent) > 8:
+            seen_recent = set(re.sub(r"\s+", " ", item).strip() for item in lines[-8:] if item.strip())
+    return "\n".join(lines).strip()
+
+
+def _bulletize_keyword_line(line: str) -> str:
+    """문장 없이 키워드만 길게 나열된 줄은 bullet 목록으로 바꾼다."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith(("-", "•", "|", "#", "*")):
+        return line
+    if re.search(r"[.!?。]|입니다|합니다|합니다|된다|있다|없다", stripped):
+        return line
+    parts = [part.strip(" ,·/") for part in re.split(r"[,/·]\s*|\s{2,}", stripped) if part.strip(" ,·/")]
+    if len(parts) < 4:
+        return line
+    if max(len(part) for part in parts) > 18:
+        return line
+    return "\n".join(f"- {part}" for part in parts[:8])
+
+
+def _wrap_long_sentence(line: str, limit: int = 68) -> str:
+    """모바일에서 읽기 어려운 긴 문장을 자연스러운 위치에서 줄바꿈한다."""
+    if len(line) <= limit or line.startswith("|") or line.startswith(("-", "•")):
+        return line
+    chunks: list[str] = []
+    current = line
+    while len(current) > limit:
+        cut = max(current.rfind(" ", 0, limit), current.rfind(",", 0, limit), current.rfind("며", 0, limit))
+        if cut < 24:
+            cut = limit
+        chunks.append(current[:cut].rstrip())
+        current = current[cut:].lstrip(" ,")
+    if current:
+        chunks.append(current)
+    return "\n".join(chunks)
+
+
+def sanitize_llm_response(text: str, question: str = "") -> str:
+    """LLM fallback 답변을 ComPass 응답 철학에 맞게 후처리한다.
+
+    - 중복 라인 제거
+    - 키워드 나열을 bullet로 변환
+    - 긴 문장 줄바꿈
+    - 마지막 문장 완결 처리
+    - 너무 빈약한 출력에는 제목/안내 문구 보강
+    """
+    clean = re.sub(r"\r\n?", "\n", text or "").strip()
+    if not clean:
+        return OUT_OF_SCOPE_MESSAGE
+    if OUT_OF_SCOPE_MESSAGE in clean:
+        return OUT_OF_SCOPE_MESSAGE
+
+    clean = _dedupe_lines(clean)
+    processed: list[str] = []
+    for line in clean.splitlines():
+        line = _bulletize_keyword_line(line)
+        processed.extend(_wrap_long_sentence(part) for part in line.splitlines())
+    clean = "\n".join(processed)
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+
+    if len(clean) >= 200 and "참고 안내" not in clean and "안내\n" not in clean:
+        clean += (
+            "\n\n참고 안내\n\n"
+            "난이도와 학습 부담은 공식 기준이 아닌 참고용 정보이며, "
+            "개인의 배경지식과 학습 경험에 따라 달라질 수 있습니다."
+        )
+
+    if not re.search(r"^\s*(?:\*\*)?.{2,40}안내", clean):
+        course_name = detect_course_name(question)
+        title = f"**{course_name} 과목 안내입니다.**" if course_name else "**ComPass 안내입니다.**"
+        clean = f"{title}\n\n{clean}"
+
+    if not re.search(r"[.!?。요다)\]]\s*$", clean):
+        clean += "."
+    return clean
 
 
 def _openai(prompt: str) -> str:
@@ -926,9 +1050,9 @@ def call_llm(question: str, *, prompt_override: str | None = None) -> str:
     logger.info("LLM_PROVIDER=%r", provider)
 
     if provider == "gemini":
-        return _gemini(prompt)
+        return sanitize_llm_response(_gemini(prompt), question)
     if provider == "openai":
-        return _openai(prompt)
+        return sanitize_llm_response(_openai(prompt), question)
 
     raise RuntimeError(f"지원하지 않는 LLM_PROVIDER: {config.LLM_PROVIDER}")
 
@@ -1220,16 +1344,31 @@ def answer_question(
         answer = call_llm(clean_question)
         if not answer:
             answer = OUT_OF_SCOPE_MESSAGE
+        detected_course = detect_course_name(clean_question, index)
+        llm_actions: list[dict[str, Any]] = []
+        llm_source_urls: list[str] = []
+        if detected_course:
+            llm_actions.extend(
+                [
+                    {"type": "link", "label": f"{detected_course} 과목 바로가기", "url": COURSE_GUIDE_URL},
+                    {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_GUIDE_URL},
+                ]
+            )
+            llm_source_urls.append(COURSE_GUIDE_URL)
         return {
             "answer": answer,
             "answer_type": "text",
-            "summary": "",
+            "summary": "공식 데이터 범위 안에서 학생이 이해하기 쉽게 재구성한 보조 답변입니다.",
             "items": [],
             "total_count": 0,
-            "source_urls": [],
-            "actions": [],
+            "source_urls": llm_source_urls,
+            "actions": llm_actions,
             "mode": "LLM",
-            "sources": [],
+            "sources": (
+                [{"title": "컴퓨터과학과 교과목 안내", "url": COURSE_GUIDE_URL, "score": best_score}]
+                if detected_course
+                else []
+            ),
             "score": best_score,
             "keywords": tokenize(clean_question),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),

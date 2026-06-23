@@ -39,9 +39,9 @@ function isMobileDevice() {
 function updateAppHeight() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
   document.documentElement.style.setProperty("--app-height", `${viewportHeight}px`);
+  document.documentElement.style.setProperty("--visual-viewport-height", `${viewportHeight}px`);
   const keyboardOpen = isMobileDevice() && viewportHeight < window.innerHeight - 120;
   document.body.classList.toggle("keyboard-open", keyboardOpen);
-  if (keyboardOpen) scrollMessageIntoView(messages.lastElementChild || messages, "auto");
 }
 
 function setWindowMode(fullscreen) {
@@ -172,7 +172,9 @@ function formatSchedulePeriod(item) {
 
 const chatChromeObserver = new ResizeObserver(() => {
   const lastMessage = messages.lastElementChild;
-  if (lastMessage) scrollMessageIntoView(lastMessage, "auto");
+  if (lastMessage && document.activeElement !== $("#question")) {
+    scrollMessageIntoView(lastMessage, "auto");
+  }
 });
 [".chat-intro", ".suggestions", ".composer"].forEach((selector) => {
   const node = $(selector);
@@ -436,11 +438,109 @@ function renderGenericCards(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
 
+function appendParagraph(container, lines) {
+  if (!lines.length) return;
+  const paragraph = document.createElement("p");
+  paragraph.className = "message-content text-paragraph";
+  paragraph.textContent = lines.join("\n");
+  container.appendChild(paragraph);
+}
+
+function appendMarkdownTable(container, lines) {
+  if (lines.length < 2) return false;
+  const rows = lines
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && line.endsWith("|"))
+    .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
+  if (rows.length < 2 || !rows[1].every((cell) => /^:?-{2,}:?$/.test(cell))) return false;
+
+  const wrap = document.createElement("div");
+  wrap.className = "answer-table-wrap";
+  const table = document.createElement("table");
+  table.className = "answer-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  rows[0].forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.slice(2).forEach((row) => {
+    const tr = document.createElement("tr");
+    row.forEach((cell) => {
+      const td = document.createElement("td");
+      td.textContent = cell;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+  return true;
+}
+
 function renderTextAnswer(bubble, text) {
-  const content = document.createElement("div");
-  content.className = "message-content";
-  content.textContent = text;
-  bubble.appendChild(content);
+  const lines = String(text || "").split(/\r?\n/);
+  let paragraph = [];
+  let bulletList = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const line = raw.trim();
+    if (!line) {
+      appendParagraph(bubble, paragraph);
+      paragraph = [];
+      bulletList = null;
+      continue;
+    }
+    if (line.startsWith("|")) {
+      appendParagraph(bubble, paragraph);
+      paragraph = [];
+      bulletList = null;
+      const tableLines = [];
+      while (index < lines.length && lines[index].trim().startsWith("|")) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      index -= 1;
+      if (!appendMarkdownTable(bubble, tableLines)) {
+        paragraph.push(...tableLines);
+      }
+      continue;
+    }
+    const headingMatch = line.match(/^\*\*(.+)\*\*$/);
+    if (headingMatch) {
+      appendParagraph(bubble, paragraph);
+      paragraph = [];
+      bulletList = null;
+      const heading = document.createElement("strong");
+      heading.className = "text-answer-title";
+      heading.textContent = headingMatch[1];
+      bubble.appendChild(heading);
+      continue;
+    }
+    const bulletMatch = line.match(/^[-•]\s+(.+)$/);
+    if (bulletMatch) {
+      appendParagraph(bubble, paragraph);
+      paragraph = [];
+      if (!bulletList) {
+        bulletList = document.createElement("ul");
+        bulletList.className = "text-bullet-list";
+        bubble.appendChild(bulletList);
+      }
+      const li = document.createElement("li");
+      li.textContent = bulletMatch[1];
+      bulletList.appendChild(li);
+      continue;
+    }
+    bulletList = null;
+    paragraph.push(line);
+  }
+  appendParagraph(bubble, paragraph);
 }
 
 function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
@@ -566,7 +666,9 @@ async function sendQuestion(raw, allowLlm = false) {
     addMessage("bot", `${prefix}: ${error.message}`);
   } finally {
     $("#sendButton").disabled = false;
-    $("#question").focus();
+    if (!isMobileDevice()) {
+      $("#question").focus({ preventScroll: true });
+    }
   }
 }
 
@@ -584,7 +686,6 @@ $("#question").addEventListener("keydown", (event) => {
 });
 $("#question").addEventListener("focus", () => {
   updateAppHeight();
-  scrollMessageIntoView(messages.lastElementChild || messages, "auto");
 });
 $$("[data-question]").forEach((button) => button.addEventListener("click", () => sendQuestion(button.dataset.question)));
 

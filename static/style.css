@@ -374,3 +374,71 @@ body.keyboard-open .app-shell.mobile-fullscreen .composer {
   padding-bottom: max(8px, var(--safe-bottom));
   background: white;
 }
+
+/* 전체화면 모드: 상단 영역 축소 */
+.app-shell.fullscreen .topbar {
+  padding: 12px 28px;
+}
+
+.app-shell.fullscreen .topbar .eyebrow {
+  display: none;
+}
+
+.app-shell.fullscreen .topbar h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.app-shell.fullscreen .brand-copy {
+  margin-top: 2px;
+  font-size: .68rem;
+}
+
+.app-shell.fullscreen .tabs {
+  padding: 0 24px;
+}
+
+.app-shell.fullscreen .tab {
+  padding: 12px 18px 10px;
+  font-size: 13px;
+}
+
+/* 질문/답변 텍스트 12px 조정 */
+.messages .bubble,
+.message-content,
+.answer-card,
+.answer-card-summary,
+.answer-field,
+.answer-note,
+.answer-link,
+.answer-link-button,
+.source-list a {
+  font-size: 12px;
+}
+
+/* 카드 내부 줄간격도 약간 축소 */
+.message-content,
+.answer-card-summary,
+.answer-field {
+  line-height: 1.5;
+}
+
+/* 입력창도 12px */
+.composer textarea,
+.composer button,
+.suggestions button,
+.confirm-actions button {
+  font-size: 12px;
+}
+
+.app-shell.fullscreen .panel {
+  padding: 16px 24px 24px;
+}
+
+.app-shell.fullscreen .chat-intro {
+  padding: 14px 20px;
+}
+
+.app-shell.fullscreen .messages {
+  padding: 16px;
+}

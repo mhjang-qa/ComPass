@@ -171,7 +171,7 @@ button { cursor: pointer; }
 .faculty-number { display: inline-grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%; color: white; background: var(--blue); font-size: .8rem; }
 .answer-field { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px; margin-top: 6px; line-height: 1.55; }
 .answer-field strong, .subjects-label { color: #3a4b5c; font-size: .86rem; }
-.answer-field span { min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
+.answer-field span { min-width: 0; word-break: break-word; overflow-wrap: anywhere; white-space: pre-line; }
 .subjects-label { display: block; margin-top: 9px; }
 .subject-list { display: grid; gap: 4px; margin: 5px 0 0; padding-left: 18px; }
 .subject-list li { padding-left: 2px; line-height: 1.55; }

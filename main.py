@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import config
-from chatbot import answer_question, casual_response, sanitize_input
+from chatbot import answer_question, casual_response, classify_intent, sanitize_input
 from crawler import REQUIRED_DOCUMENT_URLS, KnouCrawler
 from curated_knowledge import match_curated
 from notion_client import NotionClient, notion_error_message
@@ -438,6 +438,15 @@ def chat(req: ChatRequest):
         )
         record_interaction_async(req.question, result)
         return result
+    if classify_intent(clean_question, index) == "course_difficulty":
+        result = answer_question(
+            clean_question,
+            history=req.history,
+            allow_llm=req.allow_llm,
+            index=index,
+        )
+        record_interaction_async(req.question, result)
+        return result
     if index.status()["documents"] == 0:
         logger.warning(
             "[CHAT] empty index detected; attempting lazy load question=%r notion_connected=%s",
@@ -500,6 +509,7 @@ def debug_index_payload() -> dict[str, Any]:
         "notion_loading": runtime_state["loading"],
         "notion_document_count": runtime_state["notion_document_count"],
         "index_document_count": index.status()["documents"],
+        "course_catalog_count": index.status().get("courses", 0),
         "last_sync_at": runtime_state["last_sync_at"],
         "last_attempt_at": runtime_state["last_attempt_at"],
         "last_reason": runtime_state["last_reason"],

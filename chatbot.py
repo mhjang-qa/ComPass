@@ -15,6 +15,8 @@ import config
 from crawler import extract_schedule_items
 from curated_knowledge import match_curated
 from search_index import (
+    COURSE_DOCUMENT_TYPES,
+    COURSE_GUIDE_URL,
     CURRICULUM_URL,
     FACULTY_QUERY_RE,
     FACULTY_URL,
@@ -98,8 +100,43 @@ COURSE_RECOMMENDATION_RE = re.compile(
 )
 COURSE_DETAIL_RE = re.compile(
     r"(무슨|어떤)\s*과목|과목\s*(이야|인가요|소개|내용)|"
-    r"무엇을\s*배우|뭘\s*배우|배우는\s*과목|과목\s*설명|수업\s*내용",
+    r"무엇을\s*배우|뭘\s*배우|뭐\s*배우|배우는\s*과목|과목\s*설명|수업\s*내용",
     re.IGNORECASE,
+)
+COURSE_DIFFICULTY_RE = re.compile(
+    r"난이도|어렵(?:나요|니|다|게)|어려(?:워|운|움)|쉬운가|쉽나요|듣기\s*편|공부량|빡센|"
+    r"수업\s*부담|학습\s*부담|과제\s*많|공부\s*방법|학습\s*방법|"
+    r"공부\s*팁|학습\s*팁|선수\s*지식|준비\s*해야",
+    re.IGNORECASE,
+)
+KNOWN_COURSE_NAMES = (
+    "파이썬프로그래밍기초",
+    "데이터베이스시스템",
+    "유비쿼터스컴퓨팅개론",
+    "HTML5웹프로그래밍",
+    "오픈소스기반데이터분석",
+    "프로그래밍언어론",
+    "빅데이터의이해와활용",
+    "컴퓨터과학개론",
+    "디지털논리회로",
+    "모바일앱프로그래밍",
+    "소프트웨어공학",
+    "클라우드컴퓨팅",
+    "컴파일러구성",
+    "컴퓨터의이해",
+    "데이터정보처리입문",
+    "Java프로그래밍",
+    "인공지능",
+    "알고리즘",
+    "운영체제",
+    "컴퓨터구조",
+    "정보통신망",
+    "컴퓨터보안",
+    "이산수학",
+    "자료구조",
+    "머신러닝",
+    "딥러닝",
+    "C프로그래밍",
 )
 OUT_OF_SCOPE_PATTERNS = re.compile(
     r"날씨|주가|환율|맛집|연애|운세|로또|코딩\s*(해줘|대행)|다른\s*학교|타\s*학교|"
@@ -175,10 +212,29 @@ def is_course_recommendation(question: str) -> bool:
     return bool(COURSE_RECOMMENDATION_RE.search(question))
 
 
-def classify_intent(question: str) -> str:
+def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
+    if index and hasattr(index, "detect_course"):
+        detected = index.detect_course(question)
+        if detected:
+            return detected.get("course_name") or ""
+    compact = re.sub(r"\s+", "", question or "").lower()
+    matches = [
+        name
+        for name in KNOWN_COURSE_NAMES
+        if re.sub(r"\s+", "", name).lower() in compact
+    ]
+    return max(matches, key=len) if matches else ""
+
+
+def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
     if casual_response(question):
         return "smalltalk"
+    course_name = detect_course_name(question, index)
+    if course_name and COURSE_DIFFICULTY_RE.search(question):
+        return "course_difficulty"
+    if course_name and (COURSE_DETAIL_RE.search(question) or re.search(r"커리큘럼|교과목\s*안내", question)):
+        return "course_detail"
     if FACULTY_QUERY_RE.search(question):
         return "faculty"
     if is_course_recommendation(question):
@@ -196,10 +252,13 @@ def retrieve_documents(
     """의도별 검색 범위와 결과 수를 고정해 다른 카테고리 문서 혼입을 줄인다."""
     top_k = 20 if intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
     filters: dict[str, Any] | None = None
-    if intent in {"course_recommendation", "course_detail"}:
+    if intent in {"course_recommendation", "course_detail", "course_difficulty"}:
+        course = index.detect_course(question)
         filters = {
-            "document_types": ["교육과정표", "교과목", "검증지식"],
+            "document_types": list(COURSE_DOCUMENT_TYPES),
+            "exclude_document_types": ["교수진", "공지사항", "게시물", "게시판목록", "학과일정"],
             "exclude_categories": ["공지사항", "게시판", "일반공지"],
+            "course_name": (course or {}).get("course_name") or detect_course_name(question),
         }
     return index.search(question, top_k=top_k, filters=filters)
 
@@ -231,6 +290,8 @@ def normalize_results(
     if intent == "schedule_list":
         return _schedule_items(hits)
     if intent == "course_detail":
+        return _course_detail_items(question, hits)
+    if intent == "course_difficulty":
         return _course_detail_items(question, hits)
     return _generic_items(hits)
 
@@ -540,17 +601,17 @@ def _course_detail_items(question: str, hits: list[dict[str, Any]]) -> list[dict
         for item in candidates
         if re.sub(r"\s+", "", item.get("course_name") or "").lower() in compact_question
     ]
-    selected = exact or candidates[:1]
+    selected = exact[:1] or candidates[:1]
     return [
         {
             **item,
-            "overview": item.get("feature") or "공식 교육과정에 편성된 전공 과목입니다.",
+            "overview": item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 전공 과목입니다.",
             "easy_explanation": (
                 f"쉽게 말하면, {item.get('course_name', '이 과목')}의 핵심 개념과 문제 해결 방법을 "
                 "단계적으로 배우는 수업입니다."
             ),
             "recommended_for": ["해당 분야의 기초를 체계적으로 배우고 싶은 학생"],
-            "topics": [],
+            "topics": item.get("topics") or item.get("detail_topics") or [],
             "link_label": f"{item.get('course_name', '과목')} 과목 바로가기",
         }
         for item in selected
@@ -574,8 +635,11 @@ def _course_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "credit": course.get("credit", ""),
                     "media": course.get("media") or [],
                     "evaluation": course.get("evaluation") or [],
+                    "overview": course.get("overview", ""),
+                    "topics": course.get("topics") or [],
+                    "detail_topics": course.get("detail_topics") or [],
                     "feature": _course_feature(course),
-                    "source_url": hit.get("source_url") or "",
+                    "source_url": course.get("source_url") or hit.get("source_url") or "",
                     "fallback_url": CURRICULUM_URL,
                     "link_label": "교육과정 바로가기",
                 }
@@ -659,6 +723,124 @@ def _course_recommendation_response(curated: dict[str, Any], started: float) -> 
     }
 
 
+def _course_difficulty_confirmation(
+    question: str,
+    course_name: str,
+    items: list[dict[str, Any]],
+    started: float,
+) -> dict[str, Any]:
+    source_url = next(
+        (_item_url(item, COURSE_GUIDE_URL) for item in items if _item_url(item, COURSE_GUIDE_URL)),
+        COURSE_GUIDE_URL,
+    )
+    return {
+        "answer": (
+            "공식 데이터에는 해당 과목의 체감 난이도 정보가 명시되어 있지 않습니다.\n"
+            "다만 과목명과 학습 내용 기준으로 일반적인 학습 부담을 참고용으로 안내할 수 있습니다.\n"
+            "LLM 보조 답변을 사용할까요?"
+        ),
+        "answer_type": "llm_confirmation_required",
+        "summary": (
+            f"{course_name}의 공식 과목 정보는 확인했지만 체감 난이도는 공식 기준이 아닙니다."
+            if items
+            else f"{course_name} 과목명을 확인했지만 체감 난이도는 공식 기준이 아닙니다."
+        ),
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "actions": [
+            {"type": "confirm_llm", "label": "LLM 보조 답변 사용", "target": "allow_llm"},
+            {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_GUIDE_URL},
+        ],
+        "source_urls": list(dict.fromkeys([source_url, COURSE_GUIDE_URL])),
+        "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
+        "mode": "LLM확인",
+        "requires_llm_confirmation": True,
+        "course_name": course_name,
+        "score": 100 if items else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "failure_reason": "공식 체감 난이도 정보 없음",
+    }
+
+
+def _course_difficulty_prompt(
+    question: str,
+    course_name: str,
+    item: dict[str, Any],
+) -> str:
+    overview = item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 과목"
+    topics = ", ".join((item.get("topics") or [])[:8]) or "공식 세부 학습 내용 미확인"
+    return f"""
+너는 한국방송통신대학교 컴퓨터과학과 AI 학과 비서 ComPass다.
+아래 공식 데이터와 일반적인 학습 조언을 명확히 구분해 한국어로 답하라.
+
+[공식 데이터]
+- 과목명: {course_name}
+- 과목 개요: {overview}
+- 주요 학습 내용: {topics}
+
+[사용자 질문]
+{question}
+
+규칙:
+1. 공식 학점, 개설 학기, 시험 범위, 평가 방식은 제공된 데이터 밖에서 추측하지 않는다.
+2. 체감 난이도와 공부량은 반드시 "참고용"이라고 표현한다.
+3. 개인의 선수지식과 프로그래밍 경험에 따라 달라질 수 있다고 안내한다.
+4. 답변은 체감 난이도, 필요한 준비, 학습 팁 순서로 간결하게 작성한다.
+5. 과제 대행이나 코딩 대행은 제공하지 않는다.
+""".strip()
+
+
+def _course_difficulty_response(
+    question: str,
+    course_name: str,
+    items: list[dict[str, Any]],
+    started: float,
+) -> dict[str, Any]:
+    item = items[0] if items else {
+        "course_name": course_name,
+        "overview": "공식 교과목 안내에 등록된 과목입니다.",
+        "source_url": COURSE_GUIDE_URL,
+    }
+    advice = call_llm(
+        question,
+        prompt_override=_course_difficulty_prompt(question, course_name, item),
+    )
+    source_url = _item_url(item, COURSE_GUIDE_URL)
+    response_item = {
+        "title": course_name,
+        "official_overview": item.get("overview") or item.get("feature") or "",
+        "difficulty_advice": advice,
+        "disclaimer": (
+            "난이도와 학습 부담은 공식 기준이 아닌 참고용 안내이며, "
+            "개인의 배경지식과 학습 경험에 따라 달라질 수 있습니다."
+        ),
+        "source_url": source_url,
+        "fallback_url": COURSE_GUIDE_URL,
+        "link_label": f"{course_name} 과목 바로가기",
+    }
+    return {
+        "answer": f"{course_name} 난이도 안내입니다.",
+        "answer_type": "course_difficulty",
+        "summary": "공식 과목 정보와 일반적인 학습 조언을 구분해 안내드립니다.",
+        "items": [response_item],
+        "display_limit": 3,
+        "total_count": 1,
+        "actions": [
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_GUIDE_URL}
+        ],
+        "source_urls": list(dict.fromkeys([source_url, COURSE_GUIDE_URL])),
+        "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
+        "mode": "LLM",
+        "course_name": course_name,
+        "score": 100 if items else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
 def _llm_prompt(question: str) -> str:
     return f"""
 너는 한국방송통신대학교 컴퓨터과학과 공식 정보만 안내하는 챗봇 'ComPass'다.
@@ -721,8 +903,8 @@ def _gemini(prompt: str) -> str:
     ).strip()
 
 
-def call_llm(question: str) -> str:
-    prompt = _llm_prompt(question)
+def call_llm(question: str, *, prompt_override: str | None = None) -> str:
+    prompt = prompt_override or _llm_prompt(question)
     if config.LLM_PROVIDER == "gemini":
         return _gemini(prompt)
     if config.LLM_PROVIDER == "openai":
@@ -756,6 +938,29 @@ def answer_question(
     if casual:
         casual["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
         return casual
+    index = index or SearchIndex()
+    initial_intent = classify_intent(clean_question, index)
+    if initial_intent == "course_difficulty":
+        course_name = detect_course_name(clean_question, index)
+        hits = retrieve_documents(index, clean_question, "course_difficulty")
+        items = normalize_results("course_difficulty", hits, clean_question)
+        if not allow_llm:
+            return _course_difficulty_confirmation(clean_question, course_name, items, started)
+        try:
+            return _course_difficulty_response(clean_question, course_name, items, started)
+        except Exception as exc:
+            logger.exception("과목 난이도 LLM 보조 답변 실패: %s", exc)
+            result = _course_difficulty_confirmation(clean_question, course_name, items, started)
+            result.update(
+                answer="LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                answer_type="course_difficulty",
+                requires_llm_confirmation=False,
+                failure_reason=f"LLM 호출 실패: {type(exc).__name__}",
+                actions=[
+                    action for action in result["actions"] if action.get("type") == "link"
+                ],
+            )
+            return result
     curated = match_curated(clean_question, history)
     if curated:
         if curated.get("answer_type") == "course_recommendation":
@@ -831,7 +1036,6 @@ def answer_question(
             "validity": curated.get("validity"),
         }
     if is_course_recommendation(clean_question):
-        index = index or SearchIndex()
         hits = retrieve_documents(index, clean_question, "course_recommendation")
         course_items = _course_items(hits)
         if course_items:
@@ -900,8 +1104,7 @@ def answer_question(
         }
 
     search_question = contextualize(clean_question, history)
-    requested_answer_type = classify_intent(search_question)
-    index = index or SearchIndex()
+    requested_answer_type = classify_intent(search_question, index)
     hits = retrieve_documents(index, search_question, requested_answer_type)
     best_score = hits[0]["score"] if hits else 0
     if hits and best_score >= config.SEARCH_MIN_SCORE:

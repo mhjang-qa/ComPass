@@ -147,6 +147,79 @@ def test_professor_page_is_always_seeded() -> None:
 
     assert "https://cs.knou.ac.kr/cs1/4786/subview.do" in REQUIRED_DOCUMENT_URLS
     assert "https://cs.knou.ac.kr/cs1/4789/subview.do" in REQUIRED_DOCUMENT_URLS
+    assert "https://cs.knou.ac.kr/cs1/4791/subview.do" in REQUIRED_DOCUMENT_URLS
+
+
+def test_course_detail_specs_are_extracted_from_javascript_links() -> None:
+    soup = BeautifulSoup(
+        """
+        <a href="javascript:jf_detailView('2026','1','3','34524','34');">
+          <span>인공지능</span>
+        </a>
+        <a href="javascript:jf_detailView('2026','1','1','34174','34');">
+          <span>파이썬프로그래밍기초</span>
+        </a>
+        """,
+        "lxml",
+    )
+
+    specs = KnouCrawler._course_detail_specs(soup)
+
+    assert specs == [
+        {
+            "course_name": "인공지능",
+            "year": "2026",
+            "semester": "1",
+            "grade": "3",
+            "course_code": "34524",
+            "department_code": "34",
+        },
+        {
+            "course_name": "파이썬프로그래밍기초",
+            "year": "2026",
+            "semester": "1",
+            "grade": "1",
+            "course_code": "34174",
+            "department_code": "34",
+        },
+    ]
+
+
+def test_course_detail_page_is_normalized_as_course_document() -> None:
+    crawler = crawler_without_network()
+    soup = BeautifulSoup(
+        """
+        <div id="outlineArea">
+          <h5>개요</h5>
+          운영체제의 구조와 프로세스 및 메모리 관리 원리를 학습한다.
+          <h5>매체명</h5>
+          멀티미디어 강의
+          <h5>강의내용</h5>
+          <table>
+            <tbody>
+              <tr><td>1</td><td>프로세스 관리</td><td>프로세스와 스레드</td></tr>
+              <tr><td>2</td><td>메모리 관리</td><td>가상 메모리</td></tr>
+            </tbody>
+          </table>
+        </div>
+        """,
+        "lxml",
+    )
+    spec = {
+        "course_name": "운영체제",
+        "year": "2026",
+        "semester": "1",
+        "grade": "3",
+        "course_code": "34416",
+        "department_code": "34",
+    }
+
+    document = crawler._parse_course_detail(spec, soup).finalize()
+
+    assert document.document_type == "과목상세"
+    assert document.source_url.endswith("#course-34416")
+    assert document.normalized_items[0]["overview"].startswith("운영체제의 구조")
+    assert document.normalized_items[0]["topics"] == ["프로세스 관리", "메모리 관리"]
 
 
 def test_curriculum_table_is_normalized() -> None:

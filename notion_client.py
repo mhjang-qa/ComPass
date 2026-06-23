@@ -401,6 +401,14 @@ class NotionClient:
             get = lambda name: self._property_text(props.get(name, {}))
             keywords_prop = props.get("키워드", {})
             keywords = [x.get("name", "") for x in keywords_prop.get("multi_select", [])]
+            normalized_items = self._json_property(get("normalized_items"), [])
+            course_names = list(
+                dict.fromkeys(
+                    item.get("course_name") or item.get("title")
+                    for item in normalized_items
+                    if item.get("course_name") or item.get("title")
+                )
+            )
             source_url = get("원본URL") or config.CRAWL_START_URL
             documents.append(
                 {
@@ -419,7 +427,8 @@ class NotionClient:
                     "search_text": get("검색용텍스트"),
                     "table_headers": self._json_property(get("table_headers"), []),
                     "table_rows": self._json_property(get("table_rows"), []),
-                    "normalized_items": self._json_property(get("normalized_items"), []),
+                    "normalized_items": normalized_items,
+                    "course_names": course_names,
                     "response_guide": get("응답가이드"),
                 }
             )

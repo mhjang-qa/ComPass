@@ -376,6 +376,13 @@ function renderGenericItems(bubble, payload, messageRow) {
       appendField(card, "쉽게 말하면", item.easy_explanation);
       appendSimpleList(card, "주요 학습 내용", item.topics || []);
       appendSimpleList(card, "추천 대상", item.recommended_for || []);
+    } else if (payload.answer_type === "course_difficulty") {
+      appendField(card, "공식 과목 정보", item.official_overview);
+      appendField(card, "참고용 학습 부담", item.difficulty_advice);
+      const note = document.createElement("p");
+      note.className = "answer-note";
+      note.textContent = item.disclaimer;
+      card.appendChild(note);
     } else if (payload.answer_type === "notice_list") {
       appendField(card, "게시일", formatDateOnly(item.date));
       appendField(card, "요약", item.description);
@@ -420,6 +427,10 @@ function renderCourseDetail(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
 
+function renderCourseDifficulty(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+}
+
 function renderGenericCards(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
@@ -443,6 +454,7 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     schedule_list: renderScheduleList,
     course_recommendation: renderRecommendation,
     course_detail: renderCourseDetail,
+    course_difficulty: renderCourseDifficulty,
   };
   if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
     (renderers[payload.answer_type] || renderGenericCards)(bubble, payload, row);
@@ -457,7 +469,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     const actions = document.createElement("div");
     actions.className = "confirm-actions";
     const yes = document.createElement("button");
-    yes.textContent = "LLM 보조 검색";
+    const confirmAction = (payload.actions || []).find((action) => action.type === "confirm_llm");
+    yes.textContent = confirmAction?.label || "LLM 보조 답변 사용";
     yes.onclick = () => {
       actions.remove();
       sendQuestion(pendingQuestion, true);
@@ -702,6 +715,7 @@ async function loadIndexStatus() {
   const data = await jsonFetch("/api/index/status", { headers: adminHeaders() });
   $("#indexStatus").innerHTML = `
     <div class="metric"><span>문서 수</span><strong>${data.documents}</strong></div>
+    <div class="metric"><span>교과목 수</span><strong>${data.courses || 0}</strong></div>
     <div class="metric"><span>생성 시각</span><strong>${escapeHtml(data.built_at ? formatKstDateTime(data.built_at, true) : "미생성")}</strong></div>
     <div class="metric"><span>작업 상태</span><strong>${escapeHtml(data.job.message)}</strong></div>`;
 }

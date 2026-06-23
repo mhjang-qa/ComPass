@@ -32,6 +32,17 @@ FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
 CURRICULUM_URL = "https://cs.knou.ac.kr/cs1/4789/subview.do"
 SCHEDULE_URL = "https://cs.knou.ac.kr/cs1/4792/subview.do"
 NOTICE_URL = "https://cs.knou.ac.kr/cs1/4812/subview.do"
+COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
+COURSE_DOCUMENT_TYPES = {"과목상세", "교과목목록", "교육과정표", "검증지식"}
+COURSE_ALIASES = {
+    "인공지능": ["AI", "에이아이"],
+    "파이썬프로그래밍기초": ["파이썬", "파이썬기초", "Python"],
+    "데이터베이스시스템": ["데이터베이스", "DB"],
+    "컴퓨터구조": ["컴구"],
+    "운영체제": ["OS"],
+    "정보통신망": ["네트워크"],
+    "소프트웨어공학": ["소공"],
+}
 FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수", re.IGNORECASE)
 QUICK_INTENTS = (
     ("curriculum", re.compile(r"교육과정|교과과정|커리큘럼", re.IGNORECASE), ("교육과정", "교과과정", "교과정보")),
@@ -59,7 +70,7 @@ def tokenize(text: str) -> list[str]:
 class SearchIndex:
     def __init__(self, path: Path = config.INDEX_PATH) -> None:
         self.path = path
-        self.payload: dict[str, Any] = {"built_at": None, "documents": []}
+        self.payload: dict[str, Any] = {"built_at": None, "documents": [], "course_catalog": []}
         self.load()
 
     def load(self) -> None:
@@ -67,8 +78,12 @@ class SearchIndex:
             return
         try:
             self.payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if not self.payload.get("course_catalog"):
+                self.payload["course_catalog"] = self._build_course_catalog(
+                    self.payload.get("documents") or []
+                )
         except (OSError, json.JSONDecodeError):
-            self.payload = {"built_at": None, "documents": []}
+            self.payload = {"built_at": None, "documents": [], "course_catalog": []}
 
     def rebuild(self, documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         documents = documents if documents is not None else NotionClient().knowledge_documents()
@@ -86,10 +101,69 @@ class SearchIndex:
             )
             item = {**doc, "tokens": tokenize(text), "search_text": text}
             indexed.append(item)
-        self.payload = {"built_at": datetime.now().astimezone().isoformat(), "documents": indexed}
+        course_catalog = self._build_course_catalog(indexed)
+        self.payload = {
+            "built_at": datetime.now().astimezone().isoformat(),
+            "documents": indexed,
+            "course_catalog": course_catalog,
+        }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self.payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"built_at": self.payload["built_at"], "documents": len(indexed)}
+        return {
+            "built_at": self.payload["built_at"],
+            "documents": len(indexed),
+            "courses": len(course_catalog),
+        }
+
+    @staticmethod
+    def _build_course_catalog(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        catalog: dict[str, dict[str, Any]] = {}
+        for doc in documents:
+            document_type = doc.get("document_type") or ""
+            if document_type not in COURSE_DOCUMENT_TYPES:
+                continue
+            items = doc.get("normalized_items") or []
+            if document_type == "과목상세" and not items:
+                items = [{"course_name": doc.get("title") or ""}]
+            for item in items:
+                name = (item.get("course_name") or item.get("title") or "").strip()
+                if not name:
+                    continue
+                aliases = [name, re.sub(r"\s+", "", name), *COURSE_ALIASES.get(name, [])]
+                entry = catalog.setdefault(
+                    name,
+                    {
+                        "course_name": name,
+                        "aliases": [],
+                        "document_ids": [],
+                        "source_url": doc.get("source_url") or COURSE_GUIDE_URL,
+                        "document_types": [],
+                    },
+                )
+                entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *aliases]))
+                if doc.get("page_id"):
+                    entry["document_ids"] = list(
+                        dict.fromkeys([*entry["document_ids"], doc["page_id"]])
+                    )
+                if document_type not in entry["document_types"]:
+                    entry["document_types"].append(document_type)
+                if document_type == "과목상세":
+                    entry["source_url"] = doc.get("source_url") or entry["source_url"]
+        return sorted(catalog.values(), key=lambda item: (-len(item["course_name"]), item["course_name"]))
+
+    def course_catalog(self) -> list[dict[str, Any]]:
+        return self.payload.get("course_catalog") or []
+
+    def detect_course(self, query: str) -> dict[str, Any] | None:
+        compact = re.sub(r"\s+", "", query or "").lower()
+        candidates = []
+        for course in self.course_catalog():
+            for alias in course.get("aliases") or []:
+                normalized = re.sub(r"\s+", "", alias).lower()
+                if normalized and normalized in compact:
+                    candidates.append((len(normalized), course))
+                    break
+        return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
     def search(
         self,
@@ -102,12 +176,28 @@ class SearchIndex:
             return []
         filters = filters or {}
         allowed_types = set(filters.get("document_types") or [])
+        excluded_types = set(filters.get("exclude_document_types") or [])
         excluded_categories = [value.lower() for value in filters.get("exclude_categories") or []]
+        course_name = (filters.get("course_name") or "").strip()
+
+        def matches_course(doc: dict[str, Any]) -> bool:
+            if not course_name:
+                return True
+            target = re.sub(r"\s+", "", course_name).lower()
+            title = re.sub(r"\s+", "", doc.get("title") or "").lower()
+            item_names = [
+                re.sub(r"\s+", "", item.get("course_name") or item.get("title") or "").lower()
+                for item in (doc.get("normalized_items") or [])
+            ]
+            return title == target or target in item_names
+
         documents = [
             doc
             for doc in (self.payload.get("documents") or [])
             if (not allowed_types or doc.get("document_type") in allowed_types)
+            and doc.get("document_type") not in excluded_types
             and not any(term in (doc.get("category") or "").lower() for term in excluded_categories)
+            and matches_course(doc)
         ]
         document_frequency = Counter()
         for doc in documents:
@@ -131,6 +221,25 @@ class SearchIndex:
             text = (doc.get("search_text") or "").lower()
             compact_text = re.sub(r"\s+", "", text)
             source_url = doc.get("source_url") or ""
+            if course_name:
+                normalized_course = re.sub(r"\s+", "", course_name).lower()
+                normalized_title = re.sub(r"\s+", "", title)
+                normalized_items = [
+                    re.sub(r"\s+", "", item.get("course_name") or "").lower()
+                    for item in (doc.get("normalized_items") or [])
+                ]
+                if normalized_course in normalized_items:
+                    score += 100
+                if normalized_title == normalized_course:
+                    score += 80
+                if doc.get("document_type") == "과목상세":
+                    score += 80
+                if "교과목" in category or "과목상세" in category:
+                    score += 60
+                if doc.get("document_type") in {"게시물", "게시판목록"}:
+                    score -= 100
+                if source_url == FACULTY_URL or "교수진" in category:
+                    score -= 80
             if faculty_intent:
                 if source_url == FACULTY_URL or "교수진" in title or "교수진" in category:
                     score += 100
@@ -230,5 +339,6 @@ class SearchIndex:
         return {
             "built_at": self.payload.get("built_at"),
             "documents": len(self.payload.get("documents") or []),
+            "courses": len(self.course_catalog()),
             "path": str(self.path),
         }

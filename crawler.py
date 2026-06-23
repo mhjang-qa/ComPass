@@ -49,7 +49,10 @@ ATTACHMENT_EXTENSIONS = (
 REQUIRED_DOCUMENT_URLS = (
     "https://cs.knou.ac.kr/cs1/4786/subview.do",
     "https://cs.knou.ac.kr/cs1/4789/subview.do",
+    "https://cs.knou.ac.kr/cs1/4791/subview.do",
 )
+COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
+COURSE_DETAIL_ENDPOINT = "https://cs.knou.ac.kr/learningInformation/cs1/view.do"
 
 
 @dataclass
@@ -99,7 +102,13 @@ class CrawlDocument:
         )
         self.content_hash = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
         self.document_type = classify_document_type(self.source_url, self.category)
-        if self.normalized_items and any(item.get("course_name") for item in self.normalized_items):
+        if self.normalized_items and any(item.get("overview") for item in self.normalized_items):
+            self.document_type = "과목상세"
+            self.category = "교과정보 > 교과목안내 > 과목상세"
+        elif self.source_url.startswith(COURSE_GUIDE_URL):
+            self.document_type = "교과목목록"
+            self.category = "교과정보 > 교과목안내"
+        elif self.normalized_items and any(item.get("course_name") for item in self.normalized_items):
             self.document_type = "교육과정표"
         elif self.normalized_items and any(item.get("start_date") for item in self.normalized_items):
             self.document_type = "학과일정"
@@ -245,7 +254,10 @@ class KnouCrawler:
         }
         # 기존 Render 환경변수가 /sites/cs1 하나로 남아 있어도 실제 메뉴·게시판 경로를 누락하지 않는다.
         self.allowed_path_prefixes = tuple(
-            sorted(configured_prefixes | {"/cs1", "/sites/cs1", "/bbs/cs1"})
+            sorted(
+                configured_prefixes
+                | {"/cs1", "/sites/cs1", "/bbs/cs1", "/learningInformation/cs1"}
+            )
         )
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": config.USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9"})
@@ -318,6 +330,9 @@ class KnouCrawler:
                 document = self._parse_page(url, soup)
                 if document and document.body:
                     documents.append(document.finalize())
+                if url == COURSE_GUIDE_URL:
+                    detail_documents = self._fetch_course_detail_documents(soup, progress)
+                    documents.extend(detail_documents)
                 if depth < self.max_depth:
                     for link in discovered_links:
                         if link not in seen and link not in enqueued:
@@ -384,6 +399,149 @@ class KnouCrawler:
                 links.append(candidate)
         links.extend(self._extract_board_page_links(current_url, soup))
         return list(dict.fromkeys(links))
+
+    @staticmethod
+    def _course_detail_specs(soup: BeautifulSoup) -> list[dict[str, str]]:
+        pattern = re.compile(
+            r"jf_detailView\('(?P<year>\d{4})','(?P<semester>[12])','(?P<grade>[1-4])',"
+            r"'(?P<course_code>\d+)','(?P<department_code>\d+)'\)"
+        )
+        specs = []
+        seen = set()
+        for anchor in soup.select('a[href*="jf_detailView"]'):
+            match = pattern.search(anchor.get("href", ""))
+            course_name = clean_text(anchor.get_text(" ", strip=True))
+            if not match or not course_name:
+                continue
+            key = (match.group("year"), match.group("semester"), match.group("course_code"))
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append({"course_name": course_name, **match.groupdict()})
+        return specs
+
+    def _fetch_course_detail_documents(
+        self,
+        soup: BeautifulSoup,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[CrawlDocument]:
+        """교과목 안내의 JavaScript POST 팝업을 과목별 공식 문서로 수집한다."""
+        documents: list[CrawlDocument] = []
+        specs = self._course_detail_specs(soup)
+        if not self.is_allowed(COURSE_DETAIL_ENDPOINT):
+            logger.warning("robots.txt 또는 경로 정책으로 교과목 상세 수집을 건너뜁니다.")
+            return documents
+        for index, spec in enumerate(specs, start=1):
+            try:
+                response = self.session.post(
+                    COURSE_DETAIL_ENDPOINT,
+                    data={
+                        "year": spec["year"],
+                        "seme": spec["semester"],
+                        "shgr": spec["grade"],
+                        "sbjtNo": spec["course_code"],
+                        "deptCd": spec["department_code"],
+                    },
+                    timeout=config.CRAWL_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                response.encoding = response.apparent_encoding or response.encoding
+                document = self._parse_course_detail(spec, BeautifulSoup(response.text, "lxml"))
+                if document:
+                    documents.append(document.finalize())
+                if progress:
+                    progress(
+                        {
+                            "visited": index,
+                            "queued": len(specs) - index,
+                            "documents": len(documents),
+                            "depth": 0,
+                            "max_depth": self.max_depth,
+                            "url": document.source_url if document else COURSE_GUIDE_URL,
+                            "percent": min(94, round(index / max(len(specs), 1) * 100)),
+                        }
+                    )
+            except Exception:
+                logger.exception(
+                    "교과목 상세 수집 실패 course=%s code=%s",
+                    spec["course_name"],
+                    spec["course_code"],
+                )
+            time.sleep(self.delay)
+        logger.info("교과목 상세 수집 완료: %d/%d", len(documents), len(specs))
+        return documents
+
+    @staticmethod
+    def _heading_value(area: BeautifulSoup, heading: str) -> str:
+        target = next(
+            (node for node in area.find_all("h5") if clean_text(node.get_text(" ", strip=True)) == heading),
+            None,
+        )
+        if target is None:
+            return ""
+        values = []
+        for sibling in target.next_siblings:
+            if getattr(sibling, "name", None) == "h5":
+                break
+            text = clean_text(
+                sibling.get_text(" ", strip=True)
+                if hasattr(sibling, "get_text")
+                else str(sibling)
+            )
+            if text:
+                values.append(text)
+        return clean_text(" ".join(values))
+
+    def _parse_course_detail(
+        self,
+        spec: dict[str, str],
+        soup: BeautifulSoup,
+    ) -> CrawlDocument | None:
+        area = soup.select_one("#outlineArea")
+        if area is None:
+            return None
+        overview = self._heading_value(area, "개요")
+        media = self._heading_value(area, "매체명")
+        topics = []
+        detail_topics = []
+        table = area.select_one("table")
+        if table:
+            for row in table.select("tbody tr"):
+                cells = [clean_text(cell.get_text(" ", strip=True)) for cell in row.find_all("td")]
+                if len(cells) >= 3:
+                    if cells[1] and cells[1] not in topics:
+                        topics.append(cells[1])
+                    if cells[2] and cells[2] not in detail_topics:
+                        detail_topics.append(cells[2])
+        source_url = f"{COURSE_GUIDE_URL}#course-{spec['course_code']}"
+        normalized_item = {
+            "course_name": spec["course_name"],
+            "grade": f"{spec['grade']}학년",
+            "semester": f"{spec['semester']}학기",
+            "course_code": spec["course_code"],
+            "overview": overview,
+            "topics": topics[:15],
+            "detail_topics": detail_topics[:15],
+            "media": [media] if media else [],
+            "source_url": source_url,
+        }
+        body = "\n".join(
+            [
+                f"과목명: {spec['course_name']}",
+                f"학년/학기: {spec['grade']}학년 {spec['semester']}학기",
+                f"과목개요: {overview}",
+                f"강의매체: {media}",
+                f"주요내용: {', '.join(topics)}",
+            ]
+        )
+        return CrawlDocument(
+            title=spec["course_name"],
+            category="교과정보 > 교과목안내 > 과목상세",
+            body=body,
+            source_url=source_url,
+            collected_at=datetime.now().astimezone().isoformat(),
+            normalized_items=[normalized_item],
+        )
 
     def _extract_board_page_links(self, current_url: str, soup: BeautifulSoup) -> list[str]:
         """JavaScript page_link로만 제공되는 게시판 페이지 URL을 생성한다."""

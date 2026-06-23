@@ -60,6 +60,7 @@ def test_answer_type_renderers_and_per_item_links_are_present() -> None:
         "renderScheduleList",
         "renderRecommendation",
         "renderCourseDetail",
+        "renderCourseDifficulty",
         "renderGenericCards",
         "renderTextAnswer",
     ):
@@ -69,3 +70,4 @@ def test_answer_type_renderers_and_per_item_links_are_present() -> None:
     assert 'link.rel = "noopener noreferrer"' in script
     assert ".answer-link-button" in style
     assert "min-height: 40px" in style
+    assert 'confirmAction?.label || "LLM 보조 답변 사용"' in script

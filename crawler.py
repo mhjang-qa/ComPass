@@ -9,7 +9,7 @@ import re
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -39,8 +39,41 @@ BOILERPLATE_LINES = {
     "오늘 하루 열지않기", "COPYRIGHTⓒKOREA NATIONAL OPEN UNIVERSITY. ALL RIGHTS RESERVED.",
 }
 DATE_PATTERNS = (
-    re.compile(r"(20\d{2})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})"),
+    re.compile(r"(20\d{2})[-.\/]\s*(\d{1,2})[-.\/]\s*(\d{1,2})(?:\s+\d{1,2}:\d{2})?"),
+    re.compile(r"(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일"),
     re.compile(r"(20\d{2})(\d{2})(\d{2})"),
+)
+BOARD_CATEGORY_HINT_RE = re.compile(
+    r"공지|공지사항|게시|게시판|자료실|학생광장|학과소식|행사|이벤트|소식|board|bbs|notice|artcl",
+    re.IGNORECASE,
+)
+STATIC_CATEGORY_HINT_RE = re.compile(
+    r"교수진|교육과정|교과|교과목|학과소개|학사|학과일정|일정|커리큘럼|"
+    r"professor|curriculum|schedule|intro|learninginformation",
+    re.IGNORECASE,
+)
+STATIC_DOCUMENT_TYPES = {
+    "메인",
+    "교수진",
+    "교육과정표",
+    "교과목목록",
+    "과목상세",
+    "학과일정",
+    "검증지식",
+}
+BOARD_DOCUMENT_TYPES = {"게시물", "게시판목록", "커뮤니티게시물"}
+DATA_TIERS = ("CORE", "ACTIVE_NOTICE", "TEMPORARY", "IMPORTANT_ARCHIVE", "NOISE")
+CORE_HINT_RE = re.compile(
+    r"교수진|교육과정|교과목|학과소개|졸업|FAQ|자주\s*묻|학과일정|학사|사무실|연락처",
+    re.IGNORECASE,
+)
+TEMPORARY_HINT_RE = re.compile(r"모집|접수|신청|특강|설명회|행사|대회|마감|초대|공모", re.IGNORECASE)
+IMPORTANT_ARCHIVE_HINT_RE = re.compile(
+    r"졸업|교육과정\s*개편|재이수|대체이수|학칙|규정|시험|평가|경진대회|총장배|소프트웨어경진",
+    re.IGNORECASE,
+)
+NOISE_HINT_RE = re.compile(
+    r"^(?:첨부파일을?\s*)?(?:확인|참고)(?:해\s*주시기\s*바랍니다|하세요|바랍니다)[.!。]?$"
 )
 ATTACHMENT_EXTENSIONS = (
     ".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
@@ -69,6 +102,241 @@ def course_detail_url(spec: dict[str, str]) -> str:
     return f"{COURSE_DETAIL_ENDPOINT}?{query}"
 
 
+def _subtract_years(base: date, years: int) -> date:
+    try:
+        return base.replace(year=base.year - years)
+    except ValueError:
+        return base.replace(year=base.year - years, day=28)
+
+
+def crawl_cutoff_date(today: date | None = None, years: int | None = None) -> date:
+    """게시판 수집 허용 기준일을 계산한다."""
+    base = today or datetime.now().astimezone().date()
+    target_years = config.CRAWL_NOTICE_YEARS_LIMIT if years is None else years
+    return _subtract_years(base, max(0, target_years))
+
+
+def extract_post_date(text: str) -> str:
+    """공식 게시물의 게시일을 ISO 날짜 문자열로 추출한다."""
+    for pattern in DATE_PATTERNS:
+        match = pattern.search(text or "")
+        if not match:
+            continue
+        try:
+            year, month, day = map(int, match.groups())
+            return datetime(year, month, day).date().isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
+def parse_iso_date(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        match = re.search(r"(20\d{2})[-.\/](\d{1,2})[-.\/](\d{1,2})", str(value))
+        if not match:
+            return None
+        try:
+            return datetime(*(map(int, match.groups()))).date()
+        except ValueError:
+            return None
+
+
+def is_static_document_record(record: dict[str, Any]) -> bool:
+    """기간 제한 없이 유지해야 하는 정적/기준 정보 문서 여부."""
+    source_type = (record.get("source_type") or "").lower()
+    if source_type == "community":
+        return False
+    url = record.get("source_url") or ""
+    category = record.get("category") or ""
+    title = record.get("title") or ""
+    document_type = record.get("document_type") or ""
+    marker = f"{url} {category} {title} {document_type}"
+    if document_type in STATIC_DOCUMENT_TYPES and document_type not in BOARD_DOCUMENT_TYPES:
+        return True
+    if any(path in url for path in ("/4786/", "/4789/", "/4791/", "/4792/")):
+        return True
+    if STATIC_CATEGORY_HINT_RE.search(marker) and not BOARD_CATEGORY_HINT_RE.search(marker):
+        return True
+    return False
+
+
+def is_board_document_record(record: dict[str, Any]) -> bool:
+    """최근 3년 제한을 적용할 게시판/게시물 문서 여부."""
+    if is_static_document_record(record):
+        return False
+    url = record.get("source_url") or ""
+    category = record.get("category") or ""
+    title = record.get("title") or ""
+    document_type = record.get("document_type") or ""
+    source_type = (record.get("source_type") or "").lower()
+    marker = f"{url} {category} {title} {document_type}"
+    return (
+        source_type == "community"
+        or document_type in BOARD_DOCUMENT_TYPES
+        or "artclView.do" in url
+        or "/bbs/" in url
+        or bool(BOARD_CATEGORY_HINT_RE.search(marker))
+    )
+
+
+def is_expired_document_record(record: dict[str, Any], today: date | None = None) -> bool:
+    """게시판 문서가 수집 허용 기간을 초과했는지 판정한다."""
+    if not is_board_document_record(record):
+        return False
+    published = parse_iso_date(record.get("published_at") or "")
+    return bool(published and published < crawl_cutoff_date(today))
+
+
+def _future_or_recent(published: date | None, years: int, today: date | None = None) -> bool:
+    if published is None:
+        return False
+    base = today or datetime.now().astimezone().date()
+    return published >= crawl_cutoff_date(base, years)
+
+
+def _temporary_valid_end(published: date | None) -> str:
+    if published is None:
+        return ""
+    return _subtract_years(published, -max(1, config.CRAWL_TEMPORARY_YEARS_LIMIT)).isoformat()
+
+
+def classify_data_tier(record: dict[str, Any], today: date | None = None) -> dict[str, Any]:
+    """문서의 데이터 계층, 활성 상태, 보관 사유, 최근성 점수를 판정한다."""
+    if not config.ENABLE_DATA_TIERING:
+        return {
+            "data_tier": "CORE",
+            "active": True,
+            "archive_reason": "",
+            "valid_start": record.get("published_at") or "",
+            "valid_end": "",
+            "freshness_score": int(search_recency_boost(record, today)),
+        }
+
+    title = record.get("title") or ""
+    category = record.get("category") or ""
+    body = record.get("body") or record.get("summary") or ""
+    document_type = record.get("document_type") or ""
+    url = record.get("source_url") or ""
+    marker = f"{title} {category} {document_type} {url}"
+    full_text = f"{marker} {body}"
+    published = parse_iso_date(record.get("published_at") or "")
+    active = True
+    archive_reason = ""
+    valid_start = published.isoformat() if published else ""
+    valid_end = ""
+
+    compact_body = re.sub(r"\s+", "", body)
+    is_noise = (
+        title in {"", "제목 없음"}
+        or (is_board_document_record(record) and len(compact_body) < 100 and not IMPORTANT_ARCHIVE_HINT_RE.search(full_text))
+        or bool(NOISE_HINT_RE.search(clean_text(body)))
+    )
+    if is_noise:
+        return {
+            "data_tier": "NOISE",
+            "active": False,
+            "archive_reason": "검색 품질을 낮추는 저정보량 문서",
+            "valid_start": valid_start,
+            "valid_end": valid_end,
+            "freshness_score": -100,
+        }
+
+    if is_static_document_record(record) or CORE_HINT_RE.search(marker):
+        return {
+            "data_tier": "CORE",
+            "active": True,
+            "archive_reason": "",
+            "valid_start": valid_start,
+            "valid_end": valid_end,
+            "freshness_score": 40 + int(search_recency_boost(record, today)),
+        }
+
+    if IMPORTANT_ARCHIVE_HINT_RE.search(full_text):
+        return {
+            "data_tier": "IMPORTANT_ARCHIVE",
+            "active": True,
+            "archive_reason": "오래되어도 가치가 있는 중요 보관 문서",
+            "valid_start": valid_start,
+            "valid_end": valid_end,
+            "freshness_score": 20 + int(search_recency_boost(record, today)),
+        }
+
+    if TEMPORARY_HINT_RE.search(full_text):
+        active = _future_or_recent(published, config.CRAWL_TEMPORARY_YEARS_LIMIT, today)
+        valid_end = _temporary_valid_end(published)
+        if not active:
+            archive_reason = "단기성 정보 유효기간 경과"
+        return {
+            "data_tier": "TEMPORARY",
+            "active": active,
+            "archive_reason": archive_reason,
+            "valid_start": valid_start,
+            "valid_end": valid_end,
+            "freshness_score": 5 + int(search_recency_boost(record, today)) if active else 0,
+        }
+
+    if is_board_document_record(record):
+        active = _future_or_recent(published, config.CRAWL_NOTICE_YEARS_LIMIT, today)
+        if not active:
+            archive_reason = f"게시일 기준 최근 {config.CRAWL_NOTICE_YEARS_LIMIT}년 초과"
+        return {
+            "data_tier": "ACTIVE_NOTICE",
+            "active": active,
+            "archive_reason": archive_reason,
+            "valid_start": valid_start,
+            "valid_end": "",
+            "freshness_score": 10 + int(search_recency_boost(record, today)) if active else 0,
+        }
+
+    return {
+        "data_tier": "CORE",
+        "active": True,
+        "archive_reason": "",
+        "valid_start": valid_start,
+        "valid_end": valid_end,
+        "freshness_score": 40 + int(search_recency_boost(record, today)),
+    }
+
+
+def should_collect_document_record(record: dict[str, Any], today: date | None = None) -> tuple[bool, str]:
+    """크롤링 결과를 유지할지 결정한다. reason: collect/static/old_post/missing_post_date."""
+    if is_static_document_record(record):
+        return True, "static"
+    if is_board_document_record(record):
+        published = parse_iso_date(record.get("published_at") or "")
+        if published is None:
+            return False, "missing_post_date"
+        tier = classify_data_tier(record, today)
+        if tier["data_tier"] == "IMPORTANT_ARCHIVE":
+            return True, "important_archive"
+        if tier["data_tier"] == "TEMPORARY" and not tier["active"]:
+            return False, "temporary_expired"
+        if published < crawl_cutoff_date(today, config.CRAWL_NOTICE_YEARS_LIMIT):
+            return False, "old_post"
+    return True, "collect"
+
+
+def search_recency_boost(record: dict[str, Any], today: date | None = None) -> float:
+    """검색 점수에 더할 최신성/정적 기준정보 가중치."""
+    if is_static_document_record(record):
+        return 30.0
+    published = parse_iso_date(record.get("published_at") or "")
+    if not published:
+        return 0.0
+    age_days = ((today or datetime.now().astimezone().date()) - published).days
+    if age_days <= 365:
+        return 20.0
+    if age_days <= 365 * 2:
+        return 10.0
+    if age_days <= 365 * 3:
+        return 5.0
+    return 0.0
+
+
 @dataclass
 class CrawlDocument:
     title: str
@@ -89,6 +357,12 @@ class CrawlDocument:
     normalized_items: list[dict[str, Any]] = field(default_factory=list)
     source_type: str = "official"
     source_label: str = "한국방송통신대학교 컴퓨터과학과 공식 홈페이지"
+    data_tier: str = "CORE"
+    active: bool = True
+    archive_reason: str = ""
+    valid_start: str = ""
+    valid_end: str = ""
+    freshness_score: int = 0
 
     def finalize(self) -> "CrawlDocument":
         self.body = clean_text(self.body)
@@ -132,6 +406,13 @@ class CrawlDocument:
         elif self.normalized_items and any(item.get("start_date") for item in self.normalized_items):
             self.document_type = "학과일정"
             self.category = "학과일정"
+        tier = classify_data_tier(asdict(self))
+        self.data_tier = tier["data_tier"]
+        self.active = bool(tier["active"])
+        self.archive_reason = tier["archive_reason"]
+        self.valid_start = tier["valid_start"]
+        self.valid_end = tier["valid_end"]
+        self.freshness_score = int(tier["freshness_score"])
         return self
 
 
@@ -281,6 +562,38 @@ class KnouCrawler:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": config.USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9"})
         self.robots = self._load_robots()
+        self.stats: dict[str, int] = {
+            "total_urls": 0,
+            "collected": 0,
+            "skipped_old": 0,
+            "skipped_no_date": 0,
+            "skipped_temporary": 0,
+            "noise": 0,
+            "static_pages": 0,
+            "CORE": 0,
+            "ACTIVE_NOTICE": 0,
+            "TEMPORARY": 0,
+            "IMPORTANT_ARCHIVE": 0,
+            "NOISE": 0,
+        }
+
+    def _ensure_stats(self) -> dict[str, int]:
+        if not hasattr(self, "stats"):
+            self.stats = {
+                "total_urls": 0,
+                "collected": 0,
+                "skipped_old": 0,
+                "skipped_no_date": 0,
+                "skipped_temporary": 0,
+                "noise": 0,
+                "static_pages": 0,
+                "CORE": 0,
+                "ACTIVE_NOTICE": 0,
+                "TEMPORARY": 0,
+                "IMPORTANT_ARCHIVE": 0,
+                "NOISE": 0,
+            }
+        return self.stats
 
     def _load_robots(self) -> RobotFileParser:
         parser = RobotFileParser()
@@ -313,6 +626,7 @@ class KnouCrawler:
         return self.robots.can_fetch(config.USER_AGENT, url)
 
     def crawl(self, progress: Callable[[dict[str, Any]], None] | None = None) -> list[CrawlDocument]:
+        self._ensure_stats()
         seed_urls = [self.start_url, *REQUIRED_DOCUMENT_URLS]
         queue = deque((url, 0) for url in dict.fromkeys(seed_urls))
         enqueued: set[str] = set(seed_urls)
@@ -324,6 +638,7 @@ class KnouCrawler:
             if url in seen or not self.is_allowed(url):
                 continue
             seen.add(url)
+            self.stats["total_urls"] = len(seen)
             if progress:
                 progress(
                     {
@@ -334,6 +649,7 @@ class KnouCrawler:
                         "max_depth": self.max_depth,
                         "url": url,
                         "percent": min(94, max(2, round(len(seen) / self.max_pages * 100))),
+                        **self.stats,
                     }
                 )
             try:
@@ -349,9 +665,19 @@ class KnouCrawler:
                 document = self._parse_page(url, soup)
                 if document and document.body:
                     documents.append(document.finalize())
+                    self.stats["collected"] = len(documents)
+                    if document.data_tier in DATA_TIERS:
+                        self.stats[document.data_tier] += 1
+                    if document.data_tier == "NOISE":
+                        self.stats["noise"] += 1
                 if url == COURSE_GUIDE_URL:
                     detail_documents = self._fetch_course_detail_documents(soup, progress)
                     documents.extend(detail_documents)
+                    self.stats["collected"] = len(documents)
+                    self.stats["static_pages"] += len(detail_documents)
+                    for detail_document in detail_documents:
+                        if detail_document.data_tier in DATA_TIERS:
+                            self.stats[detail_document.data_tier] += 1
                 if depth < self.max_depth:
                     for link in discovered_links:
                         if link not in seen and link not in enqueued:
@@ -371,6 +697,7 @@ class KnouCrawler:
                                 94,
                                 max(2, round(len(seen) / max(discovered_total, 1) * 100)),
                             ),
+                            **self.stats,
                         }
                     )
             except requests.RequestException as exc:
@@ -626,7 +953,7 @@ class KnouCrawler:
 
         published_at = self._extract_date(page_text)
 
-        return CrawlDocument(
+        document = CrawlDocument(
             title=title[:300],
             category=category[:200],
             body=body,
@@ -638,6 +965,42 @@ class KnouCrawler:
             table_rows=table_rows,
             normalized_items=normalized_items,
         )
+        document.finalize()
+        should_collect, reason = should_collect_document_record(asdict(document))
+        if not should_collect:
+            if reason == "old_post":
+                self._ensure_stats()
+                self.stats["skipped_old"] += 1
+                logger.info(
+                    "[SKIP_OLD_POST] cutoff=%s date=%s url=%s title=%s",
+                    crawl_cutoff_date().isoformat(),
+                    document.published_at,
+                    document.source_url,
+                    document.title,
+                )
+            elif reason == "missing_post_date":
+                self._ensure_stats()
+                self.stats["skipped_no_date"] += 1
+                logger.info(
+                    "[SKIP_NO_DATE_POST] url=%s title=%s category=%s",
+                    document.source_url,
+                    document.title,
+                    document.category,
+                )
+            elif reason == "temporary_expired":
+                self._ensure_stats()
+                self.stats["skipped_temporary"] += 1
+                logger.info(
+                    "[SKIP_TEMPORARY_EXPIRED] date=%s url=%s title=%s",
+                    document.published_at,
+                    document.source_url,
+                    document.title,
+                )
+            return None
+        if reason == "static":
+            self._ensure_stats()
+            self.stats["static_pages"] += 1
+        return document
 
     @classmethod
     def _extract_faculty_items(cls, content: BeautifulSoup, base_url: str) -> list[dict[str, Any]]:
@@ -916,15 +1279,7 @@ class KnouCrawler:
 
     @staticmethod
     def _extract_date(text: str) -> str:
-        for pattern in DATE_PATTERNS:
-            match = pattern.search(text or "")
-            if match:
-                try:
-                    year, month, day = map(int, match.groups())
-                    return datetime(year, month, day).date().isoformat()
-                except ValueError:
-                    continue
-        return ""
+        return extract_post_date(text)
 
     @staticmethod
     def _guess_category(url: str, title: str) -> str:

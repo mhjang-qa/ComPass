@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import config
+from crawler import DATA_TIERS, classify_data_tier, search_recency_boost, should_collect_document_record
 from notion_client import NotionClient
 
 SYNONYMS = {
@@ -97,12 +98,33 @@ class SearchIndex:
     def rebuild(self, documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         documents = documents if documents is not None else NotionClient().knowledge_documents()
         indexed = []
+        excluded = 0
+        tier_counts = {tier: 0 for tier in DATA_TIERS}
+        excluded_by_tier = {tier: 0 for tier in DATA_TIERS}
         for doc in documents:
             doc = {
                 **doc,
                 "source_type": doc.get("source_type") or "official",
                 "source_label": doc.get("source_label") or "",
             }
+            tier = classify_data_tier(doc)
+            doc.setdefault("data_tier", tier["data_tier"])
+            doc["data_tier"] = doc.get("data_tier") or tier["data_tier"]
+            doc["active"] = tier["active"] if doc.get("active") is None else bool(doc.get("active"))
+            doc["archive_reason"] = doc.get("archive_reason") or tier["archive_reason"]
+            doc["freshness_score"] = doc.get("freshness_score") or tier["freshness_score"]
+            status = (doc.get("status") or "").lower()
+            searchable = (
+                doc["data_tier"] in {"CORE", "ACTIVE_NOTICE", "IMPORTANT_ARCHIVE"}
+                or (doc["data_tier"] == "TEMPORARY" and doc["active"])
+            )
+            if status in {"archived", "noise"} or not doc["active"] or doc["data_tier"] == "NOISE" or not searchable or not should_collect_document_record(doc)[0]:
+                excluded += 1
+                if doc["data_tier"] in excluded_by_tier:
+                    excluded_by_tier[doc["data_tier"]] += 1
+                continue
+            if doc["data_tier"] in tier_counts:
+                tier_counts[doc["data_tier"]] += 1
             text = doc.get("search_text") or " ".join(
                 [
                     doc.get("title", ""),
@@ -123,6 +145,9 @@ class SearchIndex:
             "documents": indexed,
             "course_catalog": course_catalog,
             "faculty_catalog": faculty_catalog,
+            "tier_counts": tier_counts,
+            "excluded_by_tier": excluded_by_tier,
+            "excluded": excluded,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(new_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -131,6 +156,9 @@ class SearchIndex:
         return {
             "built_at": new_payload["built_at"],
             "documents": len(indexed),
+            "excluded": excluded,
+            "tier_counts": tier_counts,
+            "excluded_by_tier": excluded_by_tier,
             "courses": len(course_catalog),
             "faculty": len(faculty_catalog),
         }
@@ -382,6 +410,7 @@ class SearchIndex:
                     score += 4
             if compact_query and compact_query in compact_text:
                 score += 12
+            score += self._tier_boost(doc) + search_recency_boost(doc)
             coverage = len(set(matched)) / max(len(set(query_tokens)), 1)
             score += coverage * 10
             if score > 0:
@@ -460,5 +489,18 @@ class SearchIndex:
             "documents": documents,
             "courses": courses,
             "faculty": faculty,
+            "tier_counts": dict(self.payload.get("tier_counts") or {}),
+            "excluded_by_tier": dict(self.payload.get("excluded_by_tier") or {}),
+            "excluded": self.payload.get("excluded", 0),
             "path": str(self.path),
         }
+
+    @staticmethod
+    def _tier_boost(doc: dict[str, Any]) -> float:
+        return {
+            "CORE": 40.0,
+            "IMPORTANT_ARCHIVE": 20.0,
+            "ACTIVE_NOTICE": 10.0,
+            "TEMPORARY": 5.0,
+            "NOISE": -100.0,
+        }.get(doc.get("data_tier") or "", 0.0)

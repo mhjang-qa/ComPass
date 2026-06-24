@@ -12,7 +12,7 @@ from typing import Any, Iterable
 import requests
 
 import config
-from crawler import CrawlDocument
+from crawler import CrawlDocument, classify_data_tier, is_board_document_record
 from curated_knowledge import curated_documents
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,12 @@ KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
     "table_rows": {"rich_text": {}},
     "normalized_items": {"rich_text": {}},
     "응답가이드": {"rich_text": {}},
+    "데이터계층": {"select": {}},
+    "활성여부": {"checkbox": {}},
+    "보관사유": {"rich_text": {}},
+    "유효시작일": {"date": {}},
+    "유효종료일": {"date": {}},
+    "최근성점수": {"number": {"format": "number"}},
 }
 
 STATS_SCHEMA: dict[str, dict[str, Any]] = {
@@ -278,7 +284,16 @@ class NotionClient:
             return (prop.get("date") or {}).get("start", "")
         return ""
 
+    @staticmethod
+    def _property_checkbox(prop: dict[str, Any]) -> bool | None:
+        return prop.get("checkbox") if prop.get("type") == "checkbox" else None
+
+    @staticmethod
+    def _property_number(prop: dict[str, Any]) -> float | int | None:
+        return prop.get("number") if prop.get("type") == "number" else None
+
     def _properties(self, doc: CrawlDocument, status: str) -> dict[str, Any]:
+        applied_status = self._status_for_document(doc, status)
         props: dict[str, Any] = {
             "제목": {"title": rich_text(doc.title, 300)},
             "출처구분": {
@@ -295,7 +310,7 @@ class NotionClient:
             "수집일": {"date": {"start": doc.collected_at}},
             "키워드": {"multi_select": [{"name": word[:100]} for word in doc.keywords[:15]]},
             "콘텐츠해시": {"rich_text": rich_text(doc.content_hash, 100)},
-            "상태": {"select": {"name": status}},
+            "상태": {"select": {"name": applied_status}},
             "검색용텍스트": {"rich_text": rich_text(doc.search_text)},
             "첨부파일": {"rich_text": rich_text("\n".join(doc.attachments))},
             "본문길이": {"number": len(doc.body)},
@@ -312,10 +327,26 @@ class NotionClient:
                     )
                 )
             },
+            "데이터계층": {"select": {"name": doc.data_tier or "CORE"}},
+            "활성여부": {"checkbox": bool(doc.active)},
+            "보관사유": {"rich_text": rich_text(doc.archive_reason, 1000)},
+            "최근성점수": {"number": int(doc.freshness_score or 0)},
         }
         if doc.published_at:
             props["게시일"] = {"date": {"start": doc.published_at}}
+        if doc.valid_start:
+            props["유효시작일"] = {"date": {"start": doc.valid_start}}
+        if doc.valid_end:
+            props["유효종료일"] = {"date": {"start": doc.valid_end}}
         return props
+
+    @staticmethod
+    def _status_for_document(doc: CrawlDocument, fallback: str) -> str:
+        if doc.data_tier == "NOISE":
+            return "noise"
+        if not doc.active:
+            return "archived"
+        return fallback
 
     @staticmethod
     def _body_blocks(doc: CrawlDocument) -> list[dict[str, Any]]:
@@ -391,12 +422,26 @@ class NotionClient:
         self.request("PATCH", f"/blocks/{page_id}/children", {"children": self._body_blocks(doc)})
 
     def upsert_document(self, doc: CrawlDocument, database_id: str = config.NOTION_KNOWLEDGE_DB_ID) -> str:
+        target_status = self._status_for_document(doc, "유지")
         existing = self.find_by_url(database_id, doc.source_url)
         if existing:
-            old_hash = self._property_text((existing.get("properties") or {}).get("콘텐츠해시", {}))
+            existing_props = existing.get("properties") or {}
+            old_hash = self._property_text(existing_props.get("콘텐츠해시", {}))
+            old_status = self._property_text(existing_props.get("상태", {}))
+            old_tier = self._property_text(existing_props.get("데이터계층", {}))
             if old_hash == doc.content_hash:
-                # 제목·본문·게시일·첨부파일이 모두 같으면 Notion 페이지를 전혀 수정하지 않는다.
-                # 수집일이나 상태만 갱신하는 PATCH도 하지 않아 진정한 증분 동기화를 보장한다.
+                # 본문이 같더라도 계층 정책은 운영 정책이므로 필요 시 속성만 갱신한다.
+                needs_policy_patch = (
+                    old_status in {"archived", "noise"}
+                    or (old_tier and old_tier != doc.data_tier)
+                    or (old_status and old_status != target_status and target_status in {"archived", "noise"})
+                )
+                if needs_policy_patch:
+                    self.request(
+                        "PATCH",
+                        f"/pages/{existing['id']}",
+                        {"properties": self._properties(doc, "유지")},
+                    )
                 return "유지"
             self.request(
                 "PATCH",
@@ -454,6 +499,126 @@ class NotionClient:
         logger.info("[Notion 전체 저장 완료] total=%d counts=%s", total, counts)
         return counts
 
+    def archive_expired_documents(
+        self,
+        database_id: str = config.NOTION_KNOWLEDGE_DB_ID,
+        *,
+        status_name: str = "archived",
+    ) -> dict[str, int]:
+        """최근 수집 정책에서 제외되는 기존 게시판 문서를 삭제하지 않고 보관 상태로 전환한다."""
+        pages = self.query_all(database_id)
+        result = {"checked": 0, "archived": 0, "skipped": 0, "failed": 0}
+        logger.info("[Notion 보관 정책 시작] total=%d status=%s", len(pages), status_name)
+        for page in pages:
+            result["checked"] += 1
+            props = page.get("properties") or {}
+            get = lambda name: self._property_text(props.get(name, {}))
+            record = {
+                "title": get("제목"),
+                "category": get("카테고리"),
+                "document_type": get("문서유형"),
+                "body": get("본문"),
+                "summary": get("요약"),
+                "source_url": get("원본URL"),
+                "published_at": get("게시일"),
+                "status": get("상태"),
+                "source_type": (
+                    "community"
+                    if get("출처구분") == "비공식 커뮤니티"
+                    else "official"
+                ),
+            }
+            tier = classify_data_tier(record)
+            if record["status"] == status_name:
+                result["skipped"] += 1
+                continue
+            if not is_board_document_record(record) or tier["active"]:
+                result["skipped"] += 1
+                continue
+            try:
+                self.request(
+                    "PATCH",
+                    f"/pages/{page['id']}",
+                    {
+                        "properties": {
+                            "상태": {"select": {"name": "noise" if tier["data_tier"] == "NOISE" else status_name}},
+                            "데이터계층": {"select": {"name": tier["data_tier"]}},
+                            "활성여부": {"checkbox": bool(tier["active"])},
+                            "보관사유": {"rich_text": rich_text(tier["archive_reason"], 1000)},
+                            "최근성점수": {"number": int(tier["freshness_score"] or 0)},
+                        }
+                    },
+                )
+                result["archived"] += 1
+                logger.info(
+                    "[Notion 보관 처리] date=%s title=%s url=%s",
+                    record["published_at"],
+                    record["title"],
+                    record["source_url"],
+                )
+            except Exception:
+                result["failed"] += 1
+                logger.exception("[Notion 보관 실패] title=%s url=%s", record["title"], record["source_url"])
+        logger.info("[Notion 보관 정책 완료] result=%s", result)
+        return result
+
+    def reclassify_data_tiers(self, database_id: str = config.NOTION_KNOWLEDGE_DB_ID) -> dict[str, Any]:
+        """기존 Notion 지식 DB 문서 전체에 데이터 계층 정책을 재적용한다."""
+        pages = self.query_all(database_id)
+        result: dict[str, Any] = {
+            "checked": 0,
+            "updated": 0,
+            "failed": 0,
+            "tiers": {tier: 0 for tier in ("CORE", "ACTIVE_NOTICE", "TEMPORARY", "IMPORTANT_ARCHIVE", "NOISE")},
+            "active": 0,
+            "inactive": 0,
+        }
+        logger.info("[데이터 계층 재분류 시작] total=%d", len(pages))
+        for page in pages:
+            result["checked"] += 1
+            props = page.get("properties") or {}
+            get = lambda name: self._property_text(props.get(name, {}))
+            record = {
+                "title": get("제목"),
+                "category": get("카테고리"),
+                "document_type": get("문서유형"),
+                "body": get("본문"),
+                "summary": get("요약"),
+                "source_url": get("원본URL"),
+                "published_at": get("게시일"),
+                "status": get("상태"),
+                "source_type": (
+                    "community"
+                    if get("출처구분") == "비공식 커뮤니티"
+                    else "official"
+                ),
+            }
+            tier = classify_data_tier(record)
+            result["tiers"][tier["data_tier"]] = result["tiers"].get(tier["data_tier"], 0) + 1
+            result["active" if tier["active"] else "inactive"] += 1
+            current_status = (record["status"] or "").lower()
+            active_status = "유지" if current_status in {"archived", "noise", ""} else record["status"]
+            status_name = "noise" if tier["data_tier"] == "NOISE" else ("archived" if not tier["active"] else active_status)
+            properties: dict[str, Any] = {
+                "데이터계층": {"select": {"name": tier["data_tier"]}},
+                "활성여부": {"checkbox": bool(tier["active"])},
+                "보관사유": {"rich_text": rich_text(tier["archive_reason"], 1000)},
+                "최근성점수": {"number": int(tier["freshness_score"] or 0)},
+                "상태": {"select": {"name": status_name}},
+            }
+            if tier.get("valid_start"):
+                properties["유효시작일"] = {"date": {"start": tier["valid_start"]}}
+            if tier.get("valid_end"):
+                properties["유효종료일"] = {"date": {"start": tier["valid_end"]}}
+            try:
+                self.request("PATCH", f"/pages/{page['id']}", {"properties": properties})
+                result["updated"] += 1
+            except Exception:
+                result["failed"] += 1
+                logger.exception("[데이터 계층 재분류 실패] title=%s url=%s", record["title"], record["source_url"])
+        logger.info("[데이터 계층 재분류 완료] result=%s", result)
+        return result
+
     def upsert_curated_knowledge(self) -> dict[str, int]:
         """관리자 검증 지식을 일반 크롤링 문서와 동일한 DB에 동기화한다."""
         return self.upsert_many(curated_documents())
@@ -504,6 +669,12 @@ class NotionClient:
                         get("출처명")
                         or "한국방송통신대학교 컴퓨터과학과 공식 홈페이지"
                     ),
+                    "data_tier": get("데이터계층") or "",
+                    "active": self._property_checkbox(props.get("활성여부", {})),
+                    "archive_reason": get("보관사유"),
+                    "valid_start": get("유효시작일"),
+                    "valid_end": get("유효종료일"),
+                    "freshness_score": self._property_number(props.get("최근성점수", {})) or 0,
                 }
             )
         return documents
@@ -539,6 +710,9 @@ class NotionClient:
                         else "official"
                     ),
                     "source_label": get("출처명"),
+                    "data_tier": get("데이터계층"),
+                    "active": self._property_checkbox(props.get("활성여부", {})),
+                    "archive_reason": get("보관사유"),
                 }
             )
         return documents

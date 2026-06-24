@@ -230,6 +230,8 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   text-decoration: none;
 }
 .answer-link-button:hover { background: #eef8ff; }
+.retry-answer-button { margin-top: 10px; min-height: 38px; padding: 0 14px; border: 1px solid #9dc7e2; border-radius: 999px; color: var(--blue); background: #fff; font-weight: 800; }
+.retry-answer-button:hover { color: #fff; background: var(--blue); }
 .source-list { display: grid; gap: 6px; margin-top: 10px; }
 .source-list a { color: var(--blue); font-size: .82rem; font-weight: 700; text-decoration: none; }
 .loading-bubble { display: flex; align-items: center; gap: 11px; min-width: min(310px, 88%); }
@@ -301,6 +303,9 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
 .admin-auth label { display: flex; align-items: center; gap: 9px; font-weight: 700; }
 .admin-auth input, .admin-auth select, .search-test input { min-height: 42px; padding: 8px 11px; border: 1px solid #b9cbd9; border-radius: 10px; background: white; }
 .admin-auth span { color: var(--muted); font-size: .8rem; }
+.crawl-policy { flex: 1; min-width: 230px; padding: 13px 14px; border: 1px solid #cfe4f4; border-radius: 14px; background: #f3faff; }
+.crawl-policy strong { display: block; margin-bottom: 7px; color: var(--navy); font-size: .86rem; }
+.crawl-policy ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; margin: 0; padding-left: 18px; color: var(--muted); font-size: .8rem; line-height: 1.35; }
 .status-card p { color: var(--muted); margin-bottom: 0; }
 .status-card .setup-help { padding-top: 12px; border-top: 1px solid var(--line); font-size: .82rem; line-height: 1.55; }
 .status-card code { color: var(--navy); font-weight: 700; }
@@ -441,6 +446,8 @@ th { color: var(--muted); font-size: .77rem; }
   .section-head, .admin-auth { align-items: stretch; flex-direction: column; }
   .admin-auth label { justify-content: space-between; }
   .admin-auth input, .admin-auth select { min-width: 0; width: 58%; }
+  .crawl-policy { min-width: 0; }
+  .crawl-policy ul { grid-template-columns: 1fr; }
   .section-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .metric-grid { grid-template-columns: 1fr; }
   .search-test { flex-direction: column; }

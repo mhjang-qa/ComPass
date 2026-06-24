@@ -487,9 +487,14 @@ function renderGenericItems(bubble, payload, messageRow) {
     const card = document.createElement("article");
     card.className = "answer-card";
     const heading = document.createElement("h3");
-    heading.textContent = item.title || "공식 정보";
+    heading.textContent = item.title || item.label || "공식 정보";
     card.appendChild(heading);
-    if (payload.answer_type === "course_table") {
+    if (item.label && item.value) {
+      const value = document.createElement("p");
+      value.className = "answer-card-summary";
+      value.textContent = item.value;
+      card.appendChild(value);
+    } else if (payload.answer_type === "course_table") {
       appendField(card, "학년/학기", [item.grade, item.semester].filter(Boolean).join(" "));
       appendField(card, "구분", item.category);
       appendField(card, "특징", item.feature);
@@ -605,6 +610,16 @@ function renderCourseDifficulty(bubble, payload, messageRow) {
     const note = document.createElement("p");
     note.className = "answer-note";
     note.textContent = disclaimer;
+    bubble.appendChild(note);
+  }
+}
+
+function renderStructuredAdvice(bubble, payload, messageRow) {
+  renderGenericItems(bubble, payload, messageRow);
+  if (payload.disclaimer) {
+    const note = document.createElement("p");
+    note.className = "answer-note";
+    note.textContent = payload.disclaimer;
     bubble.appendChild(note);
   }
 }
@@ -730,6 +745,18 @@ function renderTextAnswer(bubble, text) {
   appendParagraph(bubble, paragraph);
 }
 
+function isIncompleteAnswerText(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return true;
+  const lines = clean.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const last = lines.at(-1) || "";
+  if (clean.length < 80 && !/[.!?。요다)\]]$/.test(last)) return true;
+  if (/[:：]$/.test(last)) return true;
+  if (/(및|또는|그리고|하지만|때문에|위해|수 있도록|하는|입니다만)$/.test(last)) return true;
+  if (!/[.!?。요다)\]]$/.test(last)) return true;
+  return false;
+}
+
 function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
   const row = document.createElement("div");
   row.className = `message ${role}`;
@@ -745,9 +772,26 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     course_recommendation: renderRecommendation,
     course_detail: renderCourseDetail,
     course_difficulty: renderCourseDifficulty,
+    course_grade_strategy: renderStructuredAdvice,
+    course_order: renderStructuredAdvice,
+    notice_explain: renderStructuredAdvice,
+    schedule_explain: renderStructuredAdvice,
+    general_explain: renderStructuredAdvice,
   };
   if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
     (renderers[payload.answer_type] || renderGenericCards)(bubble, payload, row);
+  } else if (role === "bot" && isIncompleteAnswerText(text)) {
+    renderTextAnswer(bubble, "답변이 완전히 생성되지 않았습니다. 다시 시도해 주세요.");
+    const retry = document.createElement("button");
+    retry.className = "retry-answer-button";
+    retry.type = "button";
+    retry.textContent = "답변 다시 생성";
+    retry.onclick = () => sendQuestion(payload.client_question || payload.question || "", {
+      allowLlm: true,
+      llmType: payload.llm_type || "general_explain",
+      context: payload.context || {},
+    });
+    bubble.appendChild(retry);
   } else {
     renderTextAnswer(bubble, text);
   }
@@ -990,9 +1034,18 @@ function renderCrawlProgress(status) {
     status.saved_count !== undefined ? `저장 ${status.saved_count}` : "",
     status.skipped_count !== undefined ? `유지 ${status.skipped_count}` : "",
     status.failed_count !== undefined ? `실패 ${status.failed_count}` : "",
+    status.skipped_old_count !== undefined ? `3년 초과 제외 ${status.skipped_old_count}` : "",
+    status.skipped_no_date_count !== undefined ? `게시일 없음 제외 ${status.skipped_no_date_count}` : "",
+    status.static_pages !== undefined ? `정적 ${status.static_pages}` : "",
+    progress.CORE !== undefined ? `CORE ${progress.CORE}` : "",
+    progress.ACTIVE_NOTICE !== undefined ? `공지 ${progress.ACTIVE_NOTICE}` : "",
+    progress.TEMPORARY !== undefined ? `임시 ${progress.TEMPORARY}` : "",
+    progress.IMPORTANT_ARCHIVE !== undefined ? `중요보관 ${progress.IMPORTANT_ARCHIVE}` : "",
+    progress.NOISE !== undefined ? `NOISE ${progress.NOISE}` : "",
   ].filter(Boolean).join(" · ");
   $("#crawlProgressDetail").textContent =
     `Depth ${progress.depth ?? 0}/${progress.max_depth ?? $("#crawlDepth").value} · ` +
+    `전체 ${status.total_urls ?? progress.total_urls ?? progress.visited ?? 0} · ` +
     `방문 ${progress.visited ?? 0} · 대기 ${progress.queued ?? 0} · 수집 ${progress.documents ?? 0}` +
     (saveInfo ? ` · ${saveInfo}` : "");
   const current = status.error
@@ -1064,9 +1117,33 @@ async function loadIndexStatus() {
   const data = await jsonFetch("/api/index/status", { headers: adminHeaders() });
   $("#indexStatus").innerHTML = `
     <div class="metric"><span>문서 수</span><strong>${data.documents}</strong></div>
+    <div class="metric"><span>제외 문서</span><strong>${data.excluded || 0}</strong></div>
     <div class="metric"><span>교과목 수</span><strong>${data.courses || 0}</strong></div>
     <div class="metric"><span>생성 시각</span><strong>${escapeHtml(data.built_at ? formatKstDateTime(data.built_at, true) : "미생성")}</strong></div>
     <div class="metric"><span>작업 상태</span><strong>${escapeHtml(data.job.message)}</strong></div>`;
+  renderTierRows(data);
+}
+
+function renderTierRows(data) {
+  const tbody = $("#tierRows");
+  if (!tbody) return;
+  const included = data.tier_counts || {};
+  const excluded = data.excluded_by_tier || {};
+  const policies = {
+    CORE: "항상 포함",
+    ACTIVE_NOTICE: "최근 공지 포함",
+    TEMPORARY: "활성 기간만 포함",
+    IMPORTANT_ARCHIVE: "중요 보관 포함",
+    NOISE: "검색 제외",
+  };
+  tbody.innerHTML = ["CORE", "ACTIVE_NOTICE", "TEMPORARY", "IMPORTANT_ARCHIVE", "NOISE"].map((tier) => `
+    <tr>
+      <td>${tier}</td>
+      <td>${Number(included[tier] || 0).toLocaleString("ko-KR")}</td>
+      <td>${Number(excluded[tier] || 0).toLocaleString("ko-KR")}</td>
+      <td>${escapeHtml(policies[tier])}</td>
+    </tr>
+  `).join("");
 }
 $("#rebuildIndex").addEventListener("click", async () => {
   try {
@@ -1074,6 +1151,20 @@ $("#rebuildIndex").addEventListener("click", async () => {
     await loadIndexStatus();
     setTimeout(loadIndexStatus, 2000);
   } catch (error) { alert(error.message); }
+});
+$("#reclassifyTiers").addEventListener("click", async () => {
+  try {
+    $("#reclassifyTiers").disabled = true;
+    $("#reclassifyTiers").textContent = "재분류 중…";
+    const result = await jsonFetch("/api/data-tier/reclassify", { method: "POST", headers: adminHeaders() });
+    $("#crawlStatus").textContent = result.message;
+    await loadIndexStatus();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    $("#reclassifyTiers").disabled = false;
+    $("#reclassifyTiers").textContent = "데이터 계층 재분류";
+  }
 });
 $("#searchForm").addEventListener("submit", async (event) => {
   event.preventDefault();

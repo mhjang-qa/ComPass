@@ -59,6 +59,10 @@ job_state: dict[str, Any] = {
         "saved_count": 0,
         "failed_count": 0,
         "skipped_count": 0,
+        "skipped_old_count": 0,
+        "skipped_no_date_count": 0,
+        "static_pages": 0,
+        "total_urls": 0,
         "current_title": "",
         "error": "",
         "updated_at": None,
@@ -304,6 +308,15 @@ def run_crawl_job(max_depth: int) -> None:
             "visited": 0,
             "queued": 0,
             "documents": 0,
+            "total_urls": 0,
+            "skipped_old": 0,
+            "skipped_no_date": 0,
+            "static_pages": 0,
+            "CORE": 0,
+            "ACTIVE_NOTICE": 0,
+            "TEMPORARY": 0,
+            "IMPORTANT_ARCHIVE": 0,
+            "NOISE": 0,
             "depth": 0,
             "max_depth": max_depth,
             "url": "",
@@ -325,12 +338,18 @@ def run_crawl_job(max_depth: int) -> None:
                     "크롤링 진행중입니다. "
                     f"Depth {progress['depth']}/{progress['max_depth']} · "
                     f"방문 {progress['visited']} · 대기 {progress['queued']} · "
-                    f"수집 {progress['documents']}"
+                    f"수집 {progress['documents']} · "
+                    f"3년 초과 제외 {progress.get('skipped_old', 0)}"
                 ),
+                total_urls=int(progress.get("total_urls") or progress.get("visited") or 0),
+                skipped_old_count=int(progress.get("skipped_old") or 0),
+                skipped_no_date_count=int(progress.get("skipped_no_date") or 0),
+                static_pages=int(progress.get("static_pages") or 0),
                 progress=progress,
             )
 
         documents = crawler.crawl(update_crawl_progress)
+        crawl_stats = dict(getattr(crawler, "stats", {}) or {})
         official_count = len(documents)
         community_count = 0
         if config.COMMUNITY_CRAWL_ENABLED and max_depth >= 1:
@@ -392,6 +411,8 @@ def run_crawl_job(max_depth: int) -> None:
             )
 
         notion_result = notion.upsert_many(documents, progress_callback=update_save_progress)
+        archived_result = notion.archive_expired_documents()
+        notion_result["archived"] = int(archived_result.get("archived", 0))
         update_crawl_state(
             message="Notion 저장 완료. 검색 인덱스를 갱신하고 있습니다.",
             progress={**job_state["crawl"]["progress"], "percent": 98},
@@ -415,9 +436,15 @@ def run_crawl_job(max_depth: int) -> None:
             saved_count=int(notion_result.get("신규", 0)) + int(notion_result.get("변경", 0)),
             skipped_count=int(notion_result.get("유지", 0)),
             failed_count=int(notion_result.get("실패", 0)),
+            skipped_old_count=int(crawl_stats.get("skipped_old", 0)),
+            skipped_no_date_count=int(crawl_stats.get("skipped_no_date", 0)),
+            static_pages=int(crawl_stats.get("static_pages", 0)),
+            total_urls=int(crawl_stats.get("total_urls", 0)),
             result={
                 "crawled": len(documents),
+                "crawl_stats": crawl_stats,
                 "notion": notion_result,
+                "archived": archived_result,
                 "index": index_result,
                 "max_depth": max_depth,
                 "official_documents": official_count,
@@ -427,6 +454,10 @@ def run_crawl_job(max_depth: int) -> None:
                 **job_state["crawl"]["progress"],
                 "percent": 100,
                 "documents": len(documents),
+                "total_urls": int(crawl_stats.get("total_urls", 0)),
+                "skipped_old": int(crawl_stats.get("skipped_old", 0)),
+                "skipped_no_date": int(crawl_stats.get("skipped_no_date", 0)),
+                "static_pages": int(crawl_stats.get("static_pages", 0)),
             },
         )
     except Exception as exc:
@@ -535,6 +566,34 @@ def rebuild_index(background_tasks: BackgroundTasks, x_admin_password: str | Non
         return {"accepted": False, "message": "이미 작업이 진행 중입니다.", **job_state["index"]}
     background_tasks.add_task(run_index_job)
     return {"accepted": True, "message": "인덱스 재생성을 시작했습니다."}
+
+
+@app.post("/api/data-tier/reclassify")
+def reclassify_data_tiers(x_admin_password: str | None = Header(default=None)):
+    require_admin(x_admin_password)
+    try:
+        client = NotionClient()
+        client.ensure_knowledge_schema()
+        tier_result = client.reclassify_data_tiers()
+        index_result = index.rebuild(client.knowledge_documents())
+        runtime_state.update(
+            notion_connected=True,
+            notion_document_count=tier_result.get("checked", 0),
+            index_document_count=index_result["documents"],
+            last_sync_at=index_result["built_at"],
+            last_attempt_at=datetime.now().astimezone().isoformat(),
+            last_reason="data_tier_reclassify",
+            last_error="",
+        )
+        job_state["index"] = {
+            "running": False,
+            "message": "데이터 계층 재분류 및 인덱스 갱신 완료",
+            "result": index_result,
+        }
+        return {"ok": True, "message": "데이터 계층 재분류가 완료되었습니다.", "result": tier_result, "index": index_result}
+    except Exception as exc:
+        logger.exception("[DATA_TIER] 데이터 계층 재분류 실패")
+        raise HTTPException(status_code=502, detail=f"데이터 계층 재분류 실패: {notion_error_message(exc, '지식 DB')}") from exc
 
 
 @app.get("/api/index/status")

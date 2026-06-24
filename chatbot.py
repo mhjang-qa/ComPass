@@ -1352,6 +1352,10 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
 과제 대행, 코딩 대행, 정답 대행은 제공하지 않는다.
 한국어로 간결하게 작성한다.
 문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
+답변은 700자 이내로 작성한다.
+각 항목은 1~2문장 이내로 끝낸다.
+각 항목은 완결된 문장으로 끝낸다.
+마지막 문장은 반드시 마침표로 끝낸다.
 ComPass는 학생이 이해하기 쉽게 재해석해서 안내하는 AI 학과 비서라는 철학에 맞게 설명한다.
 원문을 그대로 복사하지 말고 학생 눈높이로 요약·정리한다.
 
@@ -1490,6 +1494,119 @@ def _clean_incomplete_sentence(value: str) -> str:
     return text
 
 
+INCOMPLETE_ENDINGS = (
+    "및", "또는", "그리고", "하지만", "때문에", "위해", "수 있도록", "하는", "입니다만",
+    "추천 공부법:", "우선 익혀야 하는 내용:", "시험 대비 팁:", "주의할 점:", "참고 안내:",
+)
+EXPLANATORY_LLM_TYPES = {
+    "course_difficulty",
+    "course_grade_strategy",
+    "course_order",
+    "course_roadmap",
+    "notice_explain",
+    "schedule_explain",
+    "general_explain",
+}
+
+
+def is_incomplete_llm_text(text: str, llm_type: str = "general_explain") -> bool:
+    """LLM 답변이 중간에 끊겼거나 라벨만 남은 상태인지 판정한다."""
+    clean = re.sub(r"\r\n?", "\n", text or "").strip()
+    if not clean or clean == LLM_SAFE_FAILURE_MESSAGE:
+        return True
+    if llm_type in EXPLANATORY_LLM_TYPES and llm_type != "fragment" and len(clean) < 80:
+        return True
+    lines = [line.strip() for line in clean.splitlines() if line.strip()]
+    if not lines:
+        return True
+    last_line = re.sub(r"[*#`]", "", lines[-1]).strip()
+    if len(last_line) < 15 and not re.search(r"[.!?。요다)\]]$", last_line):
+        return True
+    if last_line.endswith(INCOMPLETE_ENDINGS):
+        return True
+    if re.fullmatch(r"[-•]\s*", last_line):
+        return True
+    if re.fullmatch(r"[^:：]{2,30}[:：]", last_line):
+        return True
+    if clean.count("|") >= 4:
+        table_lines = [line for line in lines if line.startswith("|")]
+        if table_lines and not table_lines[-1].endswith("|"):
+            return True
+    if not re.search(r"[.!?。요다)\]]$", last_line):
+        return True
+    return False
+
+
+def _llm_fallback_template(llm_type: str, context: dict[str, Any], question: str = "") -> dict[str, Any]:
+    course_name = context.get("course_name") or detect_course_name(question) or "해당 과목"
+    if llm_type == "course_grade_strategy":
+        goal = "C 이상 성적 취득"
+        if re.search(r"A\s*(?:이상|받|맞)", question, re.IGNORECASE):
+            goal = "A 이상 성적 취득"
+        elif re.search(r"B\s*(?:이상|받|맞)", question, re.IGNORECASE):
+            goal = "B 이상 성적 취득"
+        return {
+            "answer": f"{course_name} 과목 {goal}을 위한 학습 안내입니다.",
+            "summary": "공식 과목 정보를 바탕으로 일반적인 학습 전략을 참고용으로 안내드립니다.",
+            "items": [
+                {"label": "추천 공부법", "value": "용어를 먼저 정리하고, 각 단원의 핵심 개념을 반복해서 확인하는 방식이 좋습니다."},
+                {"label": "우선 익혀야 할 내용", "value": "탐색, 지식 표현, 추론, 머신러닝, 신경망 등 과목의 기본 개념을 중심으로 학습하세요."},
+                {"label": "시험 대비 팁", "value": "강의에서 반복되는 개념과 예시 문제를 중심으로 정리하는 것이 도움이 됩니다."},
+            ],
+            "disclaimer": "성적 취득 전략은 공식 보장 기준이 아닌 참고용 학습 안내이며, 평가 방식과 시험 범위는 해당 학기 공지를 확인해야 합니다.",
+        }
+    if llm_type == "course_difficulty":
+        return {
+            "answer": f"{course_name} 과목의 학습 부담 안내입니다.",
+            "summary": "공식 과목 정보를 바탕으로 참고용 학습 부담을 정리했습니다.",
+            "items": [
+                {"label": "체감 난이도", "value": "개인별 배경지식에 따라 다르지만 보통 수준으로 접근하는 것이 안전합니다."},
+                {"label": "필요한 준비", "value": "공식 과목 개요와 주요 학습 내용을 먼저 확인하고 핵심 용어를 정리하세요."},
+                {"label": "학습 팁", "value": "강의 흐름에 맞춰 개념을 반복 확인하고 예시 문제와 함께 정리하는 방식이 좋습니다."},
+            ],
+            "disclaimer": "난이도와 학습 부담은 공식 기준이 아닌 참고용 안내입니다.",
+        }
+    templates = {
+        "course_order": ("추천 수강 순서 안내입니다.", [("추천 수강 순서", "기초 개념 과목을 먼저 확인한 뒤 전공 심화 과목으로 확장하는 방식이 좋습니다."), ("먼저 알면 좋은 내용", "교과목 개요와 학년·학기 정보를 먼저 확인하세요."), ("주의할 점", "개설 여부와 수강 가능 학기는 해당 학기 공지를 확인해야 합니다.")]),
+        "notice_explain": ("공지사항 요약 안내입니다.", [("공지 요약", "공지의 핵심 목적과 대상 여부를 먼저 확인하세요."), ("학생이 확인할 점", "신청 기간, 제출 항목, 문의처가 있는지 확인하세요."), ("주의할 점", "공지의 게시일과 적용 학기를 함께 확인해야 합니다.")]),
+        "schedule_explain": ("학과 일정 안내입니다.", [("일정 요약", "일정의 시작일과 종료일을 먼저 확인하세요."), ("학생이 해야 할 일", "수강, 평가, 신청 등 본인에게 필요한 행동을 일정 전에 준비하세요."), ("확인할 점", "최신 일정은 공식 학과 일정 페이지에서 다시 확인하세요.")]),
+    }
+    title, rows = templates.get(llm_type, ("ComPass 보조 안내입니다.", [("핵심 설명", "공식 데이터에서 확인되는 범위 안에서 핵심만 정리했습니다."), ("참고 안내", "최신 기준은 공식 페이지에서 다시 확인하세요."), ("다음 확인 사항", "관련 공지와 공식 페이지를 함께 확인하는 것이 좋습니다.")]))
+    return {
+        "answer": title,
+        "summary": "공식 데이터 범위 안에서 학생이 이해하기 쉽게 재구성한 보조 안내입니다.",
+        "items": [{"label": label, "value": value} for label, value in rows],
+        "disclaimer": "이 안내는 공식 데이터를 바탕으로 한 참고용 설명입니다.",
+    }
+
+
+def _fallback_text_from_template(template: dict[str, Any]) -> str:
+    lines = [template.get("answer", "ComPass 보조 안내입니다."), "", template.get("summary", "")]
+    for item in template.get("items") or []:
+        lines.extend(["", f"{item.get('label')}: {item.get('value')}"])
+    if template.get("disclaimer"):
+        lines.extend(["", f"참고 안내: {template['disclaimer']}"])
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _extract_label_items_from_text(text: str, labels: list[str], fallback_items: list[dict[str, str]]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    for index, label in enumerate(labels):
+        next_labels = "|".join(re.escape(item) for item in labels[index + 1 :])
+        pattern = rf"{re.escape(label)}\s*[:：]\s*(.+?)(?=\n(?:{next_labels})\s*[:：]|$)" if next_labels else rf"{re.escape(label)}\s*[:：]\s*(.+)$"
+        match = re.search(pattern, text or "", re.S)
+        raw_value = match.group(1).strip() if match else ""
+        value = _clean_incomplete_sentence(raw_value) if raw_value else ""
+        if value and not is_incomplete_llm_text(raw_value, "fragment") and not is_incomplete_llm_text(value, "fragment"):
+            parsed.append({"label": label, "value": value})
+    fallback_by_label = {item["label"]: item["value"] for item in fallback_items}
+    merged = []
+    for label in labels:
+        found = next((item for item in parsed if item["label"] == label), None)
+        merged.append(found or {"label": label, "value": fallback_by_label.get(label, "공식 데이터 기준으로 확인이 필요합니다.")})
+    return merged
+
+
 def _difficulty_advice_object(course_name: str, item: dict[str, Any], llm_text: str = "") -> dict[str, str]:
     """LLM 원문이 불완전해도 UI에는 안전한 고정 구조로 난이도 안내를 제공한다."""
     topics = " ".join(str(topic) for topic in (item.get("topics") or item.get("detail_topics") or []))
@@ -1571,14 +1688,18 @@ def _course_grade_strategy_response(
     if not answer or answer == LLM_SAFE_FAILURE_MESSAGE:
         answer = _grade_strategy_fallback(course_name, item, question)
     answer = sanitize_public_answer(answer)
+    fallback = _llm_fallback_template("course_grade_strategy", {"course_name": course_name}, question)
+    labels = ["추천 공부법", "우선 익혀야 할 내용", "시험 대비 팁"]
+    strategy_items = _extract_label_items_from_text(answer, labels, fallback["items"])
     source_url = _course_link(item, course_name)
     return {
-        "answer": answer,
+        "answer": fallback["answer"],
         "answer_type": "course_grade_strategy",
-        "summary": "공식 과목 내용에 기반한 참고용 학습 전략입니다.",
-        "items": [],
+        "summary": fallback["summary"],
+        "items": strategy_items,
+        "disclaimer": fallback["disclaimer"],
         "display_limit": 3,
-        "total_count": 0,
+        "total_count": len(strategy_items),
         "actions": [
             {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
             {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
@@ -1793,13 +1914,26 @@ def _llm_helper_response(
     answer = sanitize_public_answer(answer)
     source_url = _llm_source_url(llm_type, context)
     course_name = context.get("course_name") or detect_course_name(question)
+    fallback = _llm_fallback_template(llm_type, context, question)
+    label_map = {
+        "course_order": ["추천 수강 순서", "먼저 알면 좋은 내용", "주의할 점"],
+        "notice_explain": ["공지 요약", "학생이 확인할 점", "주의할 점"],
+        "schedule_explain": ["일정 요약", "학생이 해야 할 일", "확인할 점"],
+        "general_explain": ["핵심 설명", "참고 안내", "다음 확인 사항"],
+    }
+    structured_items = (
+        _extract_label_items_from_text(answer, label_map[llm_type], fallback["items"])
+        if llm_type in label_map
+        else []
+    )
     return {
-        "answer": answer,
-        "answer_type": "text",
-        "summary": "공식 데이터 범위 안에서 학생이 이해하기 쉽게 재구성한 보조 답변입니다.",
-        "items": [],
+        "answer": fallback["answer"] if structured_items else answer,
+        "answer_type": llm_type if structured_items else "text",
+        "summary": fallback["summary"] if structured_items else "공식 데이터 범위 안에서 학생이 이해하기 쉽게 재구성한 보조 답변입니다.",
+        "items": structured_items,
+        "disclaimer": fallback.get("disclaimer", "") if structured_items else "",
         "display_limit": 3,
-        "total_count": 0,
+        "total_count": len(structured_items),
         "source_urls": [source_url] if source_url else [],
         "actions": [{"type": "link", "label": "공식 페이지 바로가기", "url": source_url}] if source_url else [],
         "mode": "LLM",
@@ -1989,8 +2123,8 @@ def _openai(prompt: str) -> str:
         json={
             "model": config.OPENAI_MODEL,
             "input": prompt,
-            "temperature": 0.1,
-            "max_output_tokens": 600,
+            "temperature": 0.2,
+            "max_output_tokens": 1200,
         },
         timeout=45,
     )
@@ -2014,7 +2148,7 @@ def _gemini(prompt: str) -> str:
         params={"key": config.GEMINI_API_KEY},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 900},
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
         },
         timeout=45,
     )
@@ -2032,14 +2166,18 @@ def _gemini(prompt: str) -> str:
 
 def call_llm(question: str, *, prompt_override: str | None = None) -> str:
     prompt = prompt_override or _llm_prompt(question)
+    return sanitize_llm_response(call_llm_raw(prompt), question)
+
+
+def call_llm_raw(prompt: str) -> str:
     provider = (config.LLM_PROVIDER or "").strip().lower()
 
     logger.info("LLM_PROVIDER=%r", provider)
 
     if provider == "gemini":
-        return sanitize_llm_response(_gemini(prompt), question)
+        return _gemini(prompt)
     if provider == "openai":
-        return sanitize_llm_response(_openai(prompt), question)
+        return _openai(prompt)
 
     raise RuntimeError(f"지원하지 않는 LLM_PROVIDER: {config.LLM_PROVIDER}")
 
@@ -2074,7 +2212,33 @@ def call_llm_helper(
         session_short,
     )
     try:
-        return call_llm(question, prompt_override=prompt)
+        raw_answer = call_llm_raw(prompt)
+        answer = sanitize_llm_response(raw_answer, question)
+        if is_incomplete_llm_text(raw_answer, normalized_type) or is_incomplete_llm_text(answer, normalized_type):
+            logger.warning(
+                "LLM 불완전 응답 감지: provider=%s, llm_type=%s, session=%s",
+                provider,
+                normalized_type,
+                session_short,
+            )
+            retry_prompt = (
+                f"{prompt}\n\n"
+                "[재작성 지시]\n"
+                "이전 답변이 중간에 끊겼습니다. 반드시 완결된 문장으로 짧고 구조화하여 다시 작성하세요. "
+                "각 항목은 1~2문장 이내로 끝내세요. 답변은 700자 이내로 작성하고 마지막 문장은 반드시 마침표로 끝내세요."
+            )
+            retry_raw = call_llm_raw(retry_prompt)
+            retry_answer = sanitize_llm_response(retry_raw, question)
+            if not is_incomplete_llm_text(retry_raw, normalized_type) and not is_incomplete_llm_text(retry_answer, normalized_type):
+                return retry_answer
+            logger.warning(
+                "LLM 재시도 후에도 불완전하여 fallback 사용: provider=%s, llm_type=%s, session=%s",
+                provider,
+                normalized_type,
+                session_short,
+            )
+            return _fallback_text_from_template(_llm_fallback_template(normalized_type, context, question))
+        return answer
     except Exception as exc:
         logger.error(
             "LLM 오류: provider=%s, llm_type=%s, session=%s, context=%s, error=%s",
@@ -2085,6 +2249,25 @@ def call_llm_helper(
             type(exc).__name__,
         )
         return LLM_SAFE_FAILURE_MESSAGE
+
+
+IMPORTANT_ARCHIVE_NOTICE = (
+    "이 자료는 중요 보관 문서이지만 게시 시점 기준 정보일 수 있습니다. "
+    "최신 기준은 관련 공식 페이지에서 다시 확인해 주세요."
+)
+
+
+def apply_data_tier_notice(response: dict[str, Any], hits: list[dict[str, Any]]) -> dict[str, Any]:
+    if not any((hit.get("data_tier") or "") == "IMPORTANT_ARCHIVE" for hit in hits):
+        return response
+    response["data_tier_notice"] = IMPORTANT_ARCHIVE_NOTICE
+    response["summary"] = (
+        f"{response.get('summary', '').strip()}\n{IMPORTANT_ARCHIVE_NOTICE}".strip()
+    )
+    if response.get("answer_type") == "text" and IMPORTANT_ARCHIVE_NOTICE not in response.get("answer", ""):
+        response["answer"] = f"{response.get('answer', '').rstrip()}\n\n안내: {IMPORTANT_ARCHIVE_NOTICE}"
+    return response
+
 
 def answer_question(
     question: str,
@@ -2435,6 +2618,7 @@ def answer_question(
                 session_id=session_id,
                 request_id=request_id,
             )
+        response = apply_data_tier_notice(response, hits)
         response["answer"] = sanitize_public_answer(response.get("answer", ""))
         return response
 

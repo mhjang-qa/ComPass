@@ -32,6 +32,10 @@ sessionStorage.removeItem("admin_auth");
 const { formatKstDateTime } = window.ComPassTime;
 
 function activateTab(tabName) {
+  if (ADMIN_TABS.has(tabName) && !isAdminAuthenticated()) {
+    openAdminLogin("crawl");
+    return;
+  }
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === tabName));
   $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tabName}`));
   appShell.classList.toggle("admin-mode", ADMIN_TABS.has(tabName));
@@ -114,11 +118,17 @@ function isAdminAuthenticated() {
 }
 
 function updateAdminUi() {
-  $("#adminLogout").hidden = !isAdminAuthenticated();
+  const authenticated = isAdminAuthenticated();
+  document.body.classList.toggle("admin-authenticated", authenticated);
+  appShell.classList.toggle("admin-authenticated", authenticated);
+  $("#adminLogout").hidden = !authenticated;
+  if (!authenticated && ADMIN_TABS.has($(".panel.active")?.id?.replace("panel-", ""))) {
+    activateTab("chat");
+  }
 }
 
 function openAdminLogin(tabName) {
-  pendingAdminTab = tabName;
+  pendingAdminTab = ADMIN_TABS.has(tabName) ? tabName : "crawl";
   $("#adminLoginError").textContent = "";
   $("#adminLoginPassword").value = "";
   $("#adminLoginModal").hidden = false;
@@ -265,6 +275,66 @@ function appendSimpleList(container, labelText, values = []) {
     list.appendChild(item);
   });
   container.append(label, list);
+}
+
+function appendKeyValueTable(container, rows = {}) {
+  const entries = Object.entries(rows || {}).filter(([, value]) => value);
+  if (!entries.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "answer-table-wrap";
+  const table = document.createElement("table");
+  table.className = "answer-table";
+  const thead = document.createElement("thead");
+  const head = document.createElement("tr");
+  ["항목", "안내"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    head.appendChild(th);
+  });
+  thead.appendChild(head);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  entries.forEach(([key, value]) => {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th");
+    th.textContent = key;
+    const td = document.createElement("td");
+    td.textContent = value;
+    tr.append(th, td);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
+function appendCourseMiniTable(container, items = []) {
+  const wrap = document.createElement("div");
+  wrap.className = "answer-table-wrap curriculum-table-wrap";
+  const table = document.createElement("table");
+  table.className = "answer-table curriculum-table";
+  const thead = document.createElement("thead");
+  const head = document.createElement("tr");
+  ["과목명", "구분", "특징"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    head.appendChild(th);
+  });
+  thead.appendChild(head);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  items.slice(0, 3).forEach((item) => {
+    const tr = document.createElement("tr");
+    [item.course_name || item.title || "", item.category || "", item.feature_summary || item.feature || ""].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
 }
 
 function appendExpandButton(container, cards, totalCount, answerType, messageRow, payload = {}) {
@@ -434,6 +504,30 @@ function renderCourseTable(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
 
+function renderCurriculumByGrade(bubble, payload) {
+  const header = document.createElement("div");
+  header.className = "answer-heading";
+  const title = document.createElement("strong");
+  title.textContent = payload.answer || "컴퓨터과학과 교육과정 안내입니다.";
+  const summary = document.createElement("span");
+  summary.textContent = payload.summary || "학년별 대표 과목을 3개씩 먼저 정리했습니다.";
+  header.append(title, summary);
+  bubble.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "answer-card-list curriculum-grade-list";
+  (payload.groups || []).forEach((group) => {
+    const card = document.createElement("article");
+    card.className = "answer-card curriculum-grade-card";
+    const heading = document.createElement("h3");
+    heading.textContent = group.grade || "학년";
+    card.appendChild(heading);
+    appendCourseMiniTable(card, group.items || []);
+    list.appendChild(card);
+  });
+  bubble.appendChild(list);
+}
+
 function renderScheduleList(bubble, payload, messageRow) {
   renderGenericItems(bubble, payload, messageRow);
 }
@@ -447,7 +541,34 @@ function renderCourseDetail(bubble, payload, messageRow) {
 }
 
 function renderCourseDifficulty(bubble, payload, messageRow) {
-  renderGenericItems(bubble, payload, messageRow);
+  const item = (payload.items || [])[0] || payload;
+  const header = document.createElement("div");
+  header.className = "answer-heading";
+  const title = document.createElement("strong");
+  title.textContent = payload.answer || item.title || "과목 학습 부담 안내입니다.";
+  const summary = document.createElement("span");
+  summary.textContent = payload.summary || item.official_overview || "";
+  header.append(title, summary);
+  bubble.appendChild(header);
+  if (payload.official_overview || item.official_overview) {
+    const overview = document.createElement("p");
+    overview.className = "answer-card-summary";
+    overview.textContent = payload.official_overview || item.official_overview;
+    bubble.appendChild(overview);
+  }
+  const advice = payload.difficulty_advice || item.difficulty_advice || {};
+  if (typeof advice === "object") {
+    appendKeyValueTable(bubble, advice);
+  } else {
+    renderTextAnswer(bubble, String(advice));
+  }
+  const disclaimer = payload.disclaimer || item.disclaimer;
+  if (disclaimer) {
+    const note = document.createElement("p");
+    note.className = "answer-note";
+    note.textContent = disclaimer;
+    bubble.appendChild(note);
+  }
 }
 
 function renderGenericCards(bubble, payload, messageRow) {
@@ -568,6 +689,7 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     faculty: renderFacultyList,
     notice_list: renderNoticeList,
     course_table: renderCourseTable,
+    curriculum_by_grade: renderCurriculumByGrade,
     schedule_list: renderScheduleList,
     course_recommendation: renderRecommendation,
     course_detail: renderCourseDetail,
@@ -739,6 +861,10 @@ $("#question").addEventListener("focus", () => {
 $$("[data-question]").forEach((button) => button.addEventListener("click", () => sendQuestion(button.dataset.question)));
 
 $$(".tab").forEach((button) => button.addEventListener("click", () => {
+  if (button.dataset.action === "admin-login") {
+    openAdminLogin("crawl");
+    return;
+  }
   const tabName = button.dataset.tab;
   if (ADMIN_TABS.has(tabName)) enterAdminTab(tabName);
   else activateTab(tabName);
@@ -771,6 +897,7 @@ $("#adminLoginForm").addEventListener("submit", async (event) => {
   }
 });
 $("#adminLoginClose").addEventListener("click", closeAdminLogin);
+$("#adminLoginCancel").addEventListener("click", closeAdminLogin);
 $("#adminLoginModal").addEventListener("click", (event) => {
   if (event.target.classList.contains("admin-modal-backdrop")) closeAdminLogin();
 });

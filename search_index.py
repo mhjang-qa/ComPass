@@ -146,12 +146,25 @@ class SearchIndex:
                     name,
                     {
                         "course_name": name,
+                        "course_code": item.get("course_code") or "",
+                        "grade": item.get("grade") or "",
+                        "semester": item.get("semester") or "",
+                        "category": item.get("category") or "",
+                        "overview": item.get("overview") or "",
+                        "topics": item.get("topics") or item.get("detail_topics") or [],
+                        "detail_url": item.get("detail_url") or item.get("source_url") or "",
+                        "fallback_url": item.get("fallback_url") or COURSE_GUIDE_URL,
                         "aliases": [],
                         "document_ids": [],
                         "source_url": doc.get("source_url") or COURSE_GUIDE_URL,
                         "document_types": [],
                     },
                 )
+                for field in ("course_code", "grade", "semester", "category", "overview", "detail_url", "fallback_url"):
+                    if not entry.get(field) and item.get(field):
+                        entry[field] = item.get(field)
+                if not entry.get("topics") and (item.get("topics") or item.get("detail_topics")):
+                    entry["topics"] = item.get("topics") or item.get("detail_topics")
                 entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *aliases]))
                 if doc.get("page_id"):
                     entry["document_ids"] = list(
@@ -161,6 +174,7 @@ class SearchIndex:
                     entry["document_types"].append(document_type)
                 if document_type == "과목상세":
                     entry["source_url"] = doc.get("source_url") or entry["source_url"]
+                    entry["detail_url"] = item.get("detail_url") or doc.get("source_url") or entry["detail_url"]
         return sorted(catalog.values(), key=lambda item: (-len(item["course_name"]), item["course_name"]))
 
     def course_catalog(self) -> list[dict[str, Any]]:

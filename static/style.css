@@ -123,6 +123,10 @@ button { cursor: pointer; }
 .tabs { display: flex; gap: 4px; padding: 0 30px; border-bottom: 1px solid var(--line); overflow-x: auto; }
 .tab { min-width: max-content; padding: 18px 20px 15px; border: 0; border-bottom: 3px solid transparent; color: var(--muted); background: transparent; font-weight: 700; }
 .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+.admin-only { display: none; }
+body.admin-authenticated .admin-only { display: inline-flex; }
+body.admin-authenticated .admin-login-tab { display: none; }
+body:not(.admin-authenticated) .admin-panel { display: none !important; }
 .app-shell > main { min-height: 0; overflow: auto; }
 .panel { display: none; padding: 30px 36px 44px; }
 .panel.active { display: block; }
@@ -168,6 +172,10 @@ button { cursor: pointer; }
 .answer-table th, .answer-table td { padding: 10px 9px; border-bottom: 1px solid #e5edf5; vertical-align: top; }
 .answer-table th { color: var(--navy); background: #f3f9ff; font-weight: 800; }
 .answer-table tr:last-child td { border-bottom: 0; }
+.curriculum-grade-list { display: grid; gap: 10px; border: 0; background: transparent; }
+.curriculum-grade-card { border: 1px solid #d7e3ef; border-radius: 14px; }
+.curriculum-table-wrap { margin-bottom: 0; }
+.curriculum-table { min-width: 320px; }
 .answer-heading { display: grid; gap: 3px; margin-bottom: 12px; }
 .answer-heading > strong { color: var(--navy); font-size: 1.02rem; }
 .answer-heading > span { color: var(--muted); font-size: .86rem; }
@@ -268,6 +276,9 @@ button { cursor: pointer; }
 .admin-modal-card label { display: grid; gap: 8px; margin-top: 20px; font-weight: 700; }
 .admin-modal-card input { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; }
 .admin-modal-card .primary { width: 100%; margin-top: 8px; }
+.modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.modal-actions button { min-height: 44px; border: 1px solid #bcd7eb; border-radius: 12px; color: var(--blue); background: white; font-weight: 800; }
+.modal-actions .primary { margin-top: 0; color: white; border: 0; background: var(--blue); }
 .modal-close { position: absolute; top: 14px; right: 14px; border: 0; background: transparent; font-size: 1.5rem; }
 .admin-login-error { min-height: 22px; margin: 8px 0; color: #c62828; font-size: .9rem; }
 .admin-logout { width: auto !important; min-width: 58px; padding-inline: 9px !important; font-size: .72rem !important; line-height: 1; white-space: nowrap; }

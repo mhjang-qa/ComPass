@@ -55,6 +55,20 @@ COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
 COURSE_DETAIL_ENDPOINT = "https://cs.knou.ac.kr/learningInformation/cs1/view.do"
 
 
+def course_detail_url(spec: dict[str, str]) -> str:
+    """교과목 상세 팝업 POST 파라미터를 브라우저에서 열 수 있는 GET URL 형태로 보존한다."""
+    query = urlencode(
+        {
+            "year": spec.get("year", ""),
+            "seme": spec.get("semester", ""),
+            "shgr": spec.get("grade", ""),
+            "sbjtNo": spec.get("course_code", ""),
+            "deptCd": spec.get("department_code", ""),
+        }
+    )
+    return f"{COURSE_DETAIL_ENDPOINT}?{query}"
+
+
 @dataclass
 class CrawlDocument:
     title: str
@@ -518,17 +532,21 @@ class KnouCrawler:
                         topics.append(cells[1])
                     if cells[2] and cells[2] not in detail_topics:
                         detail_topics.append(cells[2])
+        detail_url = course_detail_url(spec)
         source_url = f"{COURSE_GUIDE_URL}#course-{spec['course_code']}"
         normalized_item = {
             "course_name": spec["course_name"],
             "grade": f"{spec['grade']}학년",
             "semester": f"{spec['semester']}학기",
             "course_code": spec["course_code"],
+            "department_code": spec["department_code"],
             "overview": overview,
             "topics": topics[:15],
             "detail_topics": detail_topics[:15],
             "media": [media] if media else [],
             "source_url": source_url,
+            "detail_url": detail_url,
+            "fallback_url": f"{COURSE_GUIDE_URL}#course-{spec['course_code']}",
         }
         body = "\n".join(
             [

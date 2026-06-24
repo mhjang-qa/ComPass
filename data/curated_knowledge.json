@@ -28,12 +28,12 @@
           "easy_explanation": "쉽게 말하면, 컴퓨터에게 어떻게 생각하고 판단하는 방법을 가르칠 것인지 학습하는 과목입니다.",
           "topics": ["탐색 알고리즘", "지식표현", "추론", "머신러닝", "신경망"],
           "recommended_for": ["AI 분야에 관심 있는 학생", "데이터 분석에 관심 있는 학생", "머신러닝 기초를 배우고 싶은 학생"],
-          "source_url": "https://cs.knou.ac.kr/cs1/4789/subview.do",
+          "source_url": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=3&sbjtNo=34524&deptCd=34",
           "link_label": "인공지능 과목 바로가기"
         }
       ],
       "keywords": ["인공지능", "AI", "탐색", "지식표현", "추론", "머신러닝", "신경망"],
-      "source_url": "https://cs.knou.ac.kr/cs1/4789/subview.do",
+      "source_url": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=3&sbjtNo=34524&deptCd=34",
       "validity": "컴퓨터과학과 공식 교육과정 기준",
       "updated_at": "2026-06-23T00:00:00+09:00"
     },

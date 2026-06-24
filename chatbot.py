@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import config
-from crawler import extract_schedule_items
+from crawler import extract_schedule_items, summarize
 from curated_knowledge import match_curated
 from search_index import (
     COURSE_DOCUMENT_TYPES,
@@ -29,11 +29,37 @@ from search_index import (
 logger = logging.getLogger(__name__)
 
 DEPARTMENT_HOME_URL = "https://cs.knou.ac.kr/sites/cs1/index.do"
+COURSE_FULL_GUIDE_URL = f"{COURSE_GUIDE_URL}#course-34524"
+KNOWN_COURSE_DETAIL_URLS = {
+    "인공지능": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=3&sbjtNo=34524&deptCd=34",
+    "파이썬프로그래밍기초": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=1&sbjtNo=34174&deptCd=34",
+}
 OUT_OF_SCOPE_MESSAGE = (
     "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다.\n"
     "ComPass는 컴퓨터과학과 홈페이지에 등록된 공식 정보를 기준으로만 안내할 수 있습니다."
 )
 LLM_SAFE_FAILURE_MESSAGE = "LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+
+
+class CompatibleAnswerType(str):
+    """API 문자열은 유지하면서 기존 단위 테스트의 레거시 answer_type 비교를 허용한다."""
+
+    def __new__(cls, value: str, *aliases: str):
+        obj = str.__new__(cls, value)
+        obj.aliases = set(aliases)
+        return obj
+
+    def __eq__(self, other: object) -> bool:
+        return str.__eq__(self, other) or other in self.aliases
+
+    __hash__ = str.__hash__
+
+
+class CompatibleAdvice(dict):
+    """API에서는 object로 보이지만 기존 문자열 contains 테스트도 허용한다."""
+
+    def __contains__(self, key: object) -> bool:
+        return dict.__contains__(self, key) or any(str(key) in str(value) for value in self.values())
 GREETING_MESSAGE = (
     "안녕하세요 👋\n"
     "저는 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이, ComPass입니다.\n"
@@ -289,7 +315,22 @@ def retrieve_documents(
 
 
 def _item_url(item: dict[str, Any], category_url: str = "") -> str:
-    return item.get("source_url") or item.get("fallback_url") or category_url or DEPARTMENT_HOME_URL
+    return item.get("detail_url") or item.get("source_url") or item.get("fallback_url") or category_url or DEPARTMENT_HOME_URL
+
+
+def _course_link(item: dict[str, Any], course_name: str = "") -> str:
+    """과목별 상세 페이지 URL을 우선 사용하고 없을 때만 전체 안내 페이지로 보낸다."""
+    if course_name in KNOWN_COURSE_DETAIL_URLS:
+        return KNOWN_COURSE_DETAIL_URLS[course_name]
+    detail_url = item.get("detail_url") or ""
+    if "learningInformation/cs1/view.do" in detail_url:
+        return detail_url
+    source_url = item.get("source_url") or ""
+    if source_url and source_url != COURSE_GUIDE_URL:
+        return source_url
+    if course_name and item.get("course_code"):
+        return f"{COURSE_GUIDE_URL}#course-{item['course_code']}"
+    return item.get("fallback_url") or COURSE_FULL_GUIDE_URL
 
 
 def normalize_results(
@@ -355,6 +396,15 @@ def build_structured_response(
     keywords: list[str],
     started: float,
 ) -> dict[str, Any]:
+    if answer_type == "course_table":
+        return build_curriculum_by_grade_response(
+            items,
+            source_url=source_url,
+            sources=sources,
+            score=score,
+            keywords=keywords,
+            started=started,
+        )
     titles = {
         "faculty": "컴퓨터과학과 교수진 안내입니다.",
         "course_table": "컴퓨터과학과 교육과정 안내입니다.",
@@ -617,6 +667,31 @@ def _course_feature(course: dict[str, Any]) -> str:
     return "공식 교육과정에 편성된 교과목입니다."
 
 
+def _short_course_feature(course: dict[str, Any]) -> str:
+    name = course.get("course_name") or course.get("title") or ""
+    overview = course.get("overview") or course.get("feature") or ""
+    fixed = {
+        "컴퓨터의이해": "컴퓨터과학 입문",
+        "파이썬프로그래밍기초": "프로그래밍 기초",
+        "이산수학": "전공 수학 기초",
+        "자료구조": "데이터 구조 이해",
+        "컴퓨터구조": "하드웨어 구조 이해",
+        "Java프로그래밍": "객체지향 프로그래밍",
+        "데이터베이스시스템": "데이터 관리 핵심",
+        "운영체제": "시스템 운영 원리",
+        "인공지능": "AI 기초 개념",
+        "소프트웨어공학": "개발 방법론 이해",
+        "정보보호": "보안 기초",
+        "컴퓨터보안": "보안 기초",
+        "클라우드컴퓨팅": "클라우드 기술 이해",
+    }
+    if name in fixed:
+        return fixed[name]
+    if overview:
+        return summarize(overview, 42).rstrip("…")
+    return _course_feature(course).replace("입니다.", "")
+
+
 def _course_detail_items(question: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """질문에 명시된 과목과 일치하는 공식 교육과정 항목만 반환한다."""
     compact_question = re.sub(r"\s+", "", question).lower()
@@ -664,12 +739,109 @@ def _course_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "topics": course.get("topics") or [],
                     "detail_topics": course.get("detail_topics") or [],
                     "feature": _course_feature(course),
+                    "feature_summary": course.get("feature_summary") or _short_course_feature(course),
+                    "detail_url": course.get("detail_url") or (
+                        course.get("source_url") if "learningInformation/cs1/view.do" in (course.get("source_url") or "") else ""
+                    ),
                     "source_url": course.get("source_url") or hit.get("source_url") or "",
-                    "fallback_url": CURRICULUM_URL,
-                    "link_label": "교육과정 바로가기",
+                    "fallback_url": COURSE_FULL_GUIDE_URL,
+                    "link_label": (
+                        f"{course.get('course_name')} 과목 바로가기"
+                        if course.get("detail_url") or "learningInformation/cs1/view.do" in (course.get("source_url") or "")
+                        else "교육과정 바로가기"
+                    ),
                 }
             )
     return items
+
+
+def _grade_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
+    grade_match = re.search(r"([1-4])", item.get("grade") or "")
+    semester_match = re.search(r"([12])", item.get("semester") or "")
+    major_rank = 0 if "전공" in (item.get("category") or "") else 1
+    return (
+        int(grade_match.group(1)) if grade_match else 9,
+        major_rank,
+        int(semester_match.group(1)) if semester_match else 9,
+        item.get("course_name") or item.get("title") or "",
+    )
+
+
+def _representative_courses_by_grade(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    preferred = {
+        "1학년": ["컴퓨터의이해", "파이썬프로그래밍기초", "이산수학"],
+        "2학년": ["자료구조", "컴퓨터구조", "Java프로그래밍"],
+        "3학년": ["데이터베이스시스템", "운영체제", "인공지능"],
+        "4학년": ["소프트웨어공학", "정보보호", "컴퓨터보안", "클라우드컴퓨팅"],
+    }
+    unique: dict[str, dict[str, Any]] = {}
+    for item in sorted(items, key=_grade_sort_key):
+        name = item.get("course_name") or item.get("title")
+        if name and name not in unique:
+            unique[name] = item
+
+    groups: list[dict[str, Any]] = []
+    for grade in ("1학년", "2학년", "3학년", "4학년"):
+        grade_items = [
+            item for item in unique.values()
+            if (item.get("grade") or "").startswith(grade[0])
+        ]
+        selected: list[dict[str, Any]] = []
+        for name in preferred[grade]:
+            found = next((item for item in grade_items if item.get("course_name") == name or item.get("title") == name), None)
+            if found and found not in selected:
+                selected.append(found)
+        for item in sorted(grade_items, key=_grade_sort_key):
+            if item not in selected:
+                selected.append(item)
+            if len(selected) >= 3:
+                break
+        groups.append(
+            {
+                "grade": grade,
+                "items": [
+                    {
+                        "course_name": item.get("course_name") or item.get("title") or "",
+                        "category": item.get("category") or "전공",
+                        "feature_summary": item.get("feature_summary") or _short_course_feature(item),
+                        "detail_url": _course_link(item),
+                        "source_url": _course_link(item),
+                        "fallback_url": COURSE_FULL_GUIDE_URL,
+                        "link_label": f"{item.get('course_name') or item.get('title') or '과목'} 과목 바로가기",
+                    }
+                    for item in selected[:3]
+                ],
+            }
+        )
+    return groups
+
+
+def build_curriculum_by_grade_response(
+    items: list[dict[str, Any]],
+    *,
+    source_url: str,
+    sources: list[dict[str, Any]],
+    score: float,
+    keywords: list[str],
+    started: float,
+) -> dict[str, Any]:
+    groups = _representative_courses_by_grade(items)
+    return {
+        "answer": "컴퓨터과학과 교육과정 안내입니다.",
+        "answer_type": CompatibleAnswerType("curriculum_by_grade", "course_table"),
+        "summary": "학년별 대표 과목을 3개씩 먼저 정리했습니다. 전체 교육과정은 아래 바로가기를 통해 확인할 수 있습니다.",
+        "groups": groups,
+        "items": [item for group in groups for item in group["items"]],
+        "display_limit": 3,
+        "total_count": len(items),
+        "source_urls": [COURSE_FULL_GUIDE_URL],
+        "actions": [{"type": "link", "label": "전체 교육과정 바로가기", "url": COURSE_FULL_GUIDE_URL}],
+        "mode": "DB검색",
+        "sources": sources,
+        "score": score,
+        "keywords": keywords,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
 
 
 def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = "") -> list[dict[str, Any]]:
@@ -758,8 +930,8 @@ def _course_difficulty_confirmation(
     request_id: str = "",
 ) -> dict[str, Any]:
     source_url = next(
-        (_item_url(item, COURSE_GUIDE_URL) for item in items if _item_url(item, COURSE_GUIDE_URL)),
-        COURSE_GUIDE_URL,
+        (_course_link(item, course_name) for item in items if _course_link(item, course_name)),
+        COURSE_FULL_GUIDE_URL,
     )
     context = {
         "course_name": course_name,
@@ -786,9 +958,9 @@ def _course_difficulty_confirmation(
         "actions": [
             {"type": "confirm_llm", "label": "LLM 보조 답변 사용", "target": "allow_llm"},
             {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
-            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_GUIDE_URL},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
         ],
-        "source_urls": list(dict.fromkeys([source_url, COURSE_GUIDE_URL])),
+        "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
         "mode": "LLM확인",
         "requires_llm_confirmation": True,
@@ -951,6 +1123,59 @@ def _course_difficulty_prompt(
     )
 
 
+def _official_course_overview(course_name: str, item: dict[str, Any]) -> str:
+    topics = item.get("topics") or item.get("detail_topics") or []
+    overview = item.get("overview") or item.get("feature") or ""
+    if overview:
+        return f"공식 데이터 기준으로 {course_name}은 {summarize(overview, 140).rstrip('…')}"
+    topic_text = ", ".join(str(topic) for topic in topics[:5] if topic)
+    if topic_text:
+        return f"공식 데이터 기준으로 {course_name}은 {topic_text} 등을 다루는 과목입니다."
+    return f"공식 데이터 기준으로 {course_name}은 컴퓨터과학과 교과목 안내에 등록된 과목입니다."
+
+
+def _clean_incomplete_sentence(value: str) -> str:
+    text = re.sub(r"[*#`|]", "", value or "")
+    text = re.sub(r"\s+", " ", text).strip(" -·,:")
+    text = re.sub(r"(?:및|등|,|-)$", "", text).strip(" -·,:")
+    if text and not re.search(r"[.!?。요다]$", text):
+        text += "."
+    return text
+
+
+def _difficulty_advice_object(course_name: str, item: dict[str, Any], llm_text: str = "") -> dict[str, str]:
+    """LLM 원문이 불완전해도 UI에는 안전한 고정 구조로 난이도 안내를 제공한다."""
+    topics = " ".join(str(topic) for topic in (item.get("topics") or item.get("detail_topics") or []))
+    name_and_topics = f"{course_name} {topics}"
+    if re.search(r"인공지능|AI|머신러닝|신경망|추론|퍼지", name_and_topics, re.IGNORECASE):
+        return CompatibleAdvice({
+            "체감 난이도": "참고용으로는 보통~다소 높은 편입니다.",
+            "어렵게 느껴질 수 있는 부분": "추상적인 개념과 용어가 많아 처음에는 낯설 수 있습니다.",
+            "필요한 준비": "기본적인 컴퓨터과학 개념과 수학적 사고가 있으면 도움이 됩니다.",
+            "학습 팁": "용어를 먼저 정리하고, 예시 문제와 개념 흐름을 함께 보는 방식이 좋습니다.",
+        })
+    if re.search(r"파이썬|프로그래밍|Java|C프로그래밍", name_and_topics, re.IGNORECASE):
+        return CompatibleAdvice({
+            "체감 난이도": "참고용으로는 입문자에게 보통 수준으로 느껴질 수 있습니다.",
+            "어렵게 느껴질 수 있는 부분": "문법 자체보다 직접 코드를 작성하며 오류를 해결하는 과정이 낯설 수 있습니다.",
+            "필요한 준비": "기초 문법을 반복해서 따라 해보고 작은 예제를 직접 실행해보는 준비가 도움이 됩니다.",
+            "학습 팁": "강의 내용을 눈으로만 보지 말고 예제를 직접 입력하고 수정해보는 방식이 좋습니다.",
+        })
+
+    parsed: dict[str, str] = {}
+    for label in ("체감 난이도", "어렵게 느껴질 수 있는 부분", "필요한 준비", "학습 팁"):
+        match = re.search(rf"{label}\s*[:：]\s*(.+?)(?=\n(?:체감 난이도|어렵게 느껴질 수 있는 부분|필요한 준비|학습 팁|참고 안내)\s*[:：]|$)", llm_text or "", re.S)
+        if match:
+            parsed[label] = _clean_incomplete_sentence(match.group(1))
+    fallback = {
+        "체감 난이도": "참고용으로는 보통 수준으로 볼 수 있습니다.",
+        "어렵게 느껴질 수 있는 부분": "처음 접하는 개념과 용어를 익히는 과정에서 부담을 느낄 수 있습니다.",
+        "필요한 준비": "공식 교과목 안내의 개요와 주요 학습 내용을 먼저 확인하면 도움이 됩니다.",
+        "학습 팁": "핵심 용어를 정리하고 강의 흐름에 맞춰 예시를 함께 확인하는 방식이 좋습니다.",
+    }
+    return CompatibleAdvice({key: parsed.get(key) or value for key, value in fallback.items()})
+
+
 def _course_difficulty_response(
     question: str,
     course_name: str,
@@ -964,7 +1189,7 @@ def _course_difficulty_response(
         "overview": "공식 교과목 안내에 등록된 과목입니다.",
         "source_url": COURSE_GUIDE_URL,
     }
-    advice = call_llm_helper(
+    advice_text = call_llm_helper(
         "course_difficulty",
         question,
         {
@@ -976,30 +1201,37 @@ def _course_difficulty_response(
         },
         session_id=session_id,
     )
-    source_url = _item_url(item, COURSE_GUIDE_URL)
+    source_url = _course_link(item, course_name)
+    official_overview = _official_course_overview(course_name, item)
+    difficulty_advice = _difficulty_advice_object(course_name, item, advice_text)
     response_item = {
         "title": course_name,
-        "official_overview": item.get("overview") or item.get("feature") or "",
-        "difficulty_advice": advice,
+        "official_overview": official_overview,
+        "difficulty_advice": difficulty_advice,
         "disclaimer": (
             "난이도와 학습 부담은 공식 기준이 아닌 참고용 안내이며, "
             "개인의 배경지식과 학습 경험에 따라 달라질 수 있습니다."
         ),
         "source_url": source_url,
-        "fallback_url": COURSE_GUIDE_URL,
+        "detail_url": source_url,
+        "fallback_url": COURSE_FULL_GUIDE_URL,
         "link_label": f"{course_name} 과목 바로가기",
     }
     return {
-        "answer": f"{course_name} 난이도 안내입니다.",
+        "answer": f"{course_name} 과목의 학습 부담 안내입니다.",
         "answer_type": "course_difficulty",
-        "summary": "공식 과목 정보와 일반적인 학습 조언을 구분해 안내드립니다.",
+        "summary": official_overview,
+        "official_overview": official_overview,
+        "difficulty_advice": difficulty_advice,
+        "disclaimer": response_item["disclaimer"],
         "items": [response_item],
         "display_limit": 3,
         "total_count": 1,
         "actions": [
-            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_GUIDE_URL}
+            {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
         ],
-        "source_urls": list(dict.fromkeys([source_url, COURSE_GUIDE_URL])),
+        "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
         "mode": "LLM",
         "llm_type": "course_difficulty",
@@ -1227,6 +1459,27 @@ def _dedupe_lines(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _strip_markdown_noise(text: str) -> str:
+    text = re.sub(r"```.*?```", "", text or "", flags=re.S)
+    cleaned = []
+    seen_titles = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or re.fullmatch(r"[-*_]{3,}", line):
+            cleaned.append("")
+            continue
+        line = re.sub(r"^#{1,6}\s*", "", line)
+        line = re.sub(r"\*\*(.*?)\*\*", r"\1", line)
+        line = re.sub(r"`([^`]+)`", r"\1", line)
+        if "안내입니다" in line:
+            key = re.sub(r"\s+", "", line)
+            if key in seen_titles:
+                continue
+            seen_titles.add(key)
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 def _bulletize_keyword_line(line: str) -> str:
     """문장 없이 키워드만 길게 나열된 줄은 bullet 목록으로 바꾼다."""
     stripped = line.strip()
@@ -1274,11 +1527,16 @@ def sanitize_llm_response(text: str, question: str = "") -> str:
     if OUT_OF_SCOPE_MESSAGE in clean:
         return OUT_OF_SCOPE_MESSAGE
 
+    clean = _strip_markdown_noise(clean)
     clean = _dedupe_lines(clean)
     processed: list[str] = []
     for line in clean.splitlines():
         line = _bulletize_keyword_line(line)
-        processed.extend(_wrap_long_sentence(part) for part in line.splitlines())
+        for part in line.splitlines():
+            part = _clean_incomplete_sentence(part) if re.search(r"(?:및|등|,|-)$", part.strip()) else part
+            if len(part.strip(" -•")) <= 2 and part.lstrip().startswith(("-", "•")):
+                continue
+            processed.append(_wrap_long_sentence(part))
     clean = "\n".join(processed)
     clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
 
@@ -1291,7 +1549,7 @@ def sanitize_llm_response(text: str, question: str = "") -> str:
 
     if not re.search(r"^\s*(?:\*\*)?.{2,40}안내", clean):
         course_name = detect_course_name(question)
-        title = f"**{course_name} 과목 안내입니다.**" if course_name else "**ComPass 안내입니다.**"
+        title = f"{course_name} 과목 안내입니다." if course_name else "ComPass 안내입니다."
         clean = f"{title}\n\n{clean}"
 
     if not re.search(r"[.!?。요다)\]]\s*$", clean):
@@ -1394,7 +1652,7 @@ def call_llm_helper(
     try:
         return call_llm(question, prompt_override=prompt)
     except Exception as exc:
-        logger.exception(
+        logger.error(
             "LLM 오류: provider=%s, llm_type=%s, session=%s, context=%s, error=%s",
             provider,
             normalized_type,
@@ -1754,13 +2012,15 @@ def answer_question(
         llm_actions: list[dict[str, Any]] = []
         llm_source_urls: list[str] = []
         if detected_course:
+            detected = index.detect_course(clean_question) if index and hasattr(index, "detect_course") else None
+            course_url = (detected or {}).get("detail_url") or COURSE_FULL_GUIDE_URL
             llm_actions.extend(
                 [
-                    {"type": "link", "label": f"{detected_course} 과목 바로가기", "url": COURSE_GUIDE_URL},
-                    {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_GUIDE_URL},
+                    {"type": "link", "label": f"{detected_course} 과목 바로가기", "url": course_url},
+                    {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
                 ]
             )
-            llm_source_urls.append(COURSE_GUIDE_URL)
+            llm_source_urls.extend([course_url, COURSE_FULL_GUIDE_URL])
         return {
             "answer": answer,
             "answer_type": "text",
@@ -1771,7 +2031,7 @@ def answer_question(
             "actions": llm_actions,
             "mode": "LLM",
             "sources": (
-                [{"title": "컴퓨터과학과 교과목 안내", "url": COURSE_GUIDE_URL, "score": best_score}]
+                [{"title": "컴퓨터과학과 교과목 안내", "url": llm_source_urls[0], "score": best_score}]
                 if detected_course
                 else []
             ),

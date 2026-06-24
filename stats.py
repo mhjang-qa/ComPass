@@ -33,6 +33,11 @@ def record_interaction(question: str, result: dict[str, Any]) -> None:
         "parent": {"database_id": normalize_id(config.NOTION_STATS_DB_ID)},
         "properties": {
             "사용자질문": {"title": rich_text(sanitize_input(question), 500)},
+            "session_id": {"rich_text": rich_text(str(result.get("session_id") or "")[:120], 120)},
+            "request_id": {"rich_text": rich_text(str(result.get("request_id") or "")[:120], 120)},
+            "llm_type": {"select": {"name": str(result.get("llm_type") or "none")[:100]}},
+            "allow_llm": {"checkbox": bool(result.get("allow_llm"))},
+            "requires_llm_confirmation": {"checkbox": bool(result.get("requires_llm_confirmation"))},
             "질문일시": {"date": {"start": datetime.now().astimezone().isoformat()}},
             "추출키워드": {
                 "multi_select": [{"name": str(word)[:100]} for word in (result.get("keywords") or [])[:15]]

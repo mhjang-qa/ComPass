@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import threading
 from collections import Counter
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -70,6 +71,7 @@ def tokenize(text: str) -> list[str]:
 class SearchIndex:
     def __init__(self, path: Path = config.INDEX_PATH) -> None:
         self.path = path
+        self._lock = threading.RLock()
         self.payload: dict[str, Any] = {"built_at": None, "documents": [], "course_catalog": []}
         self.load()
 
@@ -77,13 +79,16 @@ class SearchIndex:
         if not self.path.exists():
             return
         try:
-            self.payload = json.loads(self.path.read_text(encoding="utf-8"))
-            if not self.payload.get("course_catalog"):
-                self.payload["course_catalog"] = self._build_course_catalog(
-                    self.payload.get("documents") or []
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if not payload.get("course_catalog"):
+                payload["course_catalog"] = self._build_course_catalog(
+                    payload.get("documents") or []
                 )
+            with self._lock:
+                self.payload = payload
         except (OSError, json.JSONDecodeError):
-            self.payload = {"built_at": None, "documents": [], "course_catalog": []}
+            with self._lock:
+                self.payload = {"built_at": None, "documents": [], "course_catalog": []}
 
     def rebuild(self, documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         documents = documents if documents is not None else NotionClient().knowledge_documents()
@@ -107,15 +112,17 @@ class SearchIndex:
             item = {**doc, "tokens": tokenize(text), "search_text": text}
             indexed.append(item)
         course_catalog = self._build_course_catalog(indexed)
-        self.payload = {
+        new_payload = {
             "built_at": datetime.now().astimezone().isoformat(),
             "documents": indexed,
             "course_catalog": course_catalog,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.path.write_text(json.dumps(new_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            self.payload = new_payload
         return {
-            "built_at": self.payload["built_at"],
+            "built_at": new_payload["built_at"],
             "documents": len(indexed),
             "courses": len(course_catalog),
         }
@@ -157,7 +164,8 @@ class SearchIndex:
         return sorted(catalog.values(), key=lambda item: (-len(item["course_name"]), item["course_name"]))
 
     def course_catalog(self) -> list[dict[str, Any]]:
-        return self.payload.get("course_catalog") or []
+        with self._lock:
+            return list(self.payload.get("course_catalog") or [])
 
     def detect_course(self, query: str) -> dict[str, Any] | None:
         compact = re.sub(r"\s+", "", query or "").lower()
@@ -197,9 +205,11 @@ class SearchIndex:
             ]
             return title == target or target in item_names
 
+        with self._lock:
+            payload_documents = list(self.payload.get("documents") or [])
         documents = [
             doc
-            for doc in (self.payload.get("documents") or [])
+            for doc in payload_documents
             if (not allowed_types or doc.get("document_type") in allowed_types)
             and (
                 not allowed_source_types
@@ -346,9 +356,13 @@ class SearchIndex:
         return ranked[:top_k]
 
     def status(self) -> dict[str, Any]:
+        with self._lock:
+            built_at = self.payload.get("built_at")
+            documents = len(self.payload.get("documents") or [])
+            courses = len(self.payload.get("course_catalog") or [])
         return {
-            "built_at": self.payload.get("built_at"),
-            "documents": len(self.payload.get("documents") or []),
-            "courses": len(self.course_catalog()),
+            "built_at": built_at,
+            "documents": documents,
+            "courses": courses,
             "path": str(self.path),
         }

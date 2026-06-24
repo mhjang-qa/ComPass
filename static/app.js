@@ -3,13 +3,28 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const messages = $("#messages");
 const appShell = $("#appShell");
 const chatLauncher = $("#chatLauncher");
-const history = [];
 const ADMIN_TABS = new Set(["crawl", "index", "stats"]);
 const APP_CONFIG = window.COMPASS_CONFIG;
-let pendingQuestion = "";
 let pendingAdminTab = "";
 let adminPassword = "";
 const mobilePointer = window.matchMedia("(pointer: coarse)");
+const pendingRequests = new Map();
+const pendingByQuestion = new Map();
+
+function getSessionId() {
+  let sessionId = sessionStorage.getItem("compass_session_id");
+  if (!sessionId) {
+    sessionId = crypto.randomUUID ? crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem("compass_session_id", sessionId);
+  }
+  return sessionId;
+}
+
+const SESSION_ID = getSessionId();
+
+function newRequestId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 // 새로고침 시 인증을 반드시 다시 받는다. 비밀번호는 브라우저 저장소에 보관하지 않는다.
 sessionStorage.removeItem("admin_auth");
@@ -131,6 +146,7 @@ async function jsonFetch(url, options = {}) {
   try {
     response = await fetch(url, options);
   } catch (cause) {
+    if (cause?.name === "AbortError") throw cause;
     const error = new Error("백엔드 서버에 연결할 수 없습니다. Render가 부팅 중인지 확인해 주세요.");
     error.kind = "BACKEND_CONNECTION";
     error.cause = cause;
@@ -574,7 +590,11 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     yes.textContent = confirmAction?.label || "LLM 보조 답변 사용";
     yes.onclick = () => {
       actions.remove();
-      sendQuestion(pendingQuestion, true);
+      sendQuestion(payload.client_question || payload.question || "", {
+        allowLlm: true,
+        llmType: payload.llm_type || "general_explain",
+        context: payload.context || {},
+      });
     };
     const no = document.createElement("button");
     no.textContent = "검색 종료";
@@ -589,8 +609,10 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
 }
 
 function createSearchLoading() {
+  const requestId = arguments[0] || "";
   const row = document.createElement("div");
   row.className = "message bot search-loading";
+  row.dataset.requestId = requestId;
   const bubble = document.createElement("div");
   bubble.className = "bubble loading-bubble";
   const icon = document.createElement("span");
@@ -625,28 +647,50 @@ function createSearchLoading() {
     remove() {
       window.clearInterval(typingTimer);
       window.clearInterval(dotTimer);
-      row.remove();
+      if (row.dataset.requestId === requestId) row.remove();
     },
   };
 }
 
-async function sendQuestion(raw, allowLlm = false) {
+async function sendQuestion(raw, options = {}) {
+  const allowLlm = Boolean(options.allowLlm);
+  const llmType = options.llmType || "";
+  const context = options.context || undefined;
   const question = raw.trim();
   if (!question) return;
+  const requestId = newRequestId();
+  const duplicateController = pendingByQuestion.get(question);
+  if (duplicateController && !allowLlm) {
+    duplicateController.abort();
+  }
+  const controller = new AbortController();
+  pendingByQuestion.set(question, controller);
+  pendingRequests.set(requestId, { question, controller });
   if (!allowLlm) {
     addMessage("user", question);
-    history.push({ role: "user", content: question });
-    pendingQuestion = question;
   }
   $("#sendButton").disabled = true;
-  const waiting = createSearchLoading();
+  const waiting = createSearchLoading(requestId);
   try {
     const result = await jsonFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, history: history.slice(-8), allow_llm: allowLlm }),
+      signal: controller.signal,
+      body: JSON.stringify({
+        question,
+        allow_llm: allowLlm,
+        llm_type: llmType,
+        session_id: SESSION_ID,
+        request_id: requestId,
+        context,
+      }),
     });
+    if (!pendingRequests.has(requestId) || result.request_id !== requestId) {
+      waiting.remove();
+      return;
+    }
     waiting.remove();
+    result.client_question = question;
     let answer = result.answer;
     if (result.mode === "DB_LOAD_ERROR") {
       answer = `지식 DB 로딩에 실패했습니다.\n${result.failure_reason || "관리자에게 서버 로그 확인을 요청해 주세요."}`;
@@ -654,8 +698,11 @@ async function sendQuestion(raw, allowLlm = false) {
       answer = "백엔드 연결은 정상이지만 검색 인덱스가 비어 있습니다. 관리자 메뉴에서 크롤링 또는 인덱스 재생성을 실행해 주세요.";
     }
     addMessage("bot", answer, result.sources || [], result.requires_llm_confirmation, result);
-    history.push({ role: "assistant", content: result.answer });
   } catch (error) {
+    if (error.name === "AbortError") {
+      waiting.remove();
+      return;
+    }
     waiting.remove();
     const prefix =
       error.kind === "BACKEND_CONNECTION"
@@ -665,6 +712,8 @@ async function sendQuestion(raw, allowLlm = false) {
           : "요청 처리 실패";
     addMessage("bot", `${prefix}: ${error.message}`);
   } finally {
+    pendingRequests.delete(requestId);
+    if (pendingByQuestion.get(question) === controller) pendingByQuestion.delete(question);
     $("#sendButton").disabled = false;
     if (!isMobileDevice()) {
       $("#question").focus({ preventScroll: true });

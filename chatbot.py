@@ -33,6 +33,7 @@ OUT_OF_SCOPE_MESSAGE = (
     "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다.\n"
     "ComPass는 컴퓨터과학과 홈페이지에 등록된 공식 정보를 기준으로만 안내할 수 있습니다."
 )
+LLM_SAFE_FAILURE_MESSAGE = "LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
 GREETING_MESSAGE = (
     "안녕하세요 👋\n"
     "저는 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이, ComPass입니다.\n"
@@ -109,6 +110,18 @@ COURSE_DIFFICULTY_RE = re.compile(
     r"공부\s*팁|학습\s*팁|선수\s*지식|준비\s*해야",
     re.IGNORECASE,
 )
+COURSE_ORDER_RE = re.compile(
+    r"선수\s*지식|선수\s*과목|먼저\s*(들|알|배우)|듣기\s*전|수강\s*전|"
+    r"학습\s*순서|수강\s*순서|뭘\s*알면|무엇을\s*알면",
+    re.IGNORECASE,
+)
+COURSE_ROADMAP_RE = re.compile(
+    r"로드맵|학습\s*계획|수강\s*계획|편입생.*(어떤|무슨|뭐).*(과목|수업)|"
+    r"재학생.*과목\s*선택|과목\s*선택\s*방향",
+    re.IGNORECASE,
+)
+NOTICE_EXPLAIN_RE = re.compile(r"공지.*(쉽게|요약|설명|해석)|최근\s*공지.*(쉽게|요약|설명|해석)", re.IGNORECASE)
+SCHEDULE_EXPLAIN_RE = re.compile(r"일정.*(쉽게|요약|설명|해석)|학사\s*일정.*(쉽게|요약|설명|해석)", re.IGNORECASE)
 KNOWN_COURSE_NAMES = (
     "파이썬프로그래밍기초",
     "데이터베이스시스템",
@@ -231,6 +244,14 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     if casual_response(question):
         return "smalltalk"
     course_name = detect_course_name(question, index)
+    if NOTICE_EXPLAIN_RE.search(question):
+        return "notice_explain"
+    if SCHEDULE_EXPLAIN_RE.search(question):
+        return "schedule_explain"
+    if COURSE_ROADMAP_RE.search(question):
+        return "course_roadmap"
+    if course_name and COURSE_ORDER_RE.search(question):
+        return "course_order"
     if course_name and COURSE_DIFFICULTY_RE.search(question):
         return "course_difficulty"
     if course_name and (COURSE_DETAIL_RE.search(question) or re.search(r"커리큘럼|교과목\s*안내", question)):
@@ -250,9 +271,13 @@ def retrieve_documents(
     intent: str,
 ) -> list[dict[str, Any]]:
     """의도별 검색 범위와 결과 수를 고정해 다른 카테고리 문서 혼입을 줄인다."""
-    top_k = 20 if intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
+    search_intent = {
+        "notice_explain": "notice_list",
+        "schedule_explain": "schedule_list",
+    }.get(intent, intent)
+    top_k = 20 if search_intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
     filters: dict[str, Any] = {"source_types": ["official"]}
-    if intent in {"course_recommendation", "course_detail", "course_difficulty"}:
+    if search_intent in {"course_recommendation", "course_detail", "course_difficulty", "course_order", "course_roadmap"}:
         course = index.detect_course(question)
         filters.update({
             "document_types": list(COURSE_DOCUMENT_TYPES),
@@ -728,11 +753,21 @@ def _course_difficulty_confirmation(
     course_name: str,
     items: list[dict[str, Any]],
     started: float,
+    *,
+    session_id: str = "",
+    request_id: str = "",
 ) -> dict[str, Any]:
     source_url = next(
         (_item_url(item, COURSE_GUIDE_URL) for item in items if _item_url(item, COURSE_GUIDE_URL)),
         COURSE_GUIDE_URL,
     )
+    context = {
+        "course_name": course_name,
+        "overview": items[0].get("overview") if items else "",
+        "topics": items[0].get("topics") if items else [],
+        "source_url": source_url,
+        "fallback_url": COURSE_GUIDE_URL,
+    }
     return {
         "answer": (
             "공식 데이터에는 해당 과목의 체감 난이도 정보가 명시되어 있지 않습니다.\n"
@@ -757,7 +792,11 @@ def _course_difficulty_confirmation(
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
         "mode": "LLM확인",
         "requires_llm_confirmation": True,
+        "llm_type": "course_difficulty",
         "course_name": course_name,
+        "context": context,
+        "session_id": session_id,
+        "request_id": request_id,
         "score": 100 if items else 0,
         "keywords": tokenize(question),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
@@ -765,54 +804,151 @@ def _course_difficulty_confirmation(
     }
 
 
+def _context_summary(context: dict[str, Any]) -> str:
+    """LLM prompt에 넣을 공식 데이터 context를 짧고 안전하게 직렬화한다."""
+    allowed_keys = (
+        "course_name",
+        "title",
+        "overview",
+        "topics",
+        "items",
+        "source_url",
+        "fallback_url",
+    )
+    lines: list[str] = []
+    for key in allowed_keys:
+        value = context.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            if key == "items":
+                preview = []
+                for item in value[:3]:
+                    if isinstance(item, dict):
+                        preview.append(
+                            {
+                                k: item.get(k)
+                                for k in ("title", "course_name", "overview", "summary", "date", "description")
+                                if item.get(k)
+                            }
+                        )
+                    else:
+                        preview.append(str(item)[:120])
+                value_text = str(preview)
+            else:
+                value_text = ", ".join(str(item) for item in value[:8])
+        elif isinstance(value, dict):
+            value_text = str({k: value.get(k) for k in sorted(value)[:8]})
+        else:
+            value_text = str(value)
+        lines.append(f"- {key}: {value_text[:1000]}")
+    return "\n".join(lines) or "- 공식 데이터 요약: 제공된 context 없음"
+
+
+def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> str:
+    """LLM 보조 답변용 공통 prompt builder."""
+    supported = {
+        "course_difficulty",
+        "course_order",
+        "course_roadmap",
+        "notice_explain",
+        "schedule_explain",
+        "general_explain",
+    }
+    normalized_type = llm_type if llm_type in supported else "general_explain"
+    formats = {
+        "course_difficulty": (
+            "체감 난이도:\n"
+            "필요한 준비:\n"
+            "학습 팁:\n"
+            "참고 안내:"
+        ),
+        "course_order": (
+            "추천 수강 순서:\n"
+            "먼저 알면 좋은 내용:\n"
+            "주의할 점:\n"
+            "참고 안내:"
+        ),
+        "course_roadmap": (
+            "추천 방향:\n"
+            "우선 수강하면 좋은 과목:\n"
+            "학습 전략:\n"
+            "참고 안내:"
+        ),
+        "notice_explain": (
+            "공지 요약:\n"
+            "학생이 확인할 점:\n"
+            "주의할 점:\n"
+            "바로가기 안내:"
+        ),
+        "schedule_explain": (
+            "일정 요약:\n"
+            "학생이 해야 할 일:\n"
+            "확인할 점:\n"
+            "바로가기 안내:"
+        ),
+        "general_explain": (
+            "핵심 설명:\n"
+            "참고 안내:\n"
+            "다음 확인 사항:"
+        ),
+    }
+    type_guides = {
+        "course_difficulty": "과목 난이도와 학습 부담은 공식 기준이 아니므로 참고용 안내로만 설명한다.",
+        "course_order": "선수지식과 수강 순서는 공식 필수 선후수 규정이 아닌 학습 참고 순서로 설명한다.",
+        "course_roadmap": "편입생 또는 재학생의 과목 선택 방향을 공식 교육과정 범위 안에서 참고용으로 정리한다.",
+        "notice_explain": "공지 원문을 복사하지 말고 학생이 해야 할 일을 중심으로 쉽게 설명한다.",
+        "schedule_explain": "일정 원문을 복사하지 말고 기간과 학생 행동 중심으로 쉽게 설명한다.",
+        "general_explain": "공식 데이터로 확인되는 핵심만 학생 눈높이로 설명한다.",
+    }
+    return f"""
+너는 한국방송통신대학교 컴퓨터과학과 학생을 돕는 AI 보조 설명 엔진이다.
+공식 데이터와 일반적인 참고 조언을 반드시 구분한다.
+공식 데이터에 없는 학점, 개설 학기, 평가 방식, 시험 범위, 날짜, 규정, URL은 추측하지 않는다.
+공식 데이터에 없는 내용은 “참고용 안내”라고 명확히 표시한다.
+인사말과 자기소개를 하지 않는다.
+“안녕하세요”, “ComPass입니다”, “AI 학과 비서입니다” 같은 표현을 사용하지 않는다.
+답변은 바로 본문부터 시작한다.
+과제 대행, 코딩 대행, 정답 대행은 제공하지 않는다.
+한국어로 간결하게 작성한다.
+문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
+ComPass는 학생이 이해하기 쉽게 재해석해서 안내하는 AI 학과 비서라는 철학에 맞게 설명한다.
+원문을 그대로 복사하지 말고 학생 눈높이로 요약·정리한다.
+
+[LLM 타입]
+{normalized_type}
+
+[타입별 지시]
+{type_guides[normalized_type]}
+
+[공식 데이터 context]
+{_context_summary(context)}
+
+[사용자 질문]
+{sanitize_input(question, 300)}
+
+[답변 형식]
+{formats[normalized_type]}
+""".strip()
+
+
 def _course_difficulty_prompt(
     question: str,
     course_name: str,
     item: dict[str, Any],
 ) -> str:
-    overview = item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 과목"
-    topics = ", ".join((item.get("topics") or [])[:8]) or "공식 세부 학습 내용 미확인"
-
-    return f"""
-너는 한국방송통신대학교 컴퓨터과학과 과목 정보를 바탕으로 학습 참고 설명을 작성하는 AI 보조 엔진이다.
-아래 공식 데이터와 일반적인 학습 조언을 반드시 구분해 한국어로 답하라.
-
-[공식 데이터]
-- 과목명: {course_name}
-- 과목 개요: {overview}
-- 주요 학습 내용: {topics}
-
-[사용자 질문]
-{question}
-
-규칙:
-1. 인사말과 자기소개를 하지 않는다.
-2. 공식 학점, 개설 학기, 시험 범위, 평가 방식은 제공된 데이터 밖에서 추측하지 않는다.
-3. 체감 난이도와 공부량은 공식 정보가 아니므로 반드시 참고용이라고 표현한다.
-4. 개인의 선수지식과 프로그래밍 경험에 따라 달라질 수 있다고 안내한다.
-5. 과제 대행이나 코딩 대행은 제공하지 않는다.
-6. 검색 결과를 붙여넣지 말고 학생이 이해하기 쉬운 말로 재구성한다.
-7. 각 항목은 1~2문장으로 작성한다.
-8. 문장이 중간에 끊기지 않게 완결된 문장으로 끝낸다.
-9. 아래 답변 형식을 반드시 그대로 사용한다.
-
-답변 형식:
-**{course_name} 학습 부담 안내입니다.**
-
-공식 과목 정보와 일반적인 학습 조언을 구분해 안내합니다.
-
-참고용 학습 부담
-
-| 항목 | 안내 |
-|---|---|
-| 체감 난이도 | 한 문장으로 설명 |
-| 필요한 준비 | 한 문장으로 설명 |
-| 학습 팁 | 한 문장으로 설명 |
-
-안내
-
-난이도와 학습 부담은 공식 기준이 아닌 참고용 정보이며, 개인의 배경지식에 따라 달라질 수 있습니다.
-""".strip()
+    """하위 호환용 wrapper. 신규 코드는 build_llm_prompt/call_llm_helper를 사용한다."""
+    return build_llm_prompt(
+        "course_difficulty",
+        question,
+        {
+            "course_name": course_name,
+            "overview": item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 과목",
+            "topics": item.get("topics") or [],
+            "source_url": item.get("source_url") or COURSE_GUIDE_URL,
+            "fallback_url": COURSE_GUIDE_URL,
+        },
+    )
 
 
 def _course_difficulty_response(
@@ -820,15 +956,25 @@ def _course_difficulty_response(
     course_name: str,
     items: list[dict[str, Any]],
     started: float,
+    *,
+    session_id: str = "",
 ) -> dict[str, Any]:
     item = items[0] if items else {
         "course_name": course_name,
         "overview": "공식 교과목 안내에 등록된 과목입니다.",
         "source_url": COURSE_GUIDE_URL,
     }
-    advice = call_llm(
+    advice = call_llm_helper(
+        "course_difficulty",
         question,
-        prompt_override=_course_difficulty_prompt(question, course_name, item),
+        {
+            "course_name": course_name,
+            "overview": item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 과목",
+            "topics": item.get("topics") or item.get("detail_topics") or [],
+            "source_url": item.get("source_url") or COURSE_GUIDE_URL,
+            "fallback_url": COURSE_GUIDE_URL,
+        },
+        session_id=session_id,
     )
     source_url = _item_url(item, COURSE_GUIDE_URL)
     response_item = {
@@ -856,10 +1002,167 @@ def _course_difficulty_response(
         "source_urls": list(dict.fromkeys([source_url, COURSE_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
         "mode": "LLM",
+        "llm_type": "course_difficulty",
         "course_name": course_name,
         "score": 100 if items else 0,
         "keywords": tokenize(question),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def _llm_type_from_intent(intent: str) -> str:
+    mapping = {
+        "course_difficulty": "course_difficulty",
+        "course_order": "course_order",
+        "course_roadmap": "course_roadmap",
+        "notice_explain": "notice_explain",
+        "schedule_explain": "schedule_explain",
+    }
+    return mapping.get(intent, "general_explain")
+
+
+def _llm_context_from_hits(
+    llm_type: str,
+    question: str,
+    hits: list[dict[str, Any]],
+    index: SearchIndex | None = None,
+) -> dict[str, Any]:
+    """현재 요청의 공식 검색 결과만 사용해 LLM context를 만든다."""
+    course = detect_course_name(question, index)
+    if llm_type in {"course_difficulty", "course_order", "course_roadmap"}:
+        items = _course_detail_items(question, hits) if course else _course_items(hits)[:3]
+        first = items[0] if items else {}
+        return {
+            "course_name": course or first.get("course_name") or first.get("title") or "",
+            "overview": first.get("overview") or first.get("feature") or "",
+            "topics": first.get("topics") or first.get("detail_topics") or [],
+            "items": items[:3],
+            "source_url": _item_url(first, COURSE_GUIDE_URL),
+            "fallback_url": COURSE_GUIDE_URL,
+        }
+    if llm_type == "notice_explain":
+        items = _notice_items(hits)[:3]
+        return {
+            "title": items[0].get("title") if items else "최근 공지",
+            "items": items,
+            "source_url": NOTICE_URL,
+            "fallback_url": NOTICE_URL,
+        }
+    if llm_type == "schedule_explain":
+        items = _schedule_items(hits)[:3]
+        return {
+            "title": items[0].get("title") if items else "학과 일정",
+            "items": items,
+            "source_url": SCHEDULE_URL,
+            "fallback_url": SCHEDULE_URL,
+        }
+    first_hit = hits[0] if hits else {}
+    return {
+        "title": first_hit.get("title") or "컴퓨터과학과 공식 정보",
+        "overview": first_hit.get("summary") or first_hit.get("body") or "",
+        "source_url": first_hit.get("source_url") or DEPARTMENT_HOME_URL,
+        "fallback_url": DEPARTMENT_HOME_URL,
+    }
+
+
+def _llm_source_url(llm_type: str, context: dict[str, Any]) -> str:
+    if context.get("source_url"):
+        return context["source_url"]
+    if llm_type in {"course_difficulty", "course_order", "course_roadmap"}:
+        return COURSE_GUIDE_URL
+    if llm_type == "notice_explain":
+        return NOTICE_URL
+    if llm_type == "schedule_explain":
+        return SCHEDULE_URL
+    return DEPARTMENT_HOME_URL
+
+
+def _llm_confirmation_response(
+    question: str,
+    llm_type: str,
+    context: dict[str, Any],
+    hits: list[dict[str, Any]],
+    started: float,
+    *,
+    session_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    source_url = _llm_source_url(llm_type, context)
+    course_name = context.get("course_name") or detect_course_name(question)
+    title = context.get("title") or course_name or "공식 정보"
+    return {
+        "answer": (
+            "공식 데이터에서 확인한 내용만으로는 학생 눈높이의 보조 설명이 부족합니다.\n"
+            "공식 데이터 범위 안에서 LLM 보조 답변을 생성할까요?"
+        ),
+        "answer_type": "llm_confirmation_required",
+        "summary": "LLM 보조 답변은 공식 데이터와 참고용 안내를 구분해 제공합니다.",
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "actions": [
+            {"type": "confirm_llm", "label": "LLM 보조 답변 사용", "target": "allow_llm"},
+            {"type": "link", "label": "공식 페이지 바로가기", "url": source_url},
+        ],
+        "source_urls": [source_url],
+        "sources": [
+            {
+                "title": title,
+                "url": source_url,
+                "score": hits[0].get("score", 0) if hits else 0,
+            }
+        ] if source_url else [],
+        "mode": "LLM확인",
+        "requires_llm_confirmation": True,
+        "llm_type": llm_type,
+        "course_name": course_name,
+        "context": context,
+        "session_id": session_id,
+        "request_id": request_id,
+        "score": hits[0].get("score", 0) if hits else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def _llm_helper_response(
+    question: str,
+    llm_type: str,
+    context: dict[str, Any],
+    hits: list[dict[str, Any]],
+    started: float,
+    *,
+    session_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    answer = call_llm_helper(llm_type, question, context, session_id=session_id)
+    source_url = _llm_source_url(llm_type, context)
+    course_name = context.get("course_name") or detect_course_name(question)
+    return {
+        "answer": answer,
+        "answer_type": "text",
+        "summary": "공식 데이터 범위 안에서 학생이 이해하기 쉽게 재구성한 보조 답변입니다.",
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "source_urls": [source_url] if source_url else [],
+        "actions": [{"type": "link", "label": "공식 페이지 바로가기", "url": source_url}] if source_url else [],
+        "mode": "LLM",
+        "sources": [
+            {
+                "title": context.get("title") or course_name or "공식 데이터",
+                "url": source_url,
+                "score": hits[0].get("score", 0) if hits else 0,
+            }
+        ] if source_url else [],
+        "score": hits[0].get("score", 0) if hits else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "llm_type": llm_type,
+        "course_name": course_name,
+        "session_id": session_id,
+        "request_id": request_id,
+        "requires_llm_confirmation": False,
     }
 
 
@@ -1036,11 +1339,14 @@ def _gemini(prompt: str) -> str:
     )
     response.raise_for_status()
     data = response.json()
-    return "".join(
+    text = "".join(
         part.get("text", "")
         for candidate in data.get("candidates") or []
         for part in (candidate.get("content") or {}).get("parts") or []
     ).strip()
+    if not text:
+        raise RuntimeError("Gemini 응답이 비어 있습니다.")
+    return text
 
 
 def call_llm(question: str, *, prompt_override: str | None = None) -> str:
@@ -1056,11 +1362,56 @@ def call_llm(question: str, *, prompt_override: str | None = None) -> str:
 
     raise RuntimeError(f"지원하지 않는 LLM_PROVIDER: {config.LLM_PROVIDER}")
 
+
+def call_llm_helper(
+    llm_type: str,
+    question: str,
+    context: dict[str, Any],
+    *,
+    session_id: str = "",
+) -> str:
+    """LLM 보조 답변 공통 진입점.
+
+    이 함수는 요청 로컬 context만 사용하며 사용자별 상태를 전역 저장하지 않는다.
+    """
+    provider = (config.LLM_PROVIDER or "").strip().lower()
+    normalized_type = llm_type if llm_type in {
+        "course_difficulty",
+        "course_order",
+        "course_roadmap",
+        "notice_explain",
+        "schedule_explain",
+        "general_explain",
+    } else "general_explain"
+    session_short = (session_id or "")[:8] or "server"
+    prompt = build_llm_prompt(normalized_type, question, context)
+    logger.info(
+        "LLM 요청: provider=%s, llm_type=%s, session=%s",
+        provider,
+        normalized_type,
+        session_short,
+    )
+    try:
+        return call_llm(question, prompt_override=prompt)
+    except Exception as exc:
+        logger.exception(
+            "LLM 오류: provider=%s, llm_type=%s, session=%s, context=%s, error=%s",
+            provider,
+            normalized_type,
+            session_short,
+            sanitize_input(str(context.get("course_name") or context.get("title") or ""), 80),
+            type(exc).__name__,
+        )
+        return LLM_SAFE_FAILURE_MESSAGE
+
 def answer_question(
     question: str,
     *,
     history: list[dict[str, str]] | None = None,
     allow_llm: bool = False,
+    llm_type: str | None = None,
+    session_id: str = "",
+    request_id: str = "",
     index: SearchIndex | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
@@ -1081,6 +1432,8 @@ def answer_question(
     casual = casual_response(clean_question)
     if casual:
         casual["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        casual["session_id"] = session_id
+        casual["request_id"] = request_id
         return casual
     index = index or SearchIndex()
     initial_intent = classify_intent(clean_question, index)
@@ -1089,14 +1442,37 @@ def answer_question(
         hits = retrieve_documents(index, clean_question, "course_difficulty")
         items = normalize_results("course_difficulty", hits, clean_question)
         if not allow_llm:
-            return _course_difficulty_confirmation(clean_question, course_name, items, started)
+            return _course_difficulty_confirmation(
+                clean_question,
+                course_name,
+                items,
+                started,
+                session_id=session_id,
+                request_id=request_id,
+            )
         try:
-            return _course_difficulty_response(clean_question, course_name, items, started)
+            response = _course_difficulty_response(
+                clean_question,
+                course_name,
+                items,
+                started,
+                session_id=session_id,
+            )
+            response["session_id"] = session_id
+            response["request_id"] = request_id
+            return response
         except Exception as exc:
             logger.exception("과목 난이도 LLM 보조 답변 실패: %s", exc)
-            result = _course_difficulty_confirmation(clean_question, course_name, items, started)
+            result = _course_difficulty_confirmation(
+                clean_question,
+                course_name,
+                items,
+                started,
+                session_id=session_id,
+                request_id=request_id,
+            )
             result.update(
-                answer="LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                answer=LLM_SAFE_FAILURE_MESSAGE,
                 answer_type="course_difficulty",
                 requires_llm_confirmation=False,
                 failure_reason=f"LLM 호출 실패: {type(exc).__name__}",
@@ -1105,6 +1481,29 @@ def answer_question(
                 ],
             )
             return result
+    if initial_intent in {"course_order", "course_roadmap", "notice_explain", "schedule_explain"}:
+        requested_llm_type = llm_type or _llm_type_from_intent(initial_intent)
+        hits = retrieve_documents(index, clean_question, initial_intent)
+        context = _llm_context_from_hits(requested_llm_type, clean_question, hits, index)
+        if not allow_llm:
+            return _llm_confirmation_response(
+                clean_question,
+                requested_llm_type,
+                context,
+                hits,
+                started,
+                session_id=session_id,
+                request_id=request_id,
+            )
+        return _llm_helper_response(
+            clean_question,
+            requested_llm_type,
+            context,
+            hits,
+            started,
+            session_id=session_id,
+            request_id=request_id,
+        )
     curated = match_curated(clean_question, history)
     if curated:
         if curated.get("answer_type") == "course_recommendation":
@@ -1341,7 +1740,14 @@ def answer_question(
         }
 
     try:
-        answer = call_llm(clean_question)
+        requested_llm_type = llm_type or "general_explain"
+        context = _llm_context_from_hits(requested_llm_type, clean_question, hits, index)
+        answer = call_llm_helper(
+            requested_llm_type,
+            clean_question,
+            context,
+            session_id=session_id,
+        )
         if not answer:
             answer = OUT_OF_SCOPE_MESSAGE
         detected_course = detect_course_name(clean_question, index)
@@ -1372,6 +1778,9 @@ def answer_question(
             "score": best_score,
             "keywords": tokenize(clean_question),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "llm_type": requested_llm_type,
+            "session_id": session_id,
+            "request_id": request_id,
         }
     except Exception as exc:
         logger.exception("LLM fallback 실패: %s", exc)
@@ -1389,4 +1798,7 @@ def answer_question(
             "keywords": tokenize(clean_question),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "failure_reason": f"LLM 호출 실패: {type(exc).__name__}",
+            "llm_type": llm_type or "general_explain",
+            "session_id": session_id,
+            "request_id": request_id,
         }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import secrets
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,8 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 index = SearchIndex()
-job_lock = threading.Lock()
+crawl_lock = threading.Lock()
+index_job_lock = threading.Lock()
 index_load_lock = threading.Lock()
 job_state: dict[str, Any] = {
     "crawl": {"running": False, "message": "대기 중", "result": None},
@@ -69,6 +71,10 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     history: list[dict[str, str]] = Field(default_factory=list)
     allow_llm: bool = False
+    llm_type: str | None = None
+    session_id: str | None = None
+    request_id: str | None = None
+    context: dict[str, Any] | None = None
 
 
 class SearchRequest(BaseModel):
@@ -101,6 +107,22 @@ def mask_database_id(database_id: str) -> str:
     if len(value) < 12:
         return "***"
     return f"{value[:6]}…{value[-6:]}"
+
+
+def request_ids(req: ChatRequest) -> tuple[str, str]:
+    session_id = sanitize_input(req.session_id or "", 120) or str(uuid.uuid4())
+    request_id = sanitize_input(req.request_id or "", 120) or str(uuid.uuid4())
+    return session_id, request_id
+
+
+def attach_request_metadata(result: dict[str, Any], session_id: str, request_id: str, req: ChatRequest) -> dict[str, Any]:
+    result["session_id"] = result.get("session_id") or session_id
+    result["request_id"] = result.get("request_id") or request_id
+    if req.llm_type and not result.get("llm_type"):
+        result["llm_type"] = req.llm_type
+    result["allow_llm"] = bool(req.allow_llm)
+    result["requires_llm_confirmation"] = bool(result.get("requires_llm_confirmation"))
+    return result
 
 
 def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bool:
@@ -234,7 +256,8 @@ def startup_initialize_notion() -> None:
 
 
 def run_crawl_job(max_depth: int) -> None:
-    if not job_lock.acquire(blocking=False):
+    if not crawl_lock.acquire(blocking=False):
+        job_state["crawl"].update(running=True, message="이미 작업이 진행 중입니다.")
         return
     job_state["crawl"] = {
         "running": True,
@@ -345,10 +368,13 @@ def run_crawl_job(max_depth: int) -> None:
             "progress": {**job_state["crawl"].get("progress", {}), "percent": 0},
         }
     finally:
-        job_lock.release()
+        crawl_lock.release()
 
 
 def run_index_job() -> None:
+    if not index_job_lock.acquire(blocking=False):
+        job_state["index"].update(running=True, message="이미 작업이 진행 중입니다.")
+        return
     job_state["index"] = {"running": True, "message": "Notion 데이터를 읽고 있습니다.", "result": None}
     try:
         if not ensure_search_index(force=True, reason="manual_rebuild"):
@@ -362,6 +388,8 @@ def run_index_job() -> None:
             "message": f"실패: {notion_error_message(exc, '지식 DB')}",
             "result": None,
         }
+    finally:
+        index_job_lock.release()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -391,8 +419,8 @@ def crawl(
     x_admin_password: str | None = Header(default=None),
 ):
     require_admin(x_admin_password)
-    if job_state["crawl"]["running"]:
-        return {"accepted": False, **job_state["crawl"]}
+    if job_state["crawl"]["running"] or crawl_lock.locked():
+        return {"accepted": False, "message": "이미 작업이 진행 중입니다.", **job_state["crawl"]}
     max_depth = req.max_depth if req else 3
     background_tasks.add_task(run_crawl_job, max_depth)
     return {
@@ -430,8 +458,8 @@ def setup_notion_databases(x_admin_password: str | None = Header(default=None)):
 @app.post("/api/index/rebuild")
 def rebuild_index(background_tasks: BackgroundTasks, x_admin_password: str | None = Header(default=None)):
     require_admin(x_admin_password)
-    if job_state["index"]["running"]:
-        return {"accepted": False, **job_state["index"]}
+    if job_state["index"]["running"] or index_job_lock.locked():
+        return {"accepted": False, "message": "이미 작업이 진행 중입니다.", **job_state["index"]}
     background_tasks.add_task(run_index_job)
     return {"accepted": True, "message": "인덱스 재생성을 시작했습니다."}
 
@@ -450,34 +478,46 @@ def search_test(req: SearchRequest, x_admin_password: str | None = Header(defaul
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
+    session_id, request_id = request_ids(req)
+    session_short = session_id[:8]
     clean_question = sanitize_input(req.question)
     casual = casual_response(clean_question)
     if casual:
         casual["elapsed_ms"] = 0
+        attach_request_metadata(casual, session_id, request_id, req)
         record_interaction_async(req.question, casual)
         return casual
-    if match_curated(clean_question, req.history):
+    if match_curated(clean_question, None):
         result = answer_question(
             clean_question,
-            history=req.history,
+            history=None,
             allow_llm=req.allow_llm,
+            llm_type=req.llm_type,
+            session_id=session_id,
+            request_id=request_id,
             index=index,
         )
+        attach_request_metadata(result, session_id, request_id, req)
         record_interaction_async(req.question, result)
         return result
     if classify_intent(clean_question, index) == "course_difficulty":
         result = answer_question(
             clean_question,
-            history=req.history,
+            history=None,
             allow_llm=req.allow_llm,
+            llm_type=req.llm_type,
+            session_id=session_id,
+            request_id=request_id,
             index=index,
         )
+        attach_request_metadata(result, session_id, request_id, req)
         record_interaction_async(req.question, result)
         return result
     if index.status()["documents"] == 0:
         logger.warning(
-            "[CHAT] empty index detected; attempting lazy load question=%r notion_connected=%s",
-            req.question[:120],
+            "[CHAT] empty index detected; attempting lazy load session=%s question_prefix=%r notion_connected=%s",
+            session_short,
+            clean_question[:50],
             runtime_state["notion_connected"],
         )
         loaded = ensure_search_index(force=True, reason="lazy_chat")
@@ -502,8 +542,10 @@ def chat(req: ChatRequest):
                 "failure_reason": runtime_state["last_error"] or "검색 인덱스 문서 0개",
                 "diagnostics": debug_index_payload(),
             }
+            attach_request_metadata(result, session_id, request_id, req)
             logger.error(
-                "[CHAT] search unavailable mode=%s error=%s",
+                "[CHAT] search unavailable session=%s mode=%s error=%s",
+                session_short,
                 mode,
                 result["failure_reason"],
             )
@@ -511,10 +553,14 @@ def chat(req: ChatRequest):
             return result
     result = answer_question(
         req.question,
-        history=req.history,
+        history=None,
         allow_llm=req.allow_llm,
+        llm_type=req.llm_type,
+        session_id=session_id,
+        request_id=request_id,
         index=index,
     )
+    attach_request_metadata(result, session_id, request_id, req)
     result["diagnostics"] = {
         "notion_connected": runtime_state["notion_connected"],
         "notion_documents": runtime_state["notion_document_count"],

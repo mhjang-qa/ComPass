@@ -40,6 +40,11 @@ KNOWLEDGE_SCHEMA: dict[str, dict[str, Any]] = {
 }
 
 STATS_SCHEMA: dict[str, dict[str, Any]] = {
+    "session_id": {"rich_text": {}},
+    "request_id": {"rich_text": {}},
+    "llm_type": {"select": {}},
+    "allow_llm": {"checkbox": {}},
+    "requires_llm_confirmation": {"checkbox": {}},
     "질문일시": {"date": {}},
     "추출키워드": {"multi_select": {}},
     "검색결과유무": {"checkbox": {}},

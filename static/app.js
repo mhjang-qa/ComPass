@@ -365,7 +365,19 @@ function appendExpandButton(container, cards, totalCount, answerType, messageRow
 }
 
 function appendActionLinks(container, payload) {
-  const links = (payload.actions || []).filter((action) => action.type === "link" && action.url);
+  const itemUrls = new Set((payload.items || []).flatMap((item) => [
+    item.homepage_url,
+    ...(item.actions || []).map((action) => action.url),
+  ]).filter(Boolean));
+  const seen = new Set();
+  const links = (payload.actions || []).filter((action) => {
+    if (action.type !== "link" || !action.url) return false;
+    if (itemUrls.has(action.url) || /professor\.knou\.ac\.kr/i.test(action.url)) return false;
+    const key = `${action.label || ""}|${action.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   if (!links.length) return;
   const actions = document.createElement("div");
   actions.className = "answer-actions";
@@ -401,6 +413,18 @@ function appendDirectLink(card, url, label = "바로가기") {
   card.appendChild(actions);
 }
 
+function appendItemActions(card, item) {
+  const seen = new Set();
+  (item.actions || []).forEach((action) => {
+    if (action.type !== "link" || !action.url || seen.has(action.url)) return;
+    seen.add(action.url);
+    appendDirectLink(card, action.url, action.label || "바로가기");
+  });
+  if (item.homepage_url && !seen.has(item.homepage_url)) {
+    appendDirectLink(card, item.homepage_url, "교수 홈페이지 바로가기");
+  }
+}
+
 function renderFacultyList(bubble, payload, messageRow) {
   const header = document.createElement("div");
   header.className = "answer-heading";
@@ -427,15 +451,17 @@ function renderFacultyList(bubble, payload, messageRow) {
     appendField(card, "연락처", item.phone);
     appendSubjectList(card, item);
     appendSimpleList(card, "연구 분야", item.research || []);
-    if (item.homepage_url) {
-      appendDirectLink(card, item.homepage_url, "교수 홈페이지 바로가기");
-    }
+    appendItemActions(card, item);
     appendItemLink(card, item, payload.source_urls?.[0], "교수진 페이지 바로가기");
     list.appendChild(card);
     return card;
   });
   bubble.appendChild(list);
   appendExpandButton(bubble, cards, payload.total_count || cards.length, "faculty", messageRow, payload);
+}
+
+function renderFacultyDetail(bubble, payload, messageRow) {
+  renderFacultyList(bubble, { ...payload, display_limit: 1, total_count: payload.items.length }, messageRow);
 }
 
 function renderGenericItems(bubble, payload, messageRow) {
@@ -699,6 +725,7 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
   bubble.className = "bubble";
   const renderers = {
     faculty: renderFacultyList,
+    faculty_detail: renderFacultyDetail,
     notice_list: renderNoticeList,
     course_table: renderCourseTable,
     curriculum_by_grade: renderCurriculumByGrade,
@@ -751,7 +778,10 @@ function createSearchLoading() {
   bubble.className = "bubble loading-bubble";
   const icon = document.createElement("span");
   icon.className = "loading-icon";
-  icon.textContent = "🔎";
+  const iconImage = document.createElement("img");
+  iconImage.src = "/static/icons/icon.png";
+  iconImage.alt = "";
+  icon.appendChild(iconImage);
   const copy = document.createElement("div");
   copy.className = "loading-copy";
   const title = document.createElement("strong");
@@ -935,17 +965,33 @@ async function pollCrawl() {
 function renderCrawlProgress(status) {
   const wrap = $("#crawlProgressWrap");
   const progress = status.progress || {};
-  const shouldShow = Boolean(status.running || status.result || progress.percent);
+  const shouldShow = Boolean(status.running || status.result || progress.percent || status.error);
   wrap.hidden = !shouldShow;
   if (!shouldShow) return;
 
   const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
   $("#crawlProgressBar").style.width = `${percent}%`;
   $("#crawlProgressPercent").textContent = `${percent}%`;
+  const updatedAt = status.updated_at ? new Date(status.updated_at) : null;
+  const stale = Boolean(status.running && updatedAt && Date.now() - updatedAt.getTime() > 120000);
+  const saveInfo = [
+    status.saved_count !== undefined ? `저장 ${status.saved_count}` : "",
+    status.skipped_count !== undefined ? `유지 ${status.skipped_count}` : "",
+    status.failed_count !== undefined ? `실패 ${status.failed_count}` : "",
+  ].filter(Boolean).join(" · ");
   $("#crawlProgressDetail").textContent =
     `Depth ${progress.depth ?? 0}/${progress.max_depth ?? $("#crawlDepth").value} · ` +
-    `방문 ${progress.visited ?? 0} · 대기 ${progress.queued ?? 0} · 수집 ${progress.documents ?? 0}`;
-  $("#crawlCurrentUrl").textContent = progress.url || "";
+    `방문 ${progress.visited ?? 0} · 대기 ${progress.queued ?? 0} · 수집 ${progress.documents ?? 0}` +
+    (saveInfo ? ` · ${saveInfo}` : "");
+  const current = status.error
+    ? `오류: ${status.error}`
+    : stale
+      ? "작업 응답 없음. 서버 로그 확인 필요"
+      : status.current_title
+        ? `현재 처리: ${status.current_title}`
+        : progress.url || "";
+  $("#crawlCurrentUrl").textContent = current;
+  $("#crawlCurrentUrl").classList.toggle("is-error", Boolean(status.error || stale));
   const track = wrap.querySelector('[role="progressbar"]');
   track.setAttribute("aria-valuenow", String(percent));
 }

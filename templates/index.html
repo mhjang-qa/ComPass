@@ -4,10 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="{{ app_subtitle }} · 공식 데이터를 학생이 이해하기 쉽게 재해석하는 AI 학과 비서">
+  <meta name="theme-color" content="#102a43">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ComPass">
   <meta property="og:title" content="{{ app_name }}">
   <meta property="og:description" content="{{ app_subtitle }} · 공식 데이터를 학생이 이해하기 쉽게 재해석하는 AI 학과 비서">
   <title>{{ app_name }} · {{ app_subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v=19">
+  <link rel="icon" href="/static/icons/favicon.ico">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
   <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
@@ -39,7 +47,7 @@
   <div id="appReady" class="sr-only" aria-live="polite">ComPass 준비 완료</div>
 
   <button id="chatLauncher" class="chat-launcher" type="button" aria-label="ComPass 챗봇 열기" aria-expanded="false">
-    <span class="launcher-compass" aria-hidden="true">C</span>
+    <span class="launcher-compass" aria-hidden="true"><img src="/static/icons/icon.png" alt=""></span>
     <span class="launcher-label">
       <strong data-app-name>{{ app_name }}</strong>
       <small class="app-subtitle">
@@ -51,6 +59,7 @@
 
   <div id="appShell" class="app-shell widget-window is-hidden" role="dialog" aria-label="ComPass 챗봇">
     <header class="topbar">
+      <img class="topbar-logo" src="/static/icons/icon.png" alt="" aria-hidden="true">
       <div class="brand-title">
         <p class="eyebrow">Korea National Open University</p>
         <h1 data-app-name>{{ app_name }}</h1>
@@ -80,7 +89,7 @@
       <section id="panel-chat" class="panel active">
         <div class="chat-layout">
           <div class="chat-intro">
-            <div class="bot-mark">C</div>
+            <div class="bot-mark"><img src="/static/icons/icon.png" alt="" aria-hidden="true"></div>
             <div>
               <h2>안녕하세요, ComPass입니다.</h2>
               <p>공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.</p>
@@ -200,6 +209,6 @@
   </div>
   <script src="/static/config.js?v=2"></script>
   <script src="/static/time.js?v=1"></script>
-  <script src="/static/app.js?v=19"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

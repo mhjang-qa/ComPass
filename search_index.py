@@ -84,11 +84,15 @@ class SearchIndex:
                 payload["course_catalog"] = self._build_course_catalog(
                     payload.get("documents") or []
                 )
+            if not payload.get("faculty_catalog"):
+                payload["faculty_catalog"] = self._build_faculty_catalog(
+                    payload.get("documents") or []
+                )
             with self._lock:
                 self.payload = payload
         except (OSError, json.JSONDecodeError):
             with self._lock:
-                self.payload = {"built_at": None, "documents": [], "course_catalog": []}
+                self.payload = {"built_at": None, "documents": [], "course_catalog": [], "faculty_catalog": []}
 
     def rebuild(self, documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         documents = documents if documents is not None else NotionClient().knowledge_documents()
@@ -113,10 +117,12 @@ class SearchIndex:
             item = {**doc, "tokens": tokenize(text), "search_text": text}
             indexed.append(item)
         course_catalog = self._build_course_catalog(indexed)
+        faculty_catalog = self._build_faculty_catalog(indexed)
         new_payload = {
             "built_at": datetime.now().astimezone().isoformat(),
             "documents": indexed,
             "course_catalog": course_catalog,
+            "faculty_catalog": faculty_catalog,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(new_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -126,6 +132,7 @@ class SearchIndex:
             "built_at": new_payload["built_at"],
             "documents": len(indexed),
             "courses": len(course_catalog),
+            "faculty": len(faculty_catalog),
         }
 
     @staticmethod
@@ -206,6 +213,53 @@ class SearchIndex:
     def course_catalog(self) -> list[dict[str, Any]]:
         with self._lock:
             return list(self.payload.get("course_catalog") or [])
+
+    @staticmethod
+    def _build_faculty_catalog(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        catalog: dict[str, dict[str, Any]] = {}
+        for doc in documents:
+            source_url = doc.get("source_url") or ""
+            marker = f"{doc.get('title') or ''} {doc.get('category') or ''} {doc.get('document_type') or ''}"
+            if source_url != FACULTY_URL and "교수진" not in marker:
+                continue
+            for item in doc.get("normalized_items") or []:
+                name = (item.get("name") or "").strip()
+                if not name:
+                    continue
+                subjects = item.get("subjects") or [
+                    *(item.get("subjects_undergraduate") or []),
+                    *(item.get("subjects_graduate") or []),
+                ]
+                catalog[name] = {
+                    "name": name,
+                    "position": item.get("position") or item.get("title") or "교수",
+                    "title": item.get("title") or item.get("position") or "교수",
+                    "email": item.get("email") or "",
+                    "phone": item.get("phone") or "",
+                    "subjects": subjects,
+                    "subjects_undergraduate": item.get("subjects_undergraduate") or subjects,
+                    "subjects_graduate": item.get("subjects_graduate") or [],
+                    "research": item.get("research") or [],
+                    "homepage_url": item.get("homepage_url") or "",
+                    "source_url": source_url or FACULTY_URL,
+                    "fallback_url": FACULTY_URL,
+                    "link_label": "교수진 페이지 바로가기",
+                }
+        return sorted(catalog.values(), key=lambda item: item["name"])
+
+    def faculty_catalog(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self.payload.get("faculty_catalog") or [])
+
+    def detect_faculty(self, query: str) -> dict[str, Any] | None:
+        compact = re.sub(r"\s+", "", query or "")
+        compact_without_title = re.sub(r"(교수님|교수|선생님)", "", compact)
+        matches = []
+        for item in self.faculty_catalog():
+            name = re.sub(r"\s+", "", item.get("name") or "")
+            if name and (name in compact or name in compact_without_title):
+                matches.append((len(name), item))
+        return max(matches, key=lambda match: match[0])[1] if matches else None
 
     def detect_course(self, query: str) -> dict[str, Any] | None:
         compact = re.sub(r"\s+", "", query or "").lower()
@@ -400,9 +454,11 @@ class SearchIndex:
             built_at = self.payload.get("built_at")
             documents = len(self.payload.get("documents") or [])
             courses = len(self.payload.get("course_catalog") or [])
+            faculty = len(self.payload.get("faculty_catalog") or [])
         return {
             "built_at": built_at,
             "documents": documents,
             "courses": courses,
+            "faculty": faculty,
             "path": str(self.path),
         }

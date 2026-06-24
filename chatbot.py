@@ -280,6 +280,19 @@ def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
     return max(matches, key=len) if matches else ""
 
 
+def detect_faculty_member(question: str, index: SearchIndex | None = None) -> dict[str, Any] | None:
+    if index and hasattr(index, "detect_faculty"):
+        detected = index.detect_faculty(question)
+        if detected:
+            return detected
+    match = re.search(r"([가-힣]{2,5})\s*(?:교수님|교수|선생님)", question or "")
+    if match:
+        candidate = match.group(1)
+        if candidate not in {"교수진", "교수님", "선생님", "컴퓨터", "과학과"} and not candidate.endswith("학과"):
+            return {"name": candidate, "_not_found": True}
+    return None
+
+
 def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
     if casual_response(question):
@@ -297,6 +310,8 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         return "course_difficulty"
     if course_name and (COURSE_DETAIL_RE.search(question) or re.search(r"커리큘럼|교과목\s*안내", question)):
         return "course_detail"
+    if detect_faculty_member(question, index):
+        return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
         return "faculty"
     if is_course_recommendation(question):
@@ -326,6 +341,11 @@ def retrieve_documents(
             "exclude_categories": ["공지사항", "게시판", "일반공지"],
             "course_name": (course or {}).get("course_name") or detect_course_name(question),
         })
+    elif search_intent == "faculty_detail":
+        filters.update({
+            "document_types": ["교수진"],
+            "exclude_document_types": ["공지사항", "게시물", "게시판목록", "학과일정", "교육과정표", "과목상세"],
+        })
     return index.search(question, top_k=top_k, filters=filters)
 
 
@@ -354,7 +374,7 @@ def normalize_results(
     question: str = "",
 ) -> list[dict[str, Any]]:
     """검색 원문을 화면에 직접 노출하지 않는 학생용 항목으로 변환한다."""
-    if intent == "faculty":
+    if intent in {"faculty", "faculty_detail"}:
         faculty_hit = next(
             (
                 hit
@@ -363,7 +383,14 @@ def normalize_results(
             ),
             hits[0] if hits else {},
         )
-        return _faculty_items(faculty_hit)
+        items = _faculty_items(faculty_hit)
+        if intent == "faculty_detail":
+            faculty = detect_faculty_member(question, None)
+            if faculty:
+                target = faculty.get("name") or ""
+                filtered = [item for item in items if item.get("name") == target]
+                return filtered
+        return items
     if intent == "course_table":
         return _course_items(hits)
     if intent == "notice_list":
@@ -446,6 +473,62 @@ def build_structured_response(
     }
 
 
+def build_faculty_detail_response(
+    faculty: dict[str, Any] | None,
+    *,
+    question: str,
+    started: float,
+) -> dict[str, Any]:
+    if not faculty or faculty.get("_not_found"):
+        name = (faculty or {}).get("name") or "해당"
+        return {
+            "answer": "해당 교수명을 컴퓨터과학과 공식 교수진 데이터에서 찾지 못했습니다.",
+            "answer_type": "faculty_detail",
+            "summary": "교수진 페이지에서 전체 목록을 확인해 주세요.",
+            "items": [],
+            "display_limit": 1,
+            "total_count": 0,
+            "actions": [{"type": "link", "label": "교수진 페이지 바로가기", "url": FACULTY_URL}],
+            "source_urls": [FACULTY_URL],
+            "sources": [{"title": "컴퓨터과학과 교수진", "url": FACULTY_URL, "score": 0}],
+            "mode": "DB검색",
+            "score": 0,
+            "keywords": tokenize(question),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "failure_reason": f"{name} 교수명 미확인",
+        }
+
+    homepage_url = faculty.get("homepage_url") or ""
+    item = {
+        **faculty,
+        "position": faculty.get("position") or faculty.get("title") or "교수",
+        "title": faculty.get("title") or faculty.get("position") or "교수",
+        "source_url": faculty.get("source_url") or FACULTY_URL,
+        "fallback_url": FACULTY_URL,
+        "link_label": "교수진 페이지 바로가기",
+        "actions": (
+            [{"type": "link", "label": "교수 홈페이지 바로가기", "url": homepage_url}]
+            if homepage_url
+            else []
+        ),
+    }
+    return {
+        "answer": f"{item['name']} 교수 안내입니다.",
+        "answer_type": "faculty_detail",
+        "summary": "공식 교수진 데이터에서 확인한 단일 교수 정보입니다.",
+        "items": [item],
+        "display_limit": 1,
+        "total_count": 1,
+        "actions": [{"type": "link", "label": "교수진 페이지 바로가기", "url": item["source_url"] or FACULTY_URL}],
+        "source_urls": [item["source_url"] or FACULTY_URL],
+        "sources": [{"title": "컴퓨터과학과 교수진", "url": item["source_url"] or FACULTY_URL, "score": 100}],
+        "mode": "DB검색",
+        "score": 100,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
 def render_fallback_text(question: str, hits: list[dict[str, Any]]) -> str:
     """구조화 대상이 아닌 공식 문서도 최대 세 문장으로만 요약한다."""
     return _extractive_answer(question, hits)
@@ -500,6 +583,11 @@ def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
         for item in normalized:
             homepage_url = item.get("homepage_url") or FACULTY_HOMEPAGE_FALLBACKS.get(item.get("name") or "", "")
             subjects = item.get("subjects") or []
+            item_actions = (
+                [{"type": "link", "label": "교수 홈페이지 바로가기", "url": homepage_url}]
+                if homepage_url
+                else []
+            )
             items.append(
                 CompatibleFacultyItem({
                     "name": item.get("name") or "",
@@ -512,6 +600,7 @@ def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
                     "subjects_graduate": item.get("subjects_graduate") or [],
                     "research": item.get("research") or [],
                     "homepage_url": homepage_url,
+                    "actions": item_actions,
                     "source_url": hit.get("source_url") or FACULTY_URL,
                     "fallback_url": FACULTY_URL,
                     "link_label": "교수진 페이지 바로가기",
@@ -549,6 +638,11 @@ def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
 
         undergraduate_subjects = subjects(undergraduate_match)
         graduate_subjects = subjects(graduate_match)
+        item_actions = (
+            [{"type": "link", "label": "교수 홈페이지 바로가기", "url": name_homepage}]
+            if name_homepage
+            else []
+        )
         items.append(
             CompatibleFacultyItem({
                 "name": name,
@@ -561,6 +655,7 @@ def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
                 "subjects_graduate": graduate_subjects,
                 "research": [],
                 "homepage_url": name_homepage,
+                "actions": item_actions,
                 "source_url": hit.get("source_url") or FACULTY_URL,
                 "fallback_url": FACULTY_URL,
                 "link_label": "교수진 페이지 바로가기",
@@ -913,18 +1008,6 @@ def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = ""
                 "target": "items",
             }
         )
-    if answer_type == "faculty":
-        for item in items[:3]:
-            homepage_url = item.get("homepage_url")
-            name = item.get("name") or "교수"
-            if homepage_url:
-                actions.append(
-                    {
-                        "type": "link",
-                        "label": f"{name} 교수 홈페이지",
-                        "url": homepage_url,
-                    }
-                )
     if source_url:
         link_labels = {
             "faculty": "교수진 페이지 바로가기",
@@ -1839,6 +1922,19 @@ def answer_question(
         return casual
     index = index or SearchIndex()
     initial_intent = classify_intent(clean_question, index)
+    if initial_intent == "faculty_detail":
+        faculty = detect_faculty_member(clean_question, index)
+        if faculty and faculty.get("_not_found"):
+            hits = retrieve_documents(index, clean_question, "faculty")
+            parsed_items = normalize_results("faculty", hits)
+            matched = next((item for item in parsed_items if item.get("name") == faculty.get("name")), None)
+            if matched:
+                faculty = matched
+        return build_faculty_detail_response(
+            faculty,
+            question=clean_question,
+            started=started,
+        )
     if initial_intent == "course_difficulty":
         course_name = detect_course_name(clean_question, index)
         hits = retrieve_documents(index, clean_question, "course_difficulty")

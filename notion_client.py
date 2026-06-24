@@ -117,23 +117,36 @@ class NotionClient:
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         last_error = ""
-        for attempt in range(1, 5):
+        for attempt in range(1, 4):
             try:
                 response = self.session.request(
                     method,
                     f"{self.base_url}{path}",
                     headers=self.headers,
                     json=payload,
-                    timeout=40,
+                    timeout=15,
                 )
             except requests.RequestException as exc:
                 last_error = str(exc)
-                time.sleep(attempt)
+                logger.warning("[Notion 요청 재시도] method=%s path=%s attempt=%d error=%s", method, path, attempt, exc)
+                time.sleep(min(3, attempt))
                 continue
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = response.text[:1000]
-                retry_after = float(response.headers.get("retry-after", attempt))
-                time.sleep(max(retry_after, attempt))
+                retry_after_header = response.headers.get("retry-after")
+                try:
+                    retry_after = float(retry_after_header) if retry_after_header else float(attempt)
+                except ValueError:
+                    retry_after = float(attempt)
+                logger.warning(
+                    "[Notion API 재시도] method=%s path=%s status=%s attempt=%d retry_after=%.1f",
+                    method,
+                    path,
+                    response.status_code,
+                    attempt,
+                    retry_after,
+                )
+                time.sleep(max(1.0, min(3.0, retry_after)))
                 continue
             if response.status_code >= 400:
                 raise NotionAPIError(f"Notion API 오류 ({response.status_code}): {response.text[:1500]}")
@@ -400,15 +413,45 @@ class NotionClient:
         self.request("POST", "/pages", payload)
         return "신규"
 
-    def upsert_many(self, documents: Iterable[CrawlDocument]) -> dict[str, int]:
+    def upsert_many(self, documents: Iterable[CrawlDocument], progress_callback: Any | None = None) -> dict[str, int]:
         counts = {"신규": 0, "변경": 0, "유지": 0, "실패": 0}
-        for doc in documents:
+        document_list = list(documents)
+        total = len(document_list)
+        logger.info("[Notion 저장 시작] total=%d", total)
+        for idx, doc in enumerate(document_list, start=1):
+            title = doc.title or doc.source_url
+            logger.info("[Notion 저장중] %d/%d - %s", idx, total, title)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "phase": "saving",
+                        "index": idx,
+                        "total": total,
+                        "title": title,
+                        "url": doc.source_url,
+                        "counts": counts.copy(),
+                    }
+                )
             try:
                 status = self.upsert_document(doc)
                 counts[status] += 1
+                logger.info("[Notion 저장완료] %d/%d - %s status=%s", idx, total, title, status)
             except Exception as exc:
                 counts["실패"] += 1
-                logger.exception("Notion 적재 실패 url=%s error=%s", doc.source_url, exc)
+                logger.exception("[Notion 저장실패] %s url=%s error=%s", title, doc.source_url, exc)
+            finally:
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "saved",
+                            "index": idx,
+                            "total": total,
+                            "title": title,
+                            "url": doc.source_url,
+                            "counts": counts.copy(),
+                        }
+                    )
+        logger.info("[Notion 전체 저장 완료] total=%d counts=%s", total, counts)
         return counts
 
     def upsert_curated_knowledge(self) -> dict[str, int]:

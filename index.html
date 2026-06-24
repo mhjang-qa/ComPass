@@ -4,9 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Computer Science X Compass · 학생들의 길잡이">
+  <meta name="theme-color" content="#102a43">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ComPass">
   <meta property="og:title" content="ComPass">
   <meta property="og:description" content="Computer Science X Compass · 학생들의 길잡이">
   <title>ComPass · Computer Science X Compass</title>
+  <link rel="icon" href="./static/icons/favicon.ico">
+  <link rel="apple-touch-icon" href="./static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="./static/manifest.json">
   <style>
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; font-family: Arial, "Noto Sans KR", sans-serif; }
@@ -25,7 +31,8 @@
     .copy p { margin: 22px 0; font-size: clamp(22px, 2.2vw, 42px); font-weight: 300; }
     .green { position: absolute; inset: auto 0 0; padding: 23px; color: white; background: #24b967; text-align: center; font-size: 18px; font-weight: 750; }
     .boot { position: fixed; z-index: 5; right: 28px; bottom: 28px; width: min(390px, calc(100vw - 32px)); padding: 24px; border: 1px solid #d6e3ec; border-radius: 22px; background: rgba(255,255,255,.96); box-shadow: 0 22px 60px rgba(16,42,67,.25); text-align: center; }
-    .mark { display: grid; place-items: center; width: 58px; height: 58px; margin: 0 auto 14px; border-radius: 50%; color: white; background: linear-gradient(135deg,#102a43,#22a699); font-size: 22px; font-weight: 900; animation: float 1.5s ease-in-out infinite; }
+    .mark { display: grid; place-items: center; width: 64px; height: 64px; margin: 0 auto 14px; animation: float 1.5s ease-in-out infinite; }
+    .mark img { width: 100%; height: 100%; object-fit: contain; display: block; }
     .boot h2 { margin: 0 0 7px; color: #102a43; }
     .boot p { margin: 0; color: #66788a; font-size: 14px; line-height: 1.55; }
     .progress { position: relative; height: 7px; margin: 18px 0 12px; overflow: hidden; border-radius: 99px; background: #e4edf4; }
@@ -67,7 +74,7 @@
   </div>
 
   <div id="boot" class="boot" role="status" aria-live="polite">
-    <div class="mark">C</div>
+    <div class="mark"><img src="./static/icons/icon.png" alt="" aria-hidden="true"></div>
     <h2>ComPass를 준비하고 있습니다</h2>
     <p id="bootText">학생들의 길잡이가 공식 데이터를 확인하고 있습니다.</p>
     <div class="progress" aria-hidden="true"></div>

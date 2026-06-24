@@ -51,7 +51,19 @@ crawl_lock = threading.Lock()
 index_job_lock = threading.Lock()
 index_load_lock = threading.Lock()
 job_state: dict[str, Any] = {
-    "crawl": {"running": False, "message": "대기 중", "result": None},
+    "crawl": {
+        "running": False,
+        "message": "대기 중",
+        "result": None,
+        "percent": 0,
+        "saved_count": 0,
+        "failed_count": 0,
+        "skipped_count": 0,
+        "current_title": "",
+        "error": "",
+        "updated_at": None,
+        "progress": {"percent": 0},
+    },
     "index": {"running": False, "message": "대기 중", "result": None},
     "notion": {"running": False, "message": "확인 전", "result": None},
 }
@@ -65,6 +77,24 @@ runtime_state: dict[str, Any] = {
     "last_reason": "process_start",
     "last_error": "",
 }
+
+
+def now_iso() -> str:
+    return datetime.now().astimezone().isoformat()
+
+
+def update_crawl_state(**updates: Any) -> None:
+    """크롤링 상태 응답을 갱신하고 updated_at/percent를 항상 동기화한다."""
+    crawl_state = job_state.setdefault("crawl", {})
+    progress_update = updates.pop("progress", None)
+    if progress_update is not None:
+        progress = dict(crawl_state.get("progress") or {})
+        progress.update(progress_update)
+        crawl_state["progress"] = progress
+        if "percent" in progress:
+            crawl_state["percent"] = progress["percent"]
+    crawl_state.update(updates)
+    crawl_state["updated_at"] = now_iso()
 
 
 class ChatRequest(BaseModel):
@@ -257,13 +287,19 @@ def startup_initialize_notion() -> None:
 
 def run_crawl_job(max_depth: int) -> None:
     if not crawl_lock.acquire(blocking=False):
-        job_state["crawl"].update(running=True, message="이미 작업이 진행 중입니다.")
+        update_crawl_state(running=True, message="이미 작업이 진행 중입니다.")
         return
-    job_state["crawl"] = {
-        "running": True,
-        "message": f"크롤링 진행중입니다. Depth {max_depth} 범위를 준비하고 있습니다.",
-        "result": None,
-        "progress": {
+    job_state["crawl"] = {}
+    update_crawl_state(
+        running=True,
+        message=f"크롤링 진행중입니다. Depth {max_depth} 범위를 준비하고 있습니다.",
+        result=None,
+        error="",
+        current_title="",
+        saved_count=0,
+        failed_count=0,
+        skipped_count=0,
+        progress={
             "percent": 1,
             "visited": 0,
             "queued": 0,
@@ -272,18 +308,19 @@ def run_crawl_job(max_depth: int) -> None:
             "max_depth": max_depth,
             "url": "",
         },
-    }
+    )
     try:
         notion = NotionClient()
-        job_state["crawl"]["message"] = "Notion 지식 DB 컬럼을 확인하고 있습니다."
+        update_crawl_state(message="Notion 지식 DB 컬럼을 확인하고 있습니다.", progress={"percent": 2})
         notion.ensure_knowledge_schema()
         notion.upsert_curated_knowledge()
         crawler = KnouCrawler(max_depth=max_depth)
 
         def update_crawl_progress(progress: dict[str, Any]) -> None:
             previous_percent = job_state["crawl"].get("progress", {}).get("percent", 0)
-            progress["percent"] = max(previous_percent, progress["percent"])
-            job_state["crawl"].update(
+            raw_percent = float(progress.get("percent", 0))
+            progress["percent"] = min(80, max(previous_percent, int(raw_percent * 0.8)))
+            update_crawl_state(
                 message=(
                     "크롤링 진행중입니다. "
                     f"Depth {progress['depth']}/{progress['max_depth']} · "
@@ -297,13 +334,16 @@ def run_crawl_job(max_depth: int) -> None:
         official_count = len(documents)
         community_count = 0
         if config.COMMUNITY_CRAWL_ENABLED and max_depth >= 1:
-            job_state["crawl"]["message"] = (
-                "공식 사이트 수집 완료. 비공식 학생 커뮤니티 공개 글을 "
-                "보조 지식으로 수집하고 있습니다."
+            update_crawl_state(
+                message=(
+                    "공식 사이트 수집 완료. 비공식 학생 커뮤니티 공개 글을 "
+                    "보조 지식으로 수집하고 있습니다."
+                ),
+                progress={"percent": 78},
             )
 
             def update_community_progress(progress: dict[str, Any]) -> None:
-                job_state["crawl"].update(
+                update_crawl_state(
                     message=(
                         "비공식 커뮤니티 공개 글 수집중입니다. "
                         f"방문 {progress['visited']} · 대기 {progress['queued']} · "
@@ -319,18 +359,43 @@ def run_crawl_job(max_depth: int) -> None:
             community_documents = CommunityCrawler().crawl(update_community_progress)
             community_count = len(community_documents)
             documents.extend(community_documents)
-        job_state["crawl"].update(
+        update_crawl_state(
             message="크롤링 완료. Notion DB에 저장하고 있습니다.",
             progress={
                 **job_state["crawl"]["progress"],
-                "percent": 96,
+                "percent": 80,
                 "documents": len(documents),
             },
         )
-        notion_result = notion.upsert_many(documents)
-        job_state["crawl"].update(
+
+        def update_save_progress(event: dict[str, Any]) -> None:
+            counts = event.get("counts") or {}
+            idx = int(event.get("index") or 0)
+            total = max(int(event.get("total") or len(documents) or 1), 1)
+            percent = min(98, 80 + int((idx / total) * 18))
+            saved_count = int(counts.get("신규", 0)) + int(counts.get("변경", 0))
+            update_crawl_state(
+                message="크롤링 완료. Notion DB에 저장하고 있습니다.",
+                current_title=event.get("title") or "",
+                saved_count=saved_count,
+                skipped_count=int(counts.get("유지", 0)),
+                failed_count=int(counts.get("실패", 0)),
+                progress={
+                    **job_state["crawl"].get("progress", {}),
+                    "percent": percent,
+                    "documents": len(documents),
+                    "saved": saved_count,
+                    "skipped": int(counts.get("유지", 0)),
+                    "failed": int(counts.get("실패", 0)),
+                    "url": event.get("url") or "",
+                },
+            )
+
+        notion_result = notion.upsert_many(documents, progress_callback=update_save_progress)
+        update_crawl_state(
             message="Notion 저장 완료. 검색 인덱스를 갱신하고 있습니다.",
             progress={**job_state["crawl"]["progress"], "percent": 98},
+            current_title="검색 인덱스 갱신",
         )
         index_result = index.rebuild(notion.knowledge_documents())
         runtime_state.update(
@@ -342,10 +407,15 @@ def run_crawl_job(max_depth: int) -> None:
             last_reason="crawl_complete",
             last_error="",
         )
-        job_state["crawl"] = {
-            "running": False,
-            "message": "크롤링, 표준화 저장, 검색 인덱스 갱신 완료",
-            "result": {
+        update_crawl_state(
+            running=False,
+            message="크롤링 및 Notion 저장 완료",
+            error="",
+            current_title="",
+            saved_count=int(notion_result.get("신규", 0)) + int(notion_result.get("변경", 0)),
+            skipped_count=int(notion_result.get("유지", 0)),
+            failed_count=int(notion_result.get("실패", 0)),
+            result={
                 "crawled": len(documents),
                 "notion": notion_result,
                 "index": index_result,
@@ -353,21 +423,24 @@ def run_crawl_job(max_depth: int) -> None:
                 "official_documents": official_count,
                 "community_documents": community_count,
             },
-            "progress": {
+            progress={
                 **job_state["crawl"]["progress"],
                 "percent": 100,
                 "documents": len(documents),
             },
-        }
+        )
     except Exception as exc:
-        logger.exception("크롤링 작업 실패")
-        job_state["crawl"] = {
-            "running": False,
-            "message": f"실패: {notion_error_message(exc, '지식 DB')}",
-            "result": None,
-            "progress": {**job_state["crawl"].get("progress", {}), "percent": 0},
-        }
+        error_message = notion_error_message(exc, "지식 DB")
+        logger.exception("[CRAWL] 크롤링 작업 실패: %s", error_message)
+        update_crawl_state(
+            running=False,
+            message="크롤링 실패",
+            error=error_message,
+            result=None,
+            progress={**job_state["crawl"].get("progress", {})},
+        )
     finally:
+        update_crawl_state(running=False)
         crawl_lock.release()
 
 

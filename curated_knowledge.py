@@ -32,8 +32,8 @@ def curated_documents() -> list[CrawlDocument]:
                 f"적용기준: {item.get('validity', '')}",
                 f"공식답변: {item.get('answer', '')}",
                 f"근거설명: {item.get('note', '')}",
-                f"구조화데이터: {json.dumps(item.get('recommendation_groups', []), ensure_ascii=False)}",
-                f"구조화항목: {json.dumps(item.get('structured_items', []), ensure_ascii=False)}",
+                f"추천그룹수: {len(item.get('recommendation_groups', []))}",
+                f"구조화항목수: {len(item.get('structured_items', []))}",
             ]
         )
         document = CrawlDocument(

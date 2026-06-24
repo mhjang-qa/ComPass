@@ -660,7 +660,19 @@ function appendMarkdownTable(container, lines) {
 }
 
 function renderTextAnswer(bubble, text) {
-  const lines = String(text || "").split(/\r?\n/);
+  const rawText = String(text || "")
+    .replace(/검색\s*점수\s*[:：]?\s*\d+(?:\.\d+)?점?/g, "")
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (/^\{\s*["']?(title|overview|topics|easy_explanation)["']?\s*:/.test(trimmed)) return false;
+      if (/^[\[{].*[\]}],?$/.test(trimmed)) return false;
+      if (/\b(dict|list|repr)\b/i.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n");
+  const lines = rawText.split(/\r?\n/);
   let paragraph = [];
   let bulletList = null;
   for (let index = 0; index < lines.length; index += 1) {

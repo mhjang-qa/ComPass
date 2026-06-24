@@ -110,14 +110,14 @@ button { cursor: pointer; }
   border: 0;
   border-radius: 0;
 }
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 28px 36px; color: white; background: linear-gradient(125deg, var(--navy), #174f78 70%, var(--mint)); }
-.topbar-logo { flex: 0 0 48px; width: 48px; height: 48px; object-fit: contain; }
-.brand-title { flex: 1 1 auto; min-width: 0; }
-.topbar h1 { margin: 3px 0 0; font-size: clamp(1.45rem, 4vw, 2.25rem); }
-.brand-title { min-width: 0; }
-.brand-copy { margin: 5px 0 0; color: #d7f4ff; font-size: .82rem; font-weight: 650; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 72px; padding: 18px 28px; color: white; background: linear-gradient(125deg, var(--navy), #174f78 70%, var(--mint)); }
+.topbar-logo { flex: 0 0 44px; width: 44px; height: 44px; min-width: 44px; min-height: 44px; object-fit: contain; }
+.brand-title { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; justify-content: center; line-height: 1.2; }
+.topbar h1 { margin: 0; font-size: 24px; font-weight: 700; line-height: 1.1; }
+.brand-copy { margin: 4px 0 0; color: #d7f4ff; font-size: 13px; font-weight: 650; opacity: .95; }
 .app-subtitle { display: flex; flex-direction: column; gap: 2px; line-height: 1.2; }
 .app-subtitle span { display: block; white-space: nowrap; }
+.app-subtitle span:last-child { font-size: 12px; font-weight: 500; opacity: .95; }
 .eyebrow { margin: 0; color: #75d5ff; font-size: .72rem; font-weight: 800; letter-spacing: .15em; }
 .bot-mark { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 48px; }
 .bot-mark img { width: 100%; height: 100%; object-fit: contain; display: block; }
@@ -326,11 +326,12 @@ th { color: var(--muted); font-size: .77rem; }
 .result-card h3 { margin: 0 0 6px; }
 .result-card p { color: var(--muted); margin: 0; line-height: 1.5; }
 .score { color: var(--mint); font-weight: 800; }
-.widget-window .topbar { padding: 16px 18px; }
+.widget-window .topbar { min-height: 72px; padding: 14px 16px; }
 .app-shell.widget-window { grid-template-rows: auto minmax(0, 1fr); }
 .widget-window .topbar .eyebrow { display: none; }
-.widget-window .topbar h1 { margin: 0; font-size: 1.15rem; }
-.widget-window .brand-copy { margin-top: 2px; font-size: .7rem; }
+.widget-window .topbar-logo { flex-basis: 44px; width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+.widget-window .topbar h1 { margin: 0; font-size: 24px; }
+.widget-window .brand-copy { margin-top: 3px; font-size: 13px; }
 .widget-window .tabs { display: none; }
 .widget-window > main { overflow: hidden; }
 .widget-window .panel { display: none !important; }
@@ -401,11 +402,12 @@ th { color: var(--muted); font-size: .77rem; }
     border-radius: 20px;
   }
   .app-shell.fullscreen, .app-shell.mobile-fullscreen { height: var(--app-height, 100dvh); min-height: 0; }
-  .mobile-fullscreen .topbar { padding: max(14px, env(safe-area-inset-top)) 16px 14px; }
-  .mobile-fullscreen .topbar-logo { flex-basis: 40px; width: 40px; height: 40px; }
+  .mobile-fullscreen .topbar { min-height: 72px; padding: max(14px, env(safe-area-inset-top)) 16px 14px; }
+  .mobile-fullscreen .topbar-logo { flex-basis: 40px; width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
   .mobile-fullscreen .topbar .eyebrow { display: none; }
-  .mobile-fullscreen .topbar h1 { margin: 0; font-size: 1.2rem; }
-  .mobile-fullscreen .brand-copy { font-size: .68rem; line-height: 1.18; }
+  .mobile-fullscreen .topbar h1 { margin: 0; font-size: 22px; }
+  .mobile-fullscreen .brand-copy { font-size: 12px; line-height: 1.18; }
+  .mobile-fullscreen .app-subtitle span:last-child { font-size: 11px; }
   .mobile-fullscreen > main { overflow: hidden; }
   .mobile-fullscreen.admin-mode > main { min-height: 0; overflow: hidden; }
   .mobile-fullscreen.admin-mode .panel.active {
@@ -451,8 +453,8 @@ th { color: var(--muted); font-size: .77rem; }
 
 @media (max-width: 480px) {
   .mobile-fullscreen .topbar { padding-inline: 12px; }
-  .mobile-fullscreen .topbar h1 { font-size: 1.1rem; }
-  .mobile-fullscreen .brand-copy { font-size: .63rem; }
+  .mobile-fullscreen .topbar h1 { font-size: 22px; }
+  .mobile-fullscreen .brand-copy { font-size: 12px; }
   .window-actions button { width: 36px; height: 36px; }
   .admin-logout { width: auto !important; min-width: 46px; }
 }
@@ -471,7 +473,8 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
 
 /* 전체화면 모드: 상단 영역 축소 */
 .app-shell.fullscreen .topbar {
-  padding: 12px 28px;
+  min-height: 72px;
+  padding: 14px 28px;
 }
 
 .app-shell.fullscreen .topbar .eyebrow {
@@ -480,12 +483,12 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
 
 .app-shell.fullscreen .topbar h1 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 24px;
 }
 
 .app-shell.fullscreen .brand-copy {
-  margin-top: 2px;
-  font-size: .68rem;
+  margin-top: 3px;
+  font-size: 13px;
 }
 
 .app-shell.fullscreen .tabs {

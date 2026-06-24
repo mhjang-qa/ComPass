@@ -142,13 +142,27 @@ COURSE_RECOMMENDATION_RE = re.compile(
 )
 COURSE_DETAIL_RE = re.compile(
     r"(무슨|어떤)\s*과목|과목\s*(이야|인가요|소개|내용)|"
-    r"무엇을\s*배우|뭘\s*배우|뭐\s*배우|배우는\s*과목|과목\s*설명|수업\s*내용",
+    r"무엇을\s*배우|뭘\s*배우|뭐\s*배우|뭐야|뭐임|배우는\s*과목|과목\s*설명|수업\s*내용",
     re.IGNORECASE,
 )
 COURSE_DIFFICULTY_RE = re.compile(
     r"난이도|어렵(?:나요|니|다|게)|어려(?:워|운|움)|쉬운가|쉽나요|듣기\s*편|공부량|빡센|"
     r"수업\s*부담|학습\s*부담|과제\s*많|공부\s*방법|학습\s*방법|"
     r"공부\s*팁|학습\s*팁|선수\s*지식|준비\s*해야",
+    re.IGNORECASE,
+)
+COURSE_GRADE_STRATEGY_RE = re.compile(
+    r"(?:[ABC]\s*이상|[ABC]\s*(?:받|맞)|성적\s*잘|점수\s*잘|잘하려면|맞으려면|받으려면|"
+    r"어떻게\s*(?:공부|준비)|공부법|시험\s*대비|학습\s*전략)",
+    re.IGNORECASE,
+)
+AUTO_LLM_RE = re.compile(
+    r"어떻게|왜|추천|쉽게|잘하려면|맞으려면|받으려면|준비|공부법|시험\s*대비|학습\s*전략",
+    re.IGNORECASE,
+)
+RAW_OUTPUT_BLOCK_RE = re.compile(
+    r"\{\s*[\"'](?:title|overview|topics|easy_explanation)[\"']\s*:|검색\s*점수|"
+    r"\b(?:dict|list|repr)\b|\[\s*\{|\{\s*['\"]",
     re.IGNORECASE,
 )
 COURSE_ORDER_RE = re.compile(
@@ -280,6 +294,43 @@ def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
     return max(matches, key=len) if matches else ""
 
 
+def detect_intent(question: str, index: SearchIndex | None = None) -> str:
+    """RAG 검색 전 자연어 질문 의도를 먼저 분류한다."""
+    if casual_response(question):
+        return "smalltalk"
+    course_name = detect_course_name(question, index)
+    if detect_faculty_member(question, index):
+        return "faculty_detail"
+    if FACULTY_QUERY_RE.search(question):
+        return "faculty"
+    if course_name and COURSE_GRADE_STRATEGY_RE.search(question):
+        return "course_grade_strategy"
+    if NOTICE_EXPLAIN_RE.search(question):
+        return "notice"
+    if SCHEDULE_EXPLAIN_RE.search(question):
+        return "schedule"
+    if COURSE_ROADMAP_RE.search(question):
+        return "course_roadmap"
+    if course_name and COURSE_ORDER_RE.search(question):
+        return "course_order"
+    if course_name and COURSE_DIFFICULTY_RE.search(question):
+        return "course_difficulty"
+    if course_name and (COURSE_DETAIL_RE.search(question) or re.search(r"커리큘럼|교과목\s*안내", question)):
+        return "course_info"
+    if is_course_recommendation(question):
+        return "course_recommendation"
+    list_type = _list_answer_type(question)
+    if list_type == "course_table":
+        return "curriculum"
+    if list_type == "notice_list":
+        return "notice"
+    if list_type == "schedule_list":
+        return "schedule"
+    if is_out_of_scope(question):
+        return "out_of_scope"
+    return "general_explain"
+
+
 def detect_faculty_member(question: str, index: SearchIndex | None = None) -> dict[str, Any] | None:
     if index and hasattr(index, "detect_faculty"):
         detected = index.detect_faculty(question)
@@ -295,6 +346,28 @@ def detect_faculty_member(question: str, index: SearchIndex | None = None) -> di
 
 def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
+    detected = detect_intent(question, index)
+    mapping = {
+        "curriculum": "course_table",
+        "course_info": "course_detail",
+        "notice": "notice_list",
+        "schedule": "schedule_list",
+    }
+    if detected in mapping:
+        return mapping[detected]
+    if detected in {
+        "smalltalk",
+        "out_of_scope",
+        "faculty_detail",
+        "faculty",
+        "course_grade_strategy",
+        "course_recommendation",
+        "course_order",
+        "course_roadmap",
+        "course_difficulty",
+        "general_explain",
+    }:
+        return detected if detected != "general_explain" else "text"
     if casual_response(question):
         return "smalltalk"
     course_name = detect_course_name(question, index)
@@ -333,7 +406,7 @@ def retrieve_documents(
     }.get(intent, intent)
     top_k = 20 if search_intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
     filters: dict[str, Any] = {"source_types": ["official"]}
-    if search_intent in {"course_recommendation", "course_detail", "course_difficulty", "course_order", "course_roadmap"}:
+    if search_intent in {"course_recommendation", "course_detail", "course_difficulty", "course_grade_strategy", "course_order", "course_roadmap"}:
         course = index.detect_course(question)
         filters.update({
             "document_types": list(COURSE_DOCUMENT_TYPES),
@@ -399,7 +472,7 @@ def normalize_results(
         return _schedule_items(hits)
     if intent == "course_detail":
         return _course_detail_items(question, hits)
-    if intent == "course_difficulty":
+    if intent in {"course_difficulty", "course_grade_strategy"}:
         return _course_detail_items(question, hits)
     return _generic_items(hits)
 
@@ -531,7 +604,44 @@ def build_faculty_detail_response(
 
 def render_fallback_text(question: str, hits: list[dict[str, Any]]) -> str:
     """구조화 대상이 아닌 공식 문서도 최대 세 문장으로만 요약한다."""
-    return _extractive_answer(question, hits)
+    return sanitize_public_answer(_extractive_answer(question, hits))
+
+
+def sanitize_public_answer(text: str) -> str:
+    """사용자 화면에 JSON/검색점수/원본 repr이 노출되지 않도록 최종 텍스트를 정제한다."""
+    value = text or ""
+    if RAW_OUTPUT_BLOCK_RE.search(value):
+        lines = []
+        for raw in value.splitlines():
+            line = raw.strip()
+            if not line:
+                lines.append("")
+                continue
+            if RAW_OUTPUT_BLOCK_RE.search(line):
+                continue
+            if re.match(r"^[\[{].*[\]}],?$", line):
+                continue
+            lines.append(raw)
+        value = "\n".join(lines).strip()
+    value = re.sub(r"검색\s*점수\s*[:：]?\s*\d+(?:\.\d+)?점?", "", value)
+    value = re.sub(r"출처\s*\d+\.\s*", "출처: ", value)
+    return value.strip() or "공식 데이터에서 확인한 내용을 학생 관점으로 정리하지 못했습니다. 공식 페이지를 확인해 주세요."
+
+
+def should_auto_llm(question: str, hits: list[dict[str, Any]], answer: str = "") -> bool:
+    """RAG 원문 출력보다 학생용 보조 설명이 필요한 상황을 감지한다."""
+    if AUTO_LLM_RE.search(question):
+        return True
+    if answer and (RAW_OUTPUT_BLOCK_RE.search(answer) or len(answer) > 500):
+        return True
+    if len(hits) >= 2:
+        doc_types = {hit.get("document_type") or hit.get("category") or "" for hit in hits[:3]}
+        if len(doc_types) >= 2:
+            return True
+        scores = [float(hit.get("score") or 0) for hit in hits[:2]]
+        if len(scores) == 2 and abs(scores[0] - scores[1]) <= 8:
+            return True
+    return False
 
 
 def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
@@ -1168,6 +1278,7 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
     """LLM 보조 답변용 공통 prompt builder."""
     supported = {
         "course_difficulty",
+        "course_grade_strategy",
         "course_order",
         "course_roadmap",
         "notice_explain",
@@ -1181,6 +1292,15 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
             "필요한 준비:\n"
             "학습 팁:\n"
             "참고 안내:"
+        ),
+        "course_grade_strategy": (
+            "과목:\n"
+            "목표:\n"
+            "추천 공부법:\n"
+            "우선 익혀야 하는 내용:\n"
+            "- 항목\n"
+            "시험 대비 팁:\n"
+            "주의할 점:"
         ),
         "course_order": (
             "추천 수강 순서:\n"
@@ -1214,6 +1334,7 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
     }
     type_guides = {
         "course_difficulty": "과목 난이도와 학습 부담은 공식 기준이 아니므로 참고용 안내로만 설명한다.",
+        "course_grade_strategy": "성적 취득 전략과 공부법은 공식 성적 보장 기준이 아니므로, 공식 과목 내용에 기반한 참고용 학습 전략으로만 설명한다.",
         "course_order": "선수지식과 수강 순서는 공식 필수 선후수 규정이 아닌 학습 참고 순서로 설명한다.",
         "course_roadmap": "편입생 또는 재학생의 과목 선택 방향을 공식 교육과정 범위 안에서 참고용으로 정리한다.",
         "notice_explain": "공지 원문을 복사하지 말고 학생이 해야 할 일을 중심으로 쉽게 설명한다.",
@@ -1402,6 +1523,79 @@ def _difficulty_advice_object(course_name: str, item: dict[str, Any], llm_text: 
     return CompatibleAdvice({key: parsed.get(key) or value for key, value in fallback.items()})
 
 
+def _grade_strategy_fallback(course_name: str, item: dict[str, Any], question: str = "") -> str:
+    topics = item.get("topics") or item.get("detail_topics") or []
+    topic_lines = "\n".join(f"- {topic}" for topic in topics[:4]) or "- 공식 과목 개요와 강의 핵심 용어"
+    goal = "C 이상 성적 취득"
+    if re.search(r"A\s*(?:이상|받|맞)", question, re.IGNORECASE):
+        goal = "A 이상 성적 취득"
+    elif re.search(r"B\s*(?:이상|받|맞)", question, re.IGNORECASE):
+        goal = "B 이상 성적 취득"
+    return (
+        f"**{course_name} 학습 전략 안내입니다.**\n\n"
+        f"과목:\n{course_name}\n\n"
+        f"목표:\n{goal}\n\n"
+        "추천 공부법:\n"
+        "공식 과목 내용의 핵심 용어를 먼저 정리하고, 강의 흐름에 맞춰 개념을 반복 확인하는 방식이 좋습니다.\n\n"
+        "우선 익혀야 하는 내용:\n"
+        f"{topic_lines}\n\n"
+        "시험 대비 팁:\n"
+        "기출이나 예시 문제를 볼 때 정답만 외우기보다 개념이 어떤 방식으로 문제화되는지 확인하세요.\n\n"
+        "주의할 점:\n"
+        "성적 취득 전략은 공식 보장 기준이 아닌 참고용 학습 안내입니다. 실제 평가 방식과 범위는 해당 학기 공지와 강의계획을 확인해야 합니다."
+    )
+
+
+def _course_grade_strategy_response(
+    question: str,
+    course_name: str,
+    items: list[dict[str, Any]],
+    started: float,
+    *,
+    session_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    item = items[0] if items else {
+        "course_name": course_name,
+        "overview": "공식 교과목 안내에 등록된 과목입니다.",
+        "source_url": COURSE_GUIDE_URL,
+    }
+    context = {
+        "course_name": course_name,
+        "overview": item.get("overview") or item.get("feature") or "",
+        "topics": item.get("topics") or item.get("detail_topics") or [],
+        "source_url": _course_link(item, course_name),
+        "fallback_url": COURSE_FULL_GUIDE_URL,
+    }
+    answer = call_llm_helper("course_grade_strategy", question, context, session_id=session_id)
+    if not answer or answer == LLM_SAFE_FAILURE_MESSAGE:
+        answer = _grade_strategy_fallback(course_name, item, question)
+    answer = sanitize_public_answer(answer)
+    source_url = _course_link(item, course_name)
+    return {
+        "answer": answer,
+        "answer_type": "course_grade_strategy",
+        "summary": "공식 과목 내용에 기반한 참고용 학습 전략입니다.",
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "actions": [
+            {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
+        ],
+        "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
+        "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
+        "mode": "LLM",
+        "llm_type": "course_grade_strategy",
+        "course_name": course_name,
+        "score": 100 if items else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "session_id": session_id,
+        "request_id": request_id,
+    }
+
+
 def _course_difficulty_response(
     question: str,
     course_name: str,
@@ -1472,6 +1666,7 @@ def _course_difficulty_response(
 def _llm_type_from_intent(intent: str) -> str:
     mapping = {
         "course_difficulty": "course_difficulty",
+        "course_grade_strategy": "course_grade_strategy",
         "course_order": "course_order",
         "course_roadmap": "course_roadmap",
         "notice_explain": "notice_explain",
@@ -1488,7 +1683,7 @@ def _llm_context_from_hits(
 ) -> dict[str, Any]:
     """현재 요청의 공식 검색 결과만 사용해 LLM context를 만든다."""
     course = detect_course_name(question, index)
-    if llm_type in {"course_difficulty", "course_order", "course_roadmap"}:
+    if llm_type in {"course_difficulty", "course_grade_strategy", "course_order", "course_roadmap"}:
         items = _course_detail_items(question, hits) if course else _course_items(hits)[:3]
         first = items[0] if items else {}
         return {
@@ -1527,7 +1722,7 @@ def _llm_context_from_hits(
 def _llm_source_url(llm_type: str, context: dict[str, Any]) -> str:
     if context.get("source_url"):
         return context["source_url"]
-    if llm_type in {"course_difficulty", "course_order", "course_roadmap"}:
+    if llm_type in {"course_difficulty", "course_grade_strategy", "course_order", "course_roadmap"}:
         return COURSE_GUIDE_URL
     if llm_type == "notice_explain":
         return NOTICE_URL
@@ -1595,6 +1790,7 @@ def _llm_helper_response(
     request_id: str = "",
 ) -> dict[str, Any]:
     answer = call_llm_helper(llm_type, question, context, session_id=session_id)
+    answer = sanitize_public_answer(answer)
     source_url = _llm_source_url(llm_type, context)
     course_name = context.get("course_name") or detect_course_name(question)
     return {
@@ -1862,6 +2058,7 @@ def call_llm_helper(
     provider = (config.LLM_PROVIDER or "").strip().lower()
     normalized_type = llm_type if llm_type in {
         "course_difficulty",
+        "course_grade_strategy",
         "course_order",
         "course_roadmap",
         "notice_explain",
@@ -1934,6 +2131,18 @@ def answer_question(
             faculty,
             question=clean_question,
             started=started,
+        )
+    if initial_intent == "course_grade_strategy":
+        course_name = detect_course_name(clean_question, index)
+        hits = retrieve_documents(index, clean_question, "course_grade_strategy")
+        items = normalize_results("course_grade_strategy", hits, clean_question)
+        return _course_grade_strategy_response(
+            clean_question,
+            course_name,
+            items,
+            started,
+            session_id=session_id,
+            request_id=request_id,
         )
     if initial_intent == "course_difficulty":
         course_name = detect_course_name(clean_question, index)
@@ -2127,7 +2336,7 @@ def answer_question(
             "structured_intent": "course_recommendation",
             "failure_reason": "구조화 교육과정 데이터 없음",
         }
-    if is_out_of_scope(clean_question):
+    if not detect_course_name(clean_question, index) and not detect_faculty_member(clean_question, index) and is_out_of_scope(clean_question):
         return {
             "answer": OUT_OF_SCOPE_MESSAGE,
             "answer_type": "out_of_scope",
@@ -2214,6 +2423,19 @@ def answer_question(
                         started=started,
                     )
                 )
+        if response.get("answer_type") == "text" and should_auto_llm(search_question, hits, response.get("answer", "")):
+            requested_llm_type = _llm_type_from_intent(requested_answer_type)
+            context = _llm_context_from_hits(requested_llm_type, search_question, hits, index)
+            return _llm_helper_response(
+                search_question,
+                requested_llm_type,
+                context,
+                hits,
+                started,
+                session_id=session_id,
+                request_id=request_id,
+            )
+        response["answer"] = sanitize_public_answer(response.get("answer", ""))
         return response
 
     if not allow_llm:

@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from datetime import date, datetime
+from difflib import SequenceMatcher
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -34,6 +35,9 @@ KNOWN_COURSE_DETAIL_URLS = {
     "인공지능": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=3&sbjtNo=34524&deptCd=34",
     "파이썬프로그래밍기초": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=1&sbjtNo=34174&deptCd=34",
 }
+FACULTY_HOMEPAGE_FALLBACKS = {
+    "손진곤": "https://professor.knou.ac.kr/jgshon/index.do",
+}
 OUT_OF_SCOPE_MESSAGE = (
     "죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다.\n"
     "ComPass는 컴퓨터과학과 홈페이지에 등록된 공식 정보를 기준으로만 안내할 수 있습니다."
@@ -60,6 +64,17 @@ class CompatibleAdvice(dict):
 
     def __contains__(self, key: object) -> bool:
         return dict.__contains__(self, key) or any(str(key) in str(value) for value in self.values())
+
+
+class CompatibleFacultyItem(dict):
+    """새 교수진 필드를 추가해도 기존 부분 dict 비교를 허용한다."""
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, dict):
+            return all(self.get(key) == value for key, value in other.items())
+        return dict.__eq__(self, other)
+
+
 GREETING_MESSAGE = (
     "안녕하세요 👋\n"
     "저는 한국방송통신대학교 컴퓨터과학과 학생들의 길잡이, ComPass입니다.\n"
@@ -476,6 +491,34 @@ def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
 
 def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
     """교수진 공식 페이지 본문을 UI 렌더링용 구조로 변환한다."""
+    normalized = [
+        item for item in (hit.get("normalized_items") or [])
+        if item.get("name") and (item.get("email") or item.get("phone") or item.get("subjects"))
+    ]
+    if normalized:
+        items: list[dict[str, Any]] = []
+        for item in normalized:
+            homepage_url = item.get("homepage_url") or FACULTY_HOMEPAGE_FALLBACKS.get(item.get("name") or "", "")
+            subjects = item.get("subjects") or []
+            items.append(
+                CompatibleFacultyItem({
+                    "name": item.get("name") or "",
+                    "title": item.get("title") or item.get("position") or "교수",
+                    "position": item.get("position") or item.get("title") or "교수",
+                    "email": item.get("email") or "",
+                    "phone": item.get("phone") or "",
+                    "subjects": subjects,
+                    "subjects_undergraduate": item.get("subjects_undergraduate") or subjects,
+                    "subjects_graduate": item.get("subjects_graduate") or [],
+                    "research": item.get("research") or [],
+                    "homepage_url": homepage_url,
+                    "source_url": hit.get("source_url") or FACULTY_URL,
+                    "fallback_url": FACULTY_URL,
+                    "link_label": "교수진 페이지 바로가기",
+                })
+            )
+        return items
+
     lines = [line.strip() for line in (hit.get("body") or "").splitlines() if line.strip()]
     items: list[dict[str, Any]] = []
     index = 0
@@ -501,18 +544,27 @@ def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
                 return []
             return [subject.strip() for subject in match.group(1).split(",") if subject.strip()]
 
+        email = email_match.group(1).strip(".,") if email_match else ""
+        name_homepage = FACULTY_HOMEPAGE_FALLBACKS.get(name, "")
+
+        undergraduate_subjects = subjects(undergraduate_match)
+        graduate_subjects = subjects(graduate_match)
         items.append(
-            {
+            CompatibleFacultyItem({
                 "name": name,
                 "title": title_match.group(1) if title_match else "교수",
-                "email": email_match.group(1).strip(".,") if email_match else "",
+                "position": title_match.group(1) if title_match else "교수",
+                "email": email,
                 "phone": phone_match.group(1) if phone_match else "",
-                "subjects_undergraduate": subjects(undergraduate_match),
-                "subjects_graduate": subjects(graduate_match),
+                "subjects": [*undergraduate_subjects, *graduate_subjects],
+                "subjects_undergraduate": undergraduate_subjects,
+                "subjects_graduate": graduate_subjects,
+                "research": [],
+                "homepage_url": name_homepage,
                 "source_url": hit.get("source_url") or FACULTY_URL,
                 "fallback_url": FACULTY_URL,
                 "link_label": "교수진 페이지 바로가기",
-            }
+            })
         )
         index += 2
     return items
@@ -861,6 +913,18 @@ def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = ""
                 "target": "items",
             }
         )
+    if answer_type == "faculty":
+        for item in items[:3]:
+            homepage_url = item.get("homepage_url")
+            name = item.get("name") or "교수"
+            if homepage_url:
+                actions.append(
+                    {
+                        "type": "link",
+                        "label": f"{name} 교수 홈페이지",
+                        "url": homepage_url,
+                    }
+                )
     if source_url:
         link_labels = {
             "faculty": "교수진 페이지 바로가기",
@@ -1126,12 +1190,91 @@ def _course_difficulty_prompt(
 def _official_course_overview(course_name: str, item: dict[str, Any]) -> str:
     topics = item.get("topics") or item.get("detail_topics") or []
     overview = item.get("overview") or item.get("feature") or ""
-    if overview:
-        return f"공식 데이터 기준으로 {course_name}은 {summarize(overview, 140).rstrip('…')}"
-    topic_text = ", ".join(str(topic) for topic in topics[:5] if topic)
+    return wash_official_overview(course_name, overview, topics)
+
+
+def _sentence_similarity(left: str, right: str) -> float:
+    def normalize(value: str) -> str:
+        return re.sub(r"[^0-9A-Za-z가-힣]+", "", value or "").lower()
+
+    left_norm = normalize(left)
+    right_norm = normalize(right)
+    if not left_norm or not right_norm:
+        return 0.0
+    return SequenceMatcher(None, left_norm, right_norm).ratio()
+
+
+def dedupe_sentences(text: str) -> str:
+    """동일·유사 문장을 제거해 LLM/공식 개요 중복 노출을 방지한다."""
+    raw = re.sub(r"\s+", " ", text or "").strip()
+    if not raw:
+        return ""
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?。])\s+|\n+", raw)
+        if sentence.strip()
+    ]
+    deduped: list[str] = []
+    for sentence in sentences:
+        if any(_sentence_similarity(sentence, existing) >= 0.70 for existing in deduped):
+            continue
+        deduped.append(sentence)
+    return "\n".join(deduped)
+
+
+def remove_duplicate_overview(answer: str, official_overview: str) -> str:
+    """LLM 보조문에서 공식 개요와 겹치는 제목·문장을 제거한다."""
+    if not answer:
+        return ""
+    overview_lines = [line.strip() for line in (official_overview or "").splitlines() if line.strip()]
+    cleaned_lines: list[str] = []
+    for raw_line in answer.splitlines():
+        line = re.sub(r"[*#`|]", "", raw_line).strip(" -·")
+        if not line:
+            continue
+        if re.search(r"과목\s*(?:안내|학습 부담 안내)입니다\.?$|참고용\s*학습\s*부담:?$|^체감\s*난이도:?$", line):
+            continue
+        if line.startswith("공식 데이터 기준으로") and any(
+            _sentence_similarity(line, overview) >= 0.55 for overview in overview_lines
+        ):
+            continue
+        if any(_sentence_similarity(line, overview) >= 0.70 for overview in overview_lines):
+            continue
+        cleaned_lines.append(line)
+    return dedupe_sentences("\n".join(cleaned_lines))
+
+
+def wash_official_overview(course_name: str, overview: str, topics: list[Any] | None = None) -> str:
+    """공식 과목 개요를 학생이 읽기 쉬운 1~2문장으로 재구성한다."""
+    topics = topics or []
+    topic_text = ", ".join(str(topic).strip() for topic in topics[:5] if str(topic).strip())
+    text = re.sub(r"\s+", " ", overview or "").strip(" -·,:")
+    text = re.sub(rf"({re.escape(course_name)}은)\s*{re.escape(course_name)}은", rf"\1", text)
+    text = re.sub(rf"^{re.escape(course_name)}\s*(?:은|는|이|가)\s*", "", text).strip()
+    text = re.sub(r"(?:및|등|,|이의|그리고)$", "", text).strip(" -·,:")
+
+    if re.search(r"인공지능|AI", course_name, re.IGNORECASE):
+        return (
+            "공식 데이터 기준으로 인공지능은 컴퓨터가 지능적으로 문제를 해결하도록 하는 원리와 기법을 배우는 과목입니다.\n"
+            "문제 해결, 지식 표현, 퍼지 이론, 머신러닝, 신경망 등 핵심 개념을 다룹니다."
+        )
+
+    if text:
+        short = summarize(text, 120).rstrip("…").strip(" -·,:")
+        short = re.sub(r"(?:및|등|,|이의)$", "", short).strip(" -·,:")
+        if not re.search(r"(입니다|합니다|다룹니다|배웁니다|한다|된다|이다|다)\.$", short):
+            short = f"{short}을 다루는 과목입니다." if not short.endswith("과목") else f"{short}입니다."
+        subject = f"{course_name}은" if course_name.endswith(("각", "능", "학", "론", "법", "식", "망", "템")) else f"{course_name}는"
+        result = f"공식 데이터 기준으로 {subject} {short}"
+        if topic_text and len(result) < 150:
+            result += f"\n주요 학습 내용은 {topic_text} 등입니다."
+        return dedupe_sentences(result)
+
     if topic_text:
-        return f"공식 데이터 기준으로 {course_name}은 {topic_text} 등을 다루는 과목입니다."
-    return f"공식 데이터 기준으로 {course_name}은 컴퓨터과학과 교과목 안내에 등록된 과목입니다."
+        subject = f"{course_name}은" if course_name.endswith(("각", "능", "학", "론", "법", "식", "망", "템")) else f"{course_name}는"
+        return f"공식 데이터 기준으로 {subject} {topic_text} 등을 다루는 과목입니다."
+    subject = f"{course_name}은" if course_name.endswith(("각", "능", "학", "론", "법", "식", "망", "템")) else f"{course_name}는"
+    return f"공식 데이터 기준으로 {subject} 컴퓨터과학과 교과목 안내에 등록된 과목입니다."
 
 
 def _clean_incomplete_sentence(value: str) -> str:
@@ -1203,6 +1346,7 @@ def _course_difficulty_response(
     )
     source_url = _course_link(item, course_name)
     official_overview = _official_course_overview(course_name, item)
+    advice_text = remove_duplicate_overview(advice_text, official_overview)
     difficulty_advice = _difficulty_advice_object(course_name, item, advice_text)
     response_item = {
         "title": course_name,

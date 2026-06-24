@@ -616,6 +616,8 @@ class KnouCrawler:
         ):
             tag.decompose()
         table_headers, table_rows, normalized_items = self._extract_tables(content)
+        if not normalized_items and ("교수진" in category or "/4786/" in url):
+            normalized_items = self._extract_faculty_items(content, url)
         body = self._structured_text(content)
         if not body:
             return None
@@ -636,6 +638,93 @@ class KnouCrawler:
             table_rows=table_rows,
             normalized_items=normalized_items,
         )
+
+    @classmethod
+    def _extract_faculty_items(cls, content: BeautifulSoup, base_url: str) -> list[dict[str, Any]]:
+        """교수진 페이지를 교수별 카드 렌더링에 적합한 구조로 변환한다."""
+        homepage_by_name: dict[str, str] = {}
+        homepage_by_slug: dict[str, str] = {}
+
+        def add_homepage(candidate: str, context_text: str = "") -> None:
+            if not candidate:
+                return
+            urls = re.findall(r"https?://professor\.knou\.ac\.kr/[^\s'\"()]+", candidate)
+            if not urls and "professor.knou.ac.kr" in candidate:
+                urls = [candidate]
+            for raw_url in urls:
+                url = normalize_url(raw_url, base_url).rstrip(".,;")
+                if not url or "professor.knou.ac.kr" not in url:
+                    continue
+                slug_parts = [part for part in urlsplit(url).path.split("/") if part]
+                if slug_parts:
+                    homepage_by_slug.setdefault(slug_parts[0].lower(), url)
+                for name in re.findall(r"[가-힣]{2,5}", context_text or ""):
+                    homepage_by_name.setdefault(name, url)
+
+        for anchor in content.select("a"):
+            href = anchor.get("href") or ""
+            onclick = anchor.get("onclick") or ""
+            context = " ".join(
+                filter(
+                    None,
+                    [
+                        anchor.get_text(" ", strip=True),
+                        anchor.find_parent().get_text(" ", strip=True)[:300] if anchor.find_parent() else "",
+                    ],
+                )
+            )
+            add_homepage(href, context)
+            add_homepage(onclick, context)
+
+        lines = [line.strip() for line in cls._structured_text(content).splitlines() if line.strip()]
+        items: list[dict[str, Any]] = []
+        index = 0
+        while index < len(lines):
+            name = lines[index]
+            detail = lines[index + 1] if index + 1 < len(lines) else ""
+            if not re.fullmatch(r"[가-힣]{2,5}", name) or not re.search(r"교수|이메일|연락처", detail):
+                index += 1
+                continue
+
+            detail = detail.replace(" 홈페이지 바로가기", "").strip()
+            position_match = re.match(r"(교수|조교수|부교수)", detail)
+            email_match = re.search(r"이메일\s+(\S+@\S+)", detail)
+            phone_match = re.search(r"연락처\s+([0-9-]+)", detail)
+            undergraduate_match = re.search(
+                r"담당과목\(대학\)\s*(.*?)(?=\s*담당과목\(대학원\)|$)",
+                detail,
+            )
+            graduate_match = re.search(r"담당과목\(대학원\)\s*(.*)$", detail)
+
+            def split_subjects(match: re.Match[str] | None) -> list[str]:
+                if not match:
+                    return []
+                return [subject.strip() for subject in match.group(1).split(",") if subject.strip()]
+
+            email = email_match.group(1).strip(".,") if email_match else ""
+            slug = email.split("@", 1)[0].lower() if email else ""
+            homepage_url = homepage_by_name.get(name) or homepage_by_slug.get(slug) or ""
+            if not homepage_url and name == "손진곤":
+                homepage_url = "https://professor.knou.ac.kr/jgshon/index.do"
+
+            undergraduate_subjects = split_subjects(undergraduate_match)
+            graduate_subjects = split_subjects(graduate_match)
+            items.append(
+                {
+                    "name": name,
+                    "position": position_match.group(1) if position_match else "교수",
+                    "title": position_match.group(1) if position_match else "교수",
+                    "email": email,
+                    "phone": phone_match.group(1) if phone_match else "",
+                    "subjects": [*undergraduate_subjects, *graduate_subjects],
+                    "subjects_undergraduate": undergraduate_subjects,
+                    "subjects_graduate": graduate_subjects,
+                    "research": [],
+                    "homepage_url": homepage_url,
+                }
+            )
+            index += 2
+        return items
 
     @classmethod
     def _extract_tables(

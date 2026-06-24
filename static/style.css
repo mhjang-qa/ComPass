@@ -176,6 +176,13 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
 .curriculum-grade-card { border: 1px solid #d7e3ef; border-radius: 14px; }
 .curriculum-table-wrap { margin-bottom: 0; }
 .curriculum-table { min-width: 320px; }
+.table-scroll-hint {
+  display: none;
+  margin: 2px 0 8px;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.45;
+}
 .answer-heading { display: grid; gap: 3px; margin-bottom: 12px; }
 .answer-heading > strong { color: var(--navy); font-size: 1.02rem; }
 .answer-heading > span { color: var(--muted); font-size: .86rem; }
@@ -330,6 +337,38 @@ th { color: var(--muted); font-size: .77rem; }
 .widget-window .suggestions { padding: 8px 12px; }
 .widget-window .composer { padding: 10px 12px 12px; }
 .widget-window .composer textarea { min-width: 0; }
+.widget-window .table-scroll-hint,
+.mobile-fullscreen .table-scroll-hint {
+  display: block;
+}
+.widget-window .curriculum-table-wrap,
+.mobile-fullscreen .curriculum-table-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.widget-window .curriculum-table,
+.mobile-fullscreen .curriculum-table {
+  min-width: 500px;
+  table-layout: auto;
+}
+.widget-window .curriculum-table th,
+.widget-window .curriculum-table td,
+.mobile-fullscreen .curriculum-table th,
+.mobile-fullscreen .curriculum-table td {
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  text-overflow: clip;
+}
+.widget-window .answer-card,
+.mobile-fullscreen .answer-card {
+  min-width: 0;
+}
+.widget-window .answer-table-wrap,
+.mobile-fullscreen .answer-table-wrap {
+  -webkit-overflow-scrolling: touch;
+}
 
 @media (max-width: 768px) {
   .knou-utility { height: 36px; padding: 9px 12px; }

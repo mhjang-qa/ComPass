@@ -309,6 +309,9 @@ function appendKeyValueTable(container, rows = {}) {
 }
 
 function appendCourseMiniTable(container, items = []) {
+  const hint = document.createElement("p");
+  hint.className = "table-scroll-hint";
+  hint.textContent = "← 좌우로 밀어서 전체 내용을 확인할 수 있습니다.";
   const wrap = document.createElement("div");
   wrap.className = "answer-table-wrap curriculum-table-wrap";
   const table = document.createElement("table");
@@ -334,6 +337,7 @@ function appendCourseMiniTable(container, items = []) {
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
+  container.appendChild(hint);
   container.appendChild(wrap);
 }
 
@@ -380,6 +384,11 @@ function appendActionLinks(container, payload) {
 function appendItemLink(card, item, fallbackUrl = "", fallbackLabel = "자세히 보기") {
   const url = item.source_url || item.fallback_url || fallbackUrl;
   if (!url) return;
+  appendDirectLink(card, url, item.link_label || fallbackLabel);
+}
+
+function appendDirectLink(card, url, label = "바로가기") {
+  if (!url) return;
   const actions = document.createElement("div");
   actions.className = "answer-card-actions";
   const link = document.createElement("a");
@@ -387,7 +396,7 @@ function appendItemLink(card, item, fallbackUrl = "", fallbackLabel = "자세히
   link.href = url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
-  link.textContent = `${item.link_label || fallbackLabel} ↗`;
+  link.textContent = `${label} ↗`;
   actions.appendChild(link);
   card.appendChild(actions);
 }
@@ -411,11 +420,16 @@ function renderFacultyList(bubble, payload, messageRow) {
     const badge = document.createElement("span");
     badge.className = "faculty-number";
     badge.textContent = String(index + 1);
-    heading.append(badge, document.createTextNode(`${item.name} ${item.title || "교수"}`));
+    heading.append(badge, document.createTextNode(`${item.name} ${item.position || item.title || "교수"}`));
     card.appendChild(heading);
+    appendField(card, "직위", item.position || item.title);
     appendField(card, "이메일", item.email);
     appendField(card, "연락처", item.phone);
     appendSubjectList(card, item);
+    appendSimpleList(card, "연구 분야", item.research || []);
+    if (item.homepage_url) {
+      appendDirectLink(card, item.homepage_url, "교수 홈페이지 바로가기");
+    }
     appendItemLink(card, item, payload.source_urls?.[0], "교수진 페이지 바로가기");
     list.appendChild(card);
     return card;
@@ -546,9 +560,7 @@ function renderCourseDifficulty(bubble, payload, messageRow) {
   header.className = "answer-heading";
   const title = document.createElement("strong");
   title.textContent = payload.answer || item.title || "과목 학습 부담 안내입니다.";
-  const summary = document.createElement("span");
-  summary.textContent = payload.summary || item.official_overview || "";
-  header.append(title, summary);
+  header.appendChild(title);
   bubble.appendChild(header);
   if (payload.official_overview || item.official_overview) {
     const overview = document.createElement("p");

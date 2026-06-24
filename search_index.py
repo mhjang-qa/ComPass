@@ -106,6 +106,7 @@ class SearchIndex:
                     doc.get("category", ""),
                     doc.get("summary", ""),
                     " ".join(doc.get("keywords") or []),
+                    self._normalized_item_text(doc.get("normalized_items") or []),
                     doc.get("body", ""),
                 ]
             )
@@ -126,6 +127,31 @@ class SearchIndex:
             "documents": len(indexed),
             "courses": len(course_catalog),
         }
+
+    @staticmethod
+    def _normalized_item_text(items: list[dict[str, Any]]) -> str:
+        """교수진·과목 구조화 필드도 키워드 검색 대상에 포함한다."""
+        values: list[str] = []
+        for item in items:
+            for key in (
+                "name",
+                "position",
+                "title",
+                "email",
+                "phone",
+                "course_name",
+                "category",
+                "overview",
+                "homepage_url",
+            ):
+                value = item.get(key)
+                if value:
+                    values.append(str(value))
+            for key in ("subjects", "subjects_undergraduate", "subjects_graduate", "research", "topics"):
+                value = item.get(key)
+                if isinstance(value, list):
+                    values.extend(str(part) for part in value if part)
+        return " ".join(values)
 
     @staticmethod
     def _build_course_catalog(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:

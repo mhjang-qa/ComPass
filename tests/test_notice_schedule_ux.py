@@ -59,7 +59,7 @@ def test_schedule_parser_and_answer_hide_calendar_raw_text() -> None:
             "category": "학과일정",
             "body": raw,
             "normalized_items": parsed,
-            "source_url": "https://cs.knou.ac.kr/cs1/4792/subview.do",
+            "source_url": "https://cs.knou.ac.kr/cs1/4812/subview.do",
             "score": 99,
         }
     ]
@@ -69,6 +69,33 @@ def test_schedule_parser_and_answer_hide_calendar_raw_text() -> None:
     assert result["items"][0]["title"] == "1차 졸업논문계획서 신청"
     assert all("SUN" not in str(item) for item in result["items"])
     assert result["actions"][-1]["label"] == "학과 일정 바로가기"
+    assert result["actions"][-1]["url"] == "https://cs.knou.ac.kr/cs1/4812/subview.do"
+
+
+def test_schedule_answer_rejects_non_official_schedule_sources() -> None:
+    hits = [
+        {
+            "title": "547",
+            "category": "학생광장",
+            "body": "벼룩시장 중고장터 일정",
+            "normalized_items": [
+                {
+                    "title": "547",
+                    "start_date": "2026-06-23",
+                    "description": "벼룩시장 중고장터 일정",
+                    "source_url": "https://cs.knou.ac.kr/cs1/4792/subview.do",
+                }
+            ],
+            "source_url": "https://cs.knou.ac.kr/cs1/4792/subview.do",
+            "score": 99,
+        }
+    ]
+
+    result = answer_question("학과 일정 알려줘", index=FakeIndex(hits))
+
+    assert result["answer_type"] == "schedule_list"
+    assert result["items"] == []
+    assert result["actions"][-1]["url"] == "https://cs.knou.ac.kr/cs1/4812/subview.do"
 
 
 def test_loading_animation_and_compact_message_layout_are_present() -> None:

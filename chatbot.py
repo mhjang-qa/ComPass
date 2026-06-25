@@ -43,6 +43,10 @@ OUT_OF_SCOPE_MESSAGE = (
     "ComPass는 컴퓨터과학과 홈페이지에 등록된 공식 정보를 기준으로만 안내할 수 있습니다."
 )
 LLM_SAFE_FAILURE_MESSAGE = "LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게시판|market|student", re.IGNORECASE)
+SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
+SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
+SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
 
 
 class CompatibleAnswerType(str):
@@ -546,6 +550,25 @@ def build_structured_response(
     }
 
 
+def build_schedule_unavailable_response(started: float, question: str = "") -> dict[str, Any]:
+    return {
+        "answer": "학과 일정 공식 데이터를 충분히 찾지 못했습니다.",
+        "answer_type": "schedule_list",
+        "summary": "학과 일정 게시판에서 최신 일정을 확인해 주세요.",
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "actions": [{"type": "link", "label": "학과 일정 바로가기", "url": SCHEDULE_URL}],
+        "source_urls": [SCHEDULE_URL],
+        "sources": [{"title": "컴퓨터과학과 학과 일정", "url": SCHEDULE_URL, "score": 0}],
+        "mode": "DB검색",
+        "score": 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "failure_reason": "학과 일정 전용 필터 통과 문서 없음",
+    }
+
+
 def build_faculty_detail_response(
     faculty: dict[str, Any] | None,
     *,
@@ -876,6 +899,8 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen = set()
     for hit in hits:
+        if not validate_schedule_document_hit(hit):
+            continue
         structured = hit.get("normalized_items") or extract_schedule_items(hit.get("body") or "")
         for event in structured:
             if not event.get("start_date"):
@@ -896,6 +921,23 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "link_label": "학과 일정 바로가기",
                 }
             )
+        if not structured and validate_schedule_document_hit(hit):
+            title = re.sub(r"^\s*(?:글번호\s*[:：]?\s*)?\d{1,6}[.)]?\s*", "", hit.get("title") or "").strip()
+            item = {
+                "title": title,
+                "start_date": hit.get("published_at") or "",
+                "end_date": hit.get("published_at") or "",
+                "description": _clean_notice_summary(hit) or "학과 일정 관련 공식 안내입니다.",
+                "category": "학과일정",
+                "source_url": hit.get("source_url") or SCHEDULE_URL,
+                "fallback_url": SCHEDULE_URL,
+                "link_label": "학과 일정 바로가기",
+            }
+            if validate_schedule_item(item):
+                key = (item["title"], item["start_date"], item["end_date"])
+                if key not in seen:
+                    seen.add(key)
+                    items.append(item)
 
     today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
@@ -909,7 +951,46 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     upcoming = [item for item in items if is_upcoming(item)]
     selected = upcoming or items
-    return sorted(selected, key=lambda item: (item["start_date"], item["title"]))
+    return sorted([item for item in selected if validate_schedule_item(item)], key=lambda item: (item["start_date"], item["title"]))
+
+
+def validate_schedule_document_hit(hit: dict[str, Any]) -> bool:
+    title = (hit.get("title") or "").strip()
+    category = hit.get("category") or ""
+    document_type = hit.get("document_type") or ""
+    source_url = hit.get("source_url") or ""
+    text = f"{title} {category} {document_type} {hit.get('summary') or ''} {hit.get('body') or ''}"
+    if not title or re.fullmatch(r"\d+", title):
+        return False
+    if SCHEDULE_BAD_RE.search(f"{source_url} {category} {title}"):
+        return False
+    if source_url != SCHEDULE_URL and not SCHEDULE_DETAIL_RE.search(source_url):
+        return False
+    if source_url == SCHEDULE_URL:
+        return True
+    if document_type in {"schedule", "학과일정"} and category == "학과일정":
+        return True
+    if category in SCHEDULE_ALLOWED_CATEGORIES and (source_url == NOTICE_URL or SCHEDULE_DETAIL_RE.search(source_url)) and SCHEDULE_KEYWORD_RE.search(text):
+        return True
+    return False
+
+
+def validate_schedule_item(item: dict[str, Any]) -> bool:
+    title = (item.get("title") or "").strip()
+    description = (item.get("description") or "").strip()
+    source_url = item.get("source_url") or item.get("fallback_url") or ""
+    category = item.get("category") or ""
+    if not title or re.fullmatch(r"\d+", title):
+        return False
+    if SCHEDULE_BAD_RE.search(f"{source_url} {category} {title} {description}"):
+        return False
+    if source_url != SCHEDULE_URL and not SCHEDULE_DETAIL_RE.search(source_url):
+        return False
+    if category and category not in SCHEDULE_ALLOWED_CATEGORIES:
+        return False
+    if not description and not item.get("start_date"):
+        return False
+    return True
 
 
 def _course_feature(course: dict[str, Any]) -> str:
@@ -2540,6 +2621,8 @@ def answer_question(
     requested_answer_type = classify_intent(search_question, index)
     hits = retrieve_documents(index, search_question, requested_answer_type)
     best_score = hits[0]["score"] if hits else 0
+    if requested_answer_type == "schedule_list" and not normalize_results("schedule_list", hits, search_question):
+        return build_schedule_unavailable_response(started, clean_question)
     if hits and best_score >= config.SEARCH_MIN_SCORE:
         sources = [
             {"title": hit.get("title"), "url": hit.get("source_url"), "score": hit.get("score")}

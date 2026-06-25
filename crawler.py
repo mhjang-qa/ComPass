@@ -83,8 +83,10 @@ REQUIRED_DOCUMENT_URLS = (
     "https://cs.knou.ac.kr/cs1/4786/subview.do",
     "https://cs.knou.ac.kr/cs1/4789/subview.do",
     "https://cs.knou.ac.kr/cs1/4791/subview.do",
+    "https://cs.knou.ac.kr/cs1/4812/subview.do",
 )
 COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
+SCHEDULE_URL = config.SCHEDULE_URL
 COURSE_DETAIL_ENDPOINT = "https://cs.knou.ac.kr/learningInformation/cs1/view.do"
 
 
@@ -157,7 +159,7 @@ def is_static_document_record(record: dict[str, Any]) -> bool:
     marker = f"{url} {category} {title} {document_type}"
     if document_type in STATIC_DOCUMENT_TYPES and document_type not in BOARD_DOCUMENT_TYPES:
         return True
-    if any(path in url for path in ("/4786/", "/4789/", "/4791/", "/4792/")):
+    if any(path in url for path in ("/4786/", "/4789/", "/4791/", "/4792/", "/4812/")):
         return True
     if STATIC_CATEGORY_HINT_RE.search(marker) and not BOARD_CATEGORY_HINT_RE.search(marker):
         return True
@@ -930,6 +932,8 @@ class KnouCrawler:
         category = " > ".join(dict.fromkeys(x for x in breadcrumbs if x and x != title))
         if not category:
             category = self._guess_category(url, title)
+        if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+            category = "학과일정"
 
         attachments = self._extract_attachments(url, soup)
         content = self._select_content(url, soup)
@@ -950,6 +954,8 @@ class KnouCrawler:
             return None
         if not normalized_items and ("학과일정" in category or "/4792/" in url):
             normalized_items = extract_schedule_items(body)
+        if not normalized_items and normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+            normalized_items = extract_schedule_items(body)
 
         published_at = self._extract_date(page_text)
 
@@ -965,7 +971,20 @@ class KnouCrawler:
             table_rows=table_rows,
             normalized_items=normalized_items,
         )
+        if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+            document.category = "학과일정"
+            document.document_type = "학과일정"
         document.finalize()
+        if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+            document.category = "학과일정"
+            document.document_type = "학과일정"
+            tier = classify_data_tier(asdict(document))
+            document.data_tier = tier["data_tier"]
+            document.active = bool(tier["active"])
+            document.archive_reason = tier["archive_reason"]
+            document.valid_start = tier["valid_start"]
+            document.valid_end = tier["valid_end"]
+            document.freshness_score = int(tier["freshness_score"])
         should_collect, reason = should_collect_document_record(asdict(document))
         if not should_collect:
             if reason == "old_post":

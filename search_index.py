@@ -32,8 +32,8 @@ SYNONYMS = {
 }
 FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
 CURRICULUM_URL = "https://cs.knou.ac.kr/cs1/4789/subview.do"
-SCHEDULE_URL = "https://cs.knou.ac.kr/cs1/4792/subview.do"
-NOTICE_URL = "https://cs.knou.ac.kr/cs1/4812/subview.do"
+SCHEDULE_URL = config.SCHEDULE_URL
+NOTICE_URL = config.NOTICE_URL
 COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
 COURSE_DOCUMENT_TYPES = {"과목상세", "교과목목록", "교육과정표", "검증지식"}
 COURSE_ALIASES = {
@@ -51,6 +51,10 @@ QUICK_INTENTS = (
     ("notice", re.compile(r"최근\s*공지|공지사항|학과\s*공지", re.IGNORECASE), ("공지사항", "공지", "학과광장")),
     ("schedule", re.compile(r"학과\s*일정|학사\s*일정|일정", re.IGNORECASE), ("학과일정", "학사일정")),
 )
+SCHEDULE_ALLOWED_CATEGORIES = ("학과일정", "학사일정", "공지사항")
+SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게시판|market|student", re.IGNORECASE)
+SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
+SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
 STOPWORDS = {
     "무엇", "뭐", "어떻게", "알려줘", "알려주세요", "대한", "관련", "있는", "있나요",
     "인가요", "합니다", "해주세요", "그리고", "에서", "으로", "컴퓨터과학과",
@@ -67,6 +71,28 @@ def tokenize(text: str) -> list[str]:
         if any(term in compact for term in group):
             expanded.extend(group)
     return list(dict.fromkeys(expanded))
+
+
+def validate_schedule_document(doc: dict[str, Any]) -> bool:
+    title = (doc.get("title") or "").strip()
+    category = doc.get("category") or ""
+    document_type = doc.get("document_type") or ""
+    source_url = doc.get("source_url") or ""
+    text = f"{title} {category} {document_type} {doc.get('summary') or ''} {doc.get('body') or ''}"
+    if not title or re.fullmatch(r"\d+", title):
+        return False
+    if SCHEDULE_BAD_RE.search(f"{source_url} {category} {title}"):
+        return False
+    allowed_url = source_url == SCHEDULE_URL or bool(SCHEDULE_DETAIL_RE.search(source_url))
+    if not allowed_url:
+        return False
+    if source_url == SCHEDULE_URL:
+        return True
+    if document_type in {"schedule", "학과일정"} and category == "학과일정":
+        return True
+    if category in SCHEDULE_ALLOWED_CATEGORIES and (source_url == NOTICE_URL or SCHEDULE_DETAIL_RE.search(source_url)) and SCHEDULE_KEYWORD_RE.search(text):
+        return True
+    return False
 
 
 class SearchIndex:
@@ -390,6 +416,15 @@ class SearchIndex:
             if quick_intent_terms:
                 if any(term.lower() in f"{title} {category}" for term in quick_intent_terms):
                     score += 45
+            if quick_intent == "schedule":
+                if not validate_schedule_document(doc):
+                    score -= 200
+                if doc.get("document_type") in {"schedule", "학과일정"}:
+                    score += 100
+                if (doc.get("category") or "") == "학과일정":
+                    score += 80
+                if (doc.get("category") or "") == "공지사항" and SCHEDULE_KEYWORD_RE.search(text):
+                    score += 50
             for token in query_tokens:
                 count = token_counts.get(token, 0)
                 if count:
@@ -447,9 +482,10 @@ class SearchIndex:
             if general_pages:
                 return general_pages[:top_k]
         if quick_intent == "schedule":
-            official = [hit for hit in ranked if hit.get("source_url") == SCHEDULE_URL]
+            official = [hit for hit in ranked if validate_schedule_document(hit)]
             if official:
                 return official[:top_k]
+            return []
         if quick_intent == "notice":
             notices = [
                 hit

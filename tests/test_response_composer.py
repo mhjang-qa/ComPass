@@ -1,4 +1,5 @@
 from chatbot import (
+    analyze_question_intent,
     build_structured_response,
     classify_intent,
     normalize_results,
@@ -8,6 +9,11 @@ from chatbot import (
 
 def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("컴퓨터과학과 교수진 정보를 알려줘") == "faculty"
+    assert classify_intent("컴퓨터 과학과 교수진") == "faculty"
+    assert classify_intent("교수진") == "faculty"
+    assert classify_intent("교수") == "faculty"
+    assert classify_intent("컴퓨터과학과 교수") == "faculty"
+    assert classify_intent("컴퓨터 과학과 교수님") == "faculty"
     assert classify_intent("컴퓨터과학과 교육과정을 알려줘") == "course_table"
     assert classify_intent("컴퓨터과학과 최근 공지를 알려줘") == "notice_list"
     assert classify_intent("컴퓨터과학과 학과 일정을 알려줘") == "schedule_list"
@@ -17,6 +23,14 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("파이썬프로그래밍기초 수업 난이도는?") == "course_difficulty"
     assert classify_intent("운영체제는 어려워?") == "course_difficulty"
     assert classify_intent("컴퓨터구조는 뭐 배우는 과목이야?") == "course_detail"
+
+
+def test_nlu_router_detects_professor_detail_before_search() -> None:
+    routed = analyze_question_intent("손진곤 교수")
+
+    assert routed["intent"] == "professor_detail"
+    assert routed["entity"]["name"] == "손진곤"
+    assert routed["search_scope"] == ["professor"]
 
 
 def test_ai_course_detail_is_student_friendly_and_does_not_mix_documents(tmp_path) -> None:

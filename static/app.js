@@ -10,6 +10,9 @@ let adminPassword = "";
 const mobilePointer = window.matchMedia("(pointer: coarse)");
 const pendingRequests = new Map();
 const pendingByQuestion = new Map();
+let isChatPending = false;
+const DEFAULT_CHAT_PLACEHOLDER = "궁금한 컴퓨터과학과 정보를 질문해보세요";
+const PENDING_CHAT_PLACEHOLDER = "답변을 준비하고 있습니다...";
 
 function getSessionId() {
   let sessionId = sessionStorage.getItem("compass_session_id");
@@ -24,6 +27,27 @@ const SESSION_ID = getSessionId();
 
 function newRequestId() {
   return crypto.randomUUID ? crypto.randomUUID() : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function setChatPending(pending) {
+  isChatPending = Boolean(pending);
+  appShell.classList.toggle("is-pending", isChatPending);
+  const input = $("#question");
+  const sendButton = $("#sendButton");
+  if (input) {
+    input.disabled = isChatPending;
+    input.placeholder = isChatPending ? PENDING_CHAT_PLACEHOLDER : DEFAULT_CHAT_PLACEHOLDER;
+  }
+  if (sendButton) {
+    sendButton.disabled = isChatPending;
+    sendButton.textContent = isChatPending ? "대기" : "전송";
+  }
+  $$("[data-question]").forEach((button) => {
+    button.disabled = isChatPending;
+  });
+  $$(".confirm-actions button").forEach((button) => {
+    button.disabled = isChatPending;
+  });
 }
 
 // 새로고침 시 인증을 반드시 다시 받는다. 비밀번호는 브라우저 저장소에 보관하지 않는다.
@@ -806,6 +830,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     const confirmAction = (payload.actions || []).find((action) => action.type === "confirm_llm");
     yes.textContent = confirmAction?.label || "LLM 보조 답변 사용";
     yes.onclick = () => {
+      yes.disabled = true;
+      no.disabled = true;
       actions.remove();
       sendQuestion(payload.client_question || payload.question || "", {
         allowLlm: true,
@@ -878,6 +904,7 @@ async function sendQuestion(raw, options = {}) {
   const context = options.context || undefined;
   const question = raw.trim();
   if (!question) return;
+  if (isChatPending) return;
   const requestId = newRequestId();
   const duplicateController = pendingByQuestion.get(question);
   if (duplicateController && !allowLlm) {
@@ -889,7 +916,7 @@ async function sendQuestion(raw, options = {}) {
   if (!allowLlm) {
     addMessage("user", question);
   }
-  $("#sendButton").disabled = true;
+  setChatPending(true);
   const waiting = createSearchLoading(requestId);
   try {
     const result = await jsonFetch("/api/chat", {
@@ -934,7 +961,7 @@ async function sendQuestion(raw, options = {}) {
   } finally {
     pendingRequests.delete(requestId);
     if (pendingByQuestion.get(question) === controller) pendingByQuestion.delete(question);
-    $("#sendButton").disabled = false;
+    setChatPending(false);
     if (!isMobileDevice()) {
       $("#question").focus({ preventScroll: true });
     }
@@ -943,6 +970,7 @@ async function sendQuestion(raw, options = {}) {
 
 $("#chatForm").addEventListener("submit", (event) => {
   event.preventDefault();
+  if (isChatPending) return;
   const value = $("#question").value;
   $("#question").value = "";
   sendQuestion(value);
@@ -956,7 +984,10 @@ $("#question").addEventListener("keydown", (event) => {
 $("#question").addEventListener("focus", () => {
   updateAppHeight();
 });
-$$("[data-question]").forEach((button) => button.addEventListener("click", () => sendQuestion(button.dataset.question)));
+$$("[data-question]").forEach((button) => button.addEventListener("click", () => {
+  if (isChatPending) return;
+  sendQuestion(button.dataset.question);
+}));
 
 $$(".tab").forEach((button) => button.addEventListener("click", () => {
   if (button.dataset.action === "admin-login") {

@@ -15,6 +15,7 @@ import requests
 import config
 from crawler import extract_schedule_items, summarize
 from curated_knowledge import match_curated
+from intent_router import detect_intent as route_intent
 from search_index import (
     COURSE_DOCUMENT_TYPES,
     COURSE_GUIDE_URL,
@@ -47,6 +48,20 @@ SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게�
 SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
 SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
+ROUTER_TO_INTERNAL_INTENT = {
+    "professor_list": "faculty",
+    "professor_detail": "faculty_detail",
+    "curriculum": "course_table",
+    "course_info": "course_detail",
+    "course_difficulty": "course_difficulty",
+    "course_order": "course_order",
+    "course_grade": "course_grade_strategy",
+    "schedule": "schedule_list",
+    "notice": "notice_list",
+    "graduation": "text",
+    "faq": "faq_list",
+    "contact": "text",
+}
 
 
 class CompatibleAnswerType(str):
@@ -298,11 +313,31 @@ def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
     return max(matches, key=len) if matches else ""
 
 
+def analyze_question_intent(question: str, index: SearchIndex | None = None) -> dict[str, Any]:
+    faculty_catalog = index.faculty_catalog() if index and hasattr(index, "faculty_catalog") else []
+    return route_intent(question, faculty_catalog=faculty_catalog)
+
+
 def detect_intent(question: str, index: SearchIndex | None = None) -> str:
     """RAG 검색 전 자연어 질문 의도를 먼저 분류한다."""
     if casual_response(question):
         return "smalltalk"
+    if is_course_recommendation(question):
+        return "course_recommendation"
+    routed = analyze_question_intent(question, index)
     course_name = detect_course_name(question, index)
+    if routed.get("intent") == "curriculum" and course_name and re.search(r"커리큘럼|교과목\s*안내|무슨|어떤", question):
+        return "course_info"
+    if routed.get("confidence", 0) >= 0.8 and routed.get("intent") in ROUTER_TO_INTERNAL_INTENT:
+        internal = ROUTER_TO_INTERNAL_INTENT[routed["intent"]]
+        return {
+            "course_table": "curriculum",
+            "course_detail": "course_info",
+            "schedule_list": "schedule",
+            "notice_list": "notice",
+            "faq_list": "faq",
+            "text": routed["intent"],
+        }.get(internal, internal)
     if detect_faculty_member(question, index):
         return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
@@ -321,8 +356,6 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
         return "course_difficulty"
     if course_name and (COURSE_DETAIL_RE.search(question) or re.search(r"커리큘럼|교과목\s*안내", question)):
         return "course_info"
-    if is_course_recommendation(question):
-        return "course_recommendation"
     list_type = _list_answer_type(question)
     if list_type == "course_table":
         return "curriculum"
@@ -336,6 +369,15 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
 
 
 def detect_faculty_member(question: str, index: SearchIndex | None = None) -> dict[str, Any] | None:
+    routed = analyze_question_intent(question, index)
+    if routed.get("intent") == "professor_detail":
+        name = (routed.get("entity") or {}).get("name") or ""
+        if index and hasattr(index, "detect_faculty"):
+            detected = index.detect_faculty(name or question)
+            if detected:
+                return detected
+        if name:
+            return {"name": name, "_not_found": True}
     if index and hasattr(index, "detect_faculty"):
         detected = index.detect_faculty(question)
         if detected:
@@ -350,6 +392,14 @@ def detect_faculty_member(question: str, index: SearchIndex | None = None) -> di
 
 def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
+    if is_course_recommendation(question):
+        return "course_recommendation"
+    routed = analyze_question_intent(question, index)
+    course_name = detect_course_name(question, index)
+    if routed.get("intent") == "curriculum" and course_name and re.search(r"커리큘럼|교과목\s*안내|무슨|어떤", question):
+        return "course_detail"
+    if routed.get("confidence", 0) >= 0.8 and routed.get("intent") in ROUTER_TO_INTERNAL_INTENT:
+        return ROUTER_TO_INTERNAL_INTENT[routed["intent"]]
     detected = detect_intent(question, index)
     mapping = {
         "curriculum": "course_table",
@@ -374,7 +424,6 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         return detected if detected != "general_explain" else "text"
     if casual_response(question):
         return "smalltalk"
-    course_name = detect_course_name(question, index)
     if NOTICE_EXPLAIN_RE.search(question):
         return "notice_explain"
     if SCHEDULE_EXPLAIN_RE.search(question):
@@ -391,8 +440,6 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
         return "faculty"
-    if is_course_recommendation(question):
-        return "course_recommendation"
     if COURSE_DETAIL_RE.search(question):
         return "course_detail"
     return _list_answer_type(question) or "text"
@@ -420,8 +467,14 @@ def retrieve_documents(
         })
     elif search_intent == "faculty_detail":
         filters.update({
-            "document_types": ["교수진"],
+            "source_urls": [FACULTY_URL],
             "exclude_document_types": ["공지사항", "게시물", "게시판목록", "학과일정", "교육과정표", "과목상세"],
+        })
+    elif search_intent == "faculty":
+        filters.update({
+            "source_urls": [FACULTY_URL],
+            "exclude_document_types": ["공지사항", "게시물", "게시판목록", "학과일정", "교육과정표", "과목상세"],
+            "exclude_categories": ["공지사항", "게시판", "학생광장", "학과일정", "교육과정"],
         })
     return index.search(question, top_k=top_k, filters=filters)
 
@@ -2396,6 +2449,45 @@ def answer_question(
             question=clean_question,
             started=started,
         )
+    if initial_intent == "faculty":
+        hits = retrieve_documents(index, clean_question, "faculty")
+        items = normalize_results("faculty", hits, clean_question)
+        sources = [
+            {"title": hit.get("title") or "컴퓨터과학과 교수진", "url": hit.get("source_url"), "score": hit.get("score")}
+            for hit in hits[:1]
+            if hit.get("source_url")
+        ]
+        if items:
+            response = build_structured_response(
+                "faculty",
+                items,
+                source_url=FACULTY_URL,
+                sources=sources or [{"title": "컴퓨터과학과 교수진", "url": FACULTY_URL, "score": 100}],
+                score=hits[0].get("score", 100) if hits else 100,
+                keywords=tokenize(clean_question),
+                started=started,
+            )
+            response["structured_intent"] = "professor_list"
+            response["search_scope"] = ["professor"]
+            return response
+        return {
+            "answer": "컴퓨터과학과 공식 교수진 데이터를 충분히 찾지 못했습니다.",
+            "answer_type": "faculty",
+            "summary": "교수진 페이지에서 전체 목록을 확인해 주세요.",
+            "items": [],
+            "display_limit": 3,
+            "total_count": 0,
+            "actions": [{"type": "link", "label": "교수진 페이지 바로가기", "url": FACULTY_URL}],
+            "source_urls": [FACULTY_URL],
+            "sources": [{"title": "컴퓨터과학과 교수진", "url": FACULTY_URL, "score": 0}],
+            "mode": "DB검색",
+            "score": 0,
+            "keywords": tokenize(clean_question),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "failure_reason": "교수진 공식 문서 없음",
+            "structured_intent": "professor_list",
+            "search_scope": ["professor"],
+        }
     if initial_intent == "course_grade_strategy":
         course_name = detect_course_name(clean_question, index)
         hits = retrieve_documents(index, clean_question, "course_grade_strategy")

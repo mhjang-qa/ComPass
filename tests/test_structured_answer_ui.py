@@ -49,6 +49,19 @@ def test_actions_support_expand_link_and_confirm_llm() -> None:
     assert "confirm-actions" in script
 
 
+def test_chat_pending_state_disables_duplicate_inputs() -> None:
+    script = Path("static/app.js").read_text(encoding="utf-8")
+    style = Path("static/style.css").read_text(encoding="utf-8")
+
+    assert "let isChatPending = false" in script
+    assert "function setChatPending(pending)" in script
+    assert "if (isChatPending) return;" in script
+    assert "답변을 준비하고 있습니다..." in script
+    assert "$$(\"[data-question]\").forEach((button) => {" in script
+    assert ".app-shell.is-pending .quick-actions button" in style
+    assert ".composer textarea:disabled" in style
+
+
 def test_answer_type_renderers_and_per_item_links_are_present() -> None:
     script = Path("static/app.js").read_text(encoding="utf-8")
     style = Path("static/style.css").read_text(encoding="utf-8")

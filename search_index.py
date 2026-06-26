@@ -340,6 +340,7 @@ class SearchIndex:
         excluded_types = set(filters.get("exclude_document_types") or [])
         excluded_categories = [value.lower() for value in filters.get("exclude_categories") or []]
         allowed_source_types = set(filters.get("source_types") or [])
+        allowed_source_urls = set(filters.get("source_urls") or [])
         course_name = (filters.get("course_name") or "").strip()
 
         def matches_course(doc: dict[str, Any]) -> bool:
@@ -359,6 +360,7 @@ class SearchIndex:
             doc
             for doc in payload_documents
             if (not allowed_types or doc.get("document_type") in allowed_types)
+            and (not allowed_source_urls or (doc.get("source_url") or "") in allowed_source_urls)
             and (
                 not allowed_source_types
                 or (doc.get("source_type") or "official") in allowed_source_types

@@ -251,6 +251,11 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
 .quick-actions { flex-wrap: nowrap; white-space: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .quick-actions::-webkit-scrollbar { display: none; }
 .quick-actions button { flex: 0 0 auto; }
+.quick-actions button:disabled,
+.app-shell.is-pending .quick-actions button {
+  opacity: .5;
+  pointer-events: none;
+}
 .composer {
   position: sticky;
   bottom: 0;
@@ -277,6 +282,17 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
 .composer textarea::placeholder { overflow: hidden; color: #8493a1; font-size: clamp(12px, 3.2vw, 14px); text-overflow: ellipsis; white-space: nowrap; }
 .composer textarea:focus, input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(23,105,170,.12); }
 .composer button, .primary, .search-test button { border: 0; border-radius: 12px; padding: 0 20px; color: white; background: var(--blue); font-weight: 800; }
+.composer textarea:disabled {
+  background: #f4f7fb;
+  color: #8a99aa;
+  cursor: not-allowed;
+}
+.composer button:disabled,
+.send-button:disabled,
+.confirm-actions button:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
 .section-head, .card-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .section-actions { display: flex; gap: 10px; }
 .section-actions > button:not(.primary) { min-height: 44px; padding: 0 16px; border: 1px solid #9dc7e2; border-radius: 12px; color: var(--blue); background: white; font-weight: 800; }

@@ -121,6 +121,35 @@ def test_all_quick_menu_queries_find_db_documents(tmp_path: Path) -> None:
     assert results[3]["answer_type"] == "schedule_list"
 
 
+def test_direct_professor_inputs_use_same_handler_as_quick_button(tmp_path: Path) -> None:
+    index = quick_index(tmp_path)
+    questions = [
+        "컴퓨터 과학과 교수진",
+        "교수진",
+        "교수",
+        "컴퓨터과학과 교수",
+        "컴퓨터 과학과 교수님",
+    ]
+
+    results = [answer_question(question, index=index) for question in questions]
+
+    assert all(result["answer_type"] == "faculty" for result in results)
+    assert all(result["mode"] == "DB검색" for result in results)
+    assert all(result["sources"][0]["url"] == FACULTY_URL for result in results)
+    assert all(result["items"][0]["name"] == "손진곤" for result in results)
+
+
+def test_professor_name_input_returns_single_professor_card(tmp_path: Path) -> None:
+    index = quick_index(tmp_path)
+
+    result = answer_question("손진곤 교수", index=index)
+
+    assert result["answer_type"] == "faculty_detail"
+    assert result["total_count"] == 1
+    assert [item["name"] for item in result["items"]] == ["손진곤"]
+    assert all(action["label"] != "전체 교수진 보기" for action in result["actions"])
+
+
 def test_frontend_uses_required_quick_queries() -> None:
     html = Path("templates/index.html").read_text(encoding="utf-8")
 

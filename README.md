@@ -97,6 +97,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 
 ```mermaid
 flowchart LR
+
   subgraph SRC["공식 데이터 소스"]
     A["컴퓨터과학과 공식 홈페이지"]
     A2["교수진·교육과정·교과목·공지·학과일정"]
@@ -159,6 +160,15 @@ flowchart LR
   AD --> CR --> B
   AD --> IR --> E
   AD --> ST --> E
+
+%% ===== 영역별 색상 =====
+
+style SRC fill:#123A63,stroke:#5DAEFF,stroke-width:2px,color:#ffffff
+style INGEST fill:#174F45,stroke:#39D98A,stroke-width:2px,color:#ffffff
+style STORAGE fill:#4A2D68,stroke:#C084FC,stroke-width:2px,color:#ffffff
+style APP fill:#624100,stroke:#FACC15,stroke-width:2px,color:#ffffff
+style OPS fill:#5A1F2E,stroke:#FB7185,stroke-width:2px,color:#ffffff
+style OBS fill:#2E4A59,stroke:#67E8F9,stroke-width:2px,color:#ffffff
 ```
 
 ## 로컬 실행

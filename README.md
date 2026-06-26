@@ -161,14 +161,19 @@ flowchart LR
   AD --> IR --> E
   AD --> ST --> E
 
-%% ===== 영역별 색상 =====
+%% ===== 영역별 색상 (PPT용 추천) =====
 
-style SRC fill:#123A63,stroke:#5DAEFF,stroke-width:2px,color:#ffffff
-style INGEST fill:#174F45,stroke:#39D98A,stroke-width:2px,color:#ffffff
-style STORAGE fill:#4A2D68,stroke:#C084FC,stroke-width:2px,color:#ffffff
-style APP fill:#624100,stroke:#FACC15,stroke-width:2px,color:#ffffff
-style OPS fill:#5A1F2E,stroke:#FB7185,stroke-width:2px,color:#ffffff
-style OBS fill:#2E4A59,stroke:#67E8F9,stroke-width:2px,color:#ffffff
+style SRC fill:#EAF4FF,stroke:#2F80ED,stroke-width:3px,color:#222
+
+style INGEST fill:#EAFBF3,stroke:#27AE60,stroke-width:3px,color:#222
+
+style STORAGE fill:#F4ECFF,stroke:#9B51E0,stroke-width:3px,color:#222
+
+style APP fill:#FFF7E6,stroke:#F2C94C,stroke-width:3px,color:#222
+
+style OPS fill:#FDEEEF,stroke:#EB5757,stroke-width:3px,color:#222
+
+style OBS fill:#EEF9FB,stroke:#2D9CDB,stroke-width:3px,color:#222
 ```
 
 ## 로컬 실행

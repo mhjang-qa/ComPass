@@ -55,6 +55,8 @@ SCHEDULE_ALLOWED_CATEGORIES = ("학과일정", "학사일정", "공지사항")
 SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게시판|market|student", re.IGNORECASE)
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
 SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
+NOTICE_BAD_RE = re.compile(r"교육과정|교과목|교수진|학과일정|벼룩시장|학생광장|중고장터|learningInformation", re.IGNORECASE)
+NOTICE_URL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/(?:bbs/cs1/.+/artclView\.do|cs1/4812/subview\.do)", re.IGNORECASE)
 STOPWORDS = {
     "무엇", "뭐", "어떻게", "알려줘", "알려주세요", "대한", "관련", "있는", "있나요",
     "인가요", "합니다", "해주세요", "그리고", "에서", "으로", "컴퓨터과학과",
@@ -93,6 +95,27 @@ def validate_schedule_document(doc: dict[str, Any]) -> bool:
     if category in SCHEDULE_ALLOWED_CATEGORIES and (source_url == NOTICE_URL or SCHEDULE_DETAIL_RE.search(source_url)) and SCHEDULE_KEYWORD_RE.search(text):
         return True
     return False
+
+
+def validate_notice_document(doc: dict[str, Any]) -> bool:
+    title = (doc.get("title") or "").strip()
+    category = doc.get("category") or ""
+    document_type = doc.get("document_type") or ""
+    source_url = doc.get("source_url") or ""
+    marker = f"{source_url} {category} {document_type} {title}"
+    if not title or re.fullmatch(r"\d+", title):
+        return False
+    if NOTICE_BAD_RE.search(marker):
+        return False
+    if source_url == NOTICE_URL:
+        return True
+    if not NOTICE_URL_RE.search(source_url):
+        return False
+    return (
+        "공지" in category
+        or document_type in {"공지사항", "게시물"}
+        or "공지" in title
+    )
 
 
 class SearchIndex:
@@ -489,25 +512,7 @@ class SearchIndex:
                 return official[:top_k]
             return []
         if quick_intent == "notice":
-            notices = [
-                hit
-                for hit in ranked
-                if (
-                    "공지사항" in (hit.get("category") or "")
-                    or "공지" in (hit.get("category") or "")
-                )
-                and (
-                    hit.get("document_type") == "게시물"
-                    or "artclView.do" in (hit.get("source_url") or "")
-                )
-            ]
-            if not notices:
-                notices = [
-                    hit
-                    for hit in ranked
-                    if "공지사항" in (hit.get("category") or "")
-                    or "공지사항" == (hit.get("title") or "").strip()
-                ]
+            notices = [hit for hit in ranked if validate_notice_document(hit)]
             if notices:
                 notices.sort(
                     key=lambda hit: (hit.get("published_at") or "", hit.get("score") or 0),

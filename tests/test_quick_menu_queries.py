@@ -126,7 +126,10 @@ def test_direct_professor_inputs_use_same_handler_as_quick_button(tmp_path: Path
     questions = [
         "컴퓨터 과학과 교수진",
         "교수진",
+        "교수진 알려줘",
         "교수",
+        "교수 소개",
+        "교수님 알려줘",
         "컴퓨터과학과 교수",
         "컴퓨터 과학과 교수님",
     ]
@@ -137,6 +140,54 @@ def test_direct_professor_inputs_use_same_handler_as_quick_button(tmp_path: Path
     assert all(result["mode"] == "DB검색" for result in results)
     assert all(result["sources"][0]["url"] == FACULTY_URL for result in results)
     assert all(result["items"][0]["name"] == "손진곤" for result in results)
+
+
+def test_notice_intent_excludes_curriculum_even_with_high_course_match(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "notice-scope.json")
+    index.rebuild(
+        [
+            {
+                "title": "인공지능 과목 안내",
+                "category": "교육과정",
+                "document_type": "과목상세",
+                "body": "인공지능 과목 안내 공지 공지 공지 최근",
+                "summary": "교육과정 데이터",
+                "source_url": CURRICULUM_URL,
+                "keywords": ["공지", "인공지능"],
+                "search_text": "최근 공지 인공지능 과목 안내 교육과정",
+            },
+            {
+                "title": "2026 컴퓨터과학과 공지",
+                "category": "학과광장 > 공지사항",
+                "document_type": "게시물",
+                "body": "컴퓨터과학과 최근 공지사항입니다.",
+                "summary": "공지 요약",
+                "source_url": "https://cs.knou.ac.kr/cs1/4812/subview.do",
+                "published_at": "2026-06-20",
+                "keywords": ["공지사항"],
+                "search_text": "최근 공지 컴퓨터과학과 공지사항",
+            },
+        ]
+    )
+
+    for question in ("최근 공지", "최근 공지 알려줘", "컴퓨터과학과 최근 공지"):
+        result = answer_question(question, index=index)
+        assert result["answer_type"] == "notice_list"
+        assert result["items"][0]["title"] == "2026 컴퓨터과학과 공지"
+        assert "교육과정" not in str(result["items"])
+        assert all("learningInformation" not in item.get("source_url", "") for item in result["items"])
+
+
+def test_curriculum_and_schedule_natural_inputs_keep_scope(tmp_path: Path) -> None:
+    index = quick_index(tmp_path)
+
+    curriculum = answer_question("교과목", index=index)
+    schedule = answer_question("일정 알려줘", index=index)
+
+    assert curriculum["answer_type"] == "course_table"
+    assert curriculum["sources"][0]["url"] == CURRICULUM_URL
+    assert schedule["answer_type"] == "schedule_list"
+    assert schedule["sources"][0]["url"] == SCHEDULE_URL
 
 
 def test_professor_name_input_returns_single_professor_card(tmp_path: Path) -> None:

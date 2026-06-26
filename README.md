@@ -45,6 +45,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 - 교과목 안내(`/cs1/4791/subview.do`)의 `jf_detailView` POST 팝업을 과목별로 필수 수집해 `과목상세` 문서로 저장
 - 교수진 질문은 `faculty_list` 또는 `faculty_detail`로 선분류하고 교수진 공식 문서만 검색하도록 `source_urls=[FACULTY_URL]` 검색 범위를 적용
 - Intent별 Search Scope를 강제합니다. 예: `faculty_list/faculty_detail → faculty`, `course_detail/course_difficulty/course_grade_strategy/course_order → course_detail+curriculum`, `schedule → schedule`, `notice → notice`, `graduation → graduation+curated_knowledge`.
+- 검색 로그는 `[SEARCH_ROUTE] Intent=... Search Scope=... Candidate Count=... Selected=... Score=...` 형식으로 남깁니다. 예: `Intent=faculty`, `Search Scope=['https://cs.knou.ac.kr/cs1/4786/subview.do']`, `Selected=교수진 소개`, `Score=98`.
 - 졸업학점·추천 자격증·시험범위는 `의도/과목/시험종류/유효기준` 구조화 지식으로 정확 매칭
 - 명시적 현재 질문을 이전 대화보다 우선하여 후속 질문 문맥 충돌 방지
 - 유사어 확장, 키워드 빈도, 제목·카테고리 가중치, 부분 일치 기반 로컬 검색
@@ -57,7 +58,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 - 크롤링 진행률은 크롤링 0~80%, Notion 저장 80~100%로 분리하고 `/api/crawl/status`에서 저장/실패/유지 건수와 현재 문서명을 확인
 - `/api/crawl/status`에서 전체 URL, 수집 완료, 3년 초과 제외, 게시일 없음 제외, 정적 페이지 수를 확인
 - Render 콜드 스타트 안내 화면 및 모바일 반응형 UI
-- GitHub Pages 콜드스타트 로더는 Render 응답 전에도 `/ComPass/static/icons/icon.png`를 표시하고, 이미지 실패 시 `ComPass` 텍스트 로고를 표시
+- GitHub Pages 콜드스타트 로더는 Render 응답 전에도 `/ComPass/static/icons/icon.png`를 표시하고, 이미지 실패 시 `ComPass` 텍스트 로고를 표시합니다. 로더 카드는 flex column 중앙 정렬로 로고, 제목, 안내 문구, 진행바, 하단 문구가 모바일/데스크톱에서 같은 축으로 정렬됩니다.
 - 빈 화면 우측 하단 플로팅 아이콘, 채팅 창 모드, 전체 화면 전환
 - `static/icons/`의 ComPass 공식 PNG 아이콘을 플로팅 버튼, 헤더, 환영 메시지, favicon, PWA, 로딩 화면, 검색 중 애니메이션에 공통 적용
 - 모바일은 플로팅 버튼 선택 시 즉시 전체화면, 데스크톱은 기존 PIP 창 유지

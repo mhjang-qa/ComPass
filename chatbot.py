@@ -27,6 +27,7 @@ from search_index import (
     SCHEDULE_URL,
     SearchIndex,
     tokenize,
+    validate_notice_document,
 )
 
 logger = logging.getLogger(__name__)
@@ -436,8 +437,8 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
 
 def detect_faculty_member(question: str, index: SearchIndex | None = None) -> dict[str, Any] | None:
     routed = analyze_question_intent(question, index)
-    if routed.get("intent") == "professor_detail":
-        name = (routed.get("entity") or {}).get("name") or ""
+    if routed.get("intent") in {"faculty_detail", "professor_detail"}:
+        name = (routed.get("entities") or routed.get("entity") or {}).get("faculty_name") or (routed.get("entity") or {}).get("name") or ""
         if index and hasattr(index, "detect_faculty"):
             detected = index.detect_faculty(name or question)
             if detected:
@@ -546,7 +547,40 @@ def retrieve_documents(
             "exclude_document_types": ["공지사항", "게시물", "게시판목록", "학과일정", "교육과정표", "과목상세"],
             "exclude_categories": ["공지사항", "게시판", "학생광장", "학과일정", "교육과정"],
         })
-    return index.search(question, top_k=top_k, filters=filters)
+    elif search_intent == "notice_list":
+        filters.update({
+            "exclude_document_types": ["교수진", "교육과정표", "과목상세", "학과일정"],
+            "exclude_categories": ["교수진", "교육과정", "교과목", "학과일정", "학생광장", "벼룩시장", "중고장터"],
+        })
+    elif search_intent == "course_table":
+        filters.update({
+            "source_urls": [CURRICULUM_URL],
+            "exclude_document_types": ["교수진", "공지사항", "게시물", "게시판목록", "학과일정"],
+            "exclude_categories": ["공지사항", "게시판", "학생광장", "학과일정"],
+        })
+    hits = index.search(question, top_k=top_k, filters=filters)
+    if search_intent == "notice_list":
+        hits = [hit for hit in hits if validate_notice_document(hit)]
+    log_search_route(search_intent, filters, hits)
+    return hits
+
+
+def log_search_route(intent: str, filters: dict[str, Any], hits: list[dict[str, Any]]) -> None:
+    scope = (
+        filters.get("source_urls")
+        or filters.get("document_types")
+        or filters.get("exclude_categories")
+        or ["official"]
+    )
+    selected = hits[0] if hits else {}
+    logger.info(
+        "[SEARCH_ROUTE] Intent=%s Search Scope=%s Candidate Count=%s Selected=%s Score=%s",
+        intent,
+        scope,
+        len(hits),
+        selected.get("title") or selected.get("name") or "-",
+        selected.get("score", 0),
+    )
 
 
 def _item_url(item: dict[str, Any], category_url: str = "") -> str:
@@ -746,6 +780,31 @@ def build_faculty_detail_response(
         "keywords": tokenize(question),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
     }
+
+
+def faculty_catalog_items(index: SearchIndex) -> list[dict[str, Any]]:
+    """검색 후보가 없어도 faculty_catalog에서 교수진 카드를 만들기 위한 fallback."""
+    if not hasattr(index, "faculty_catalog"):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in index.faculty_catalog():
+        homepage_url = item.get("homepage_url") or ""
+        items.append(
+            CompatibleFacultyItem({
+                **item,
+                "position": item.get("position") or item.get("title") or "교수",
+                "title": item.get("title") or item.get("position") or "교수",
+                "source_url": item.get("source_url") or FACULTY_URL,
+                "fallback_url": FACULTY_URL,
+                "link_label": "교수진 페이지 바로가기",
+                "actions": (
+                    [{"type": "link", "label": "교수 홈페이지 바로가기", "url": homepage_url}]
+                    if homepage_url
+                    else []
+                ),
+            })
+        )
+    return items
 
 
 def render_fallback_text(question: str, hits: list[dict[str, Any]]) -> str:
@@ -2522,6 +2581,8 @@ def answer_question(
     if initial_intent == "faculty":
         hits = retrieve_documents(index, clean_question, "faculty")
         items = normalize_results("faculty", hits, clean_question)
+        if not items:
+            items = faculty_catalog_items(index)
         sources = [
             {"title": hit.get("title") or "컴퓨터과학과 교수진", "url": hit.get("source_url"), "score": hit.get("score")}
             for hit in hits[:1]
@@ -2537,8 +2598,10 @@ def answer_question(
                 keywords=tokenize(clean_question),
                 started=started,
             )
-            response["structured_intent"] = "professor_list"
-            response["search_scope"] = ["professor"]
+            response["structured_intent"] = "faculty_list"
+            response["search_scope"] = ["faculty"]
+            if not response.get("sources"):
+                response["sources"] = [{"title": "컴퓨터과학과 교수진", "url": FACULTY_URL, "score": 100}]
             return response
         return {
             "answer": "컴퓨터과학과 공식 교수진 데이터를 충분히 찾지 못했습니다.",
@@ -2555,8 +2618,8 @@ def answer_question(
             "keywords": tokenize(clean_question),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "failure_reason": "교수진 공식 문서 없음",
-            "structured_intent": "professor_list",
-            "search_scope": ["professor"],
+            "structured_intent": "faculty_list",
+            "search_scope": ["faculty"],
         }
     if initial_intent == "course_grade_strategy":
         course_name = detect_course_name(clean_question, index)

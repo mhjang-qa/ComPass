@@ -98,42 +98,67 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 ```mermaid
 flowchart LR
   subgraph SRC["공식 데이터 소스"]
-    A["컴퓨터과학과 홈페이지"]
+    A["컴퓨터과학과 공식 홈페이지"]
+    A2["교수진·교육과정·교과목·공지·학과일정"]
   end
 
   subgraph INGEST["데이터 수집·전처리 계층"]
-    B["robots.txt 준수 크롤러"]
-    C["정제·구조화·해시 처리"]
+    B["robots.txt 준수 BFS 크롤러"]
+    C["HTML 정제"]
+    C2["표·게시글·과목정보 구조화"]
+    H["콘텐츠 해시·최근 3년 정책·데이터 계층화"]
   end
 
   subgraph STORAGE["지식 저장 계층"]
     D[("Notion 지식 DB")]
     E[("로컬 검색 인덱스")]
+    CK[("검증 지식 JSON")]
   end
 
   subgraph APP["질의 처리 애플리케이션 계층"]
     Q["사용자 질문"]
-    S["범위·키워드·문맥 분석"]
+    N["질문 정규화"]
+    I["Intent Router<br/>의도 분석"]
+    EN["Entity 추출<br/>교수·과목·학년"]
+    SC["Search Scope 결정<br/>교수진·과목·공지·일정"]
     G{"검색 점수 충분?"}
     R["공식 DB 근거 답변"]
     CFM{"LLM 사용 동의?"}
     L["제한적 LLM Fallback"]
-    X["검색 종료"]
+    P["후처리·카드형 UI 렌더링"]
+    X["안전 응답 또는 검색 종료"]
   end
 
-  subgraph OBS["운영·통계 계층"]
+  subgraph OPS["운영·관리 계층"]
+    AD["관리자 인증"]
+    CR["크롤링 관리"]
+    IR["인덱스 재생성"]
+    ST["검색 테스트"]
+  end
+
+  subgraph OBS["통계·모니터링 계층"]
     T[("Notion 통계 DB")]
+    LOG["질문·응답·검색점수·응답시간 기록"]
   end
 
-  A --> B --> C --> D
-  C --> E
-  Q --> S --> E --> G
+  A --> A2 --> B --> C --> C2 --> H --> D
+  H --> E
+  CK --> E
+
+  Q --> N --> I --> EN --> SC --> E --> G
+  SC --> CK
   G -->|예| R
   G -->|아니오| CFM
   CFM -->|동의| L
   CFM -->|거절| X
-  R --> T
-  L --> T
+  R --> P
+  L --> P
+  X --> P
+  P --> T --> LOG
+
+  AD --> CR --> B
+  AD --> IR --> E
+  AD --> ST --> E
 ```
 
 ## 로컬 실행

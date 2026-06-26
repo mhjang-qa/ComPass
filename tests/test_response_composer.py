@@ -28,9 +28,38 @@ def test_response_composer_classifies_supported_intents() -> None:
 def test_nlu_router_detects_professor_detail_before_search() -> None:
     routed = analyze_question_intent("손진곤 교수")
 
-    assert routed["intent"] == "professor_detail"
-    assert routed["entity"]["name"] == "손진곤"
-    assert routed["search_scope"] == ["professor"]
+    assert routed["intent"] == "faculty_detail"
+    assert routed["entities"]["faculty_name"] == "손진곤"
+    assert routed["search_scope"] == ["faculty"]
+
+
+def test_nlu_router_classifies_natural_language_intents() -> None:
+    cases = {
+        "컴퓨터 과학과 교수": "faculty_list",
+        "교수님 알려줘": "faculty_list",
+        "손진곤 교수 이메일": "faculty_detail",
+        "인공지능이 뭐야": "course_detail",
+        "인공지능 어렵나요": "course_difficulty",
+        "인공지능 C이상 맞으려면": "course_grade_strategy",
+        "데이터베이스시스템 듣기 전에 뭐 알아야 해": "course_order",
+        "편입생인데 어떤 과목부터 들어": "course_roadmap",
+        "최근 공지": "notice",
+        "학과 일정": "schedule",
+        "시험 일정": "schedule",
+        "졸업하려면 몇 학점": "graduation",
+        "학과 전화번호": "contact",
+    }
+
+    for question, expected in cases.items():
+        assert analyze_question_intent(question)["intent"] == expected
+
+
+def test_nlu_router_extracts_course_and_goal_entities() -> None:
+    routed = analyze_question_intent("인공지능 C이상 맞으려면")
+
+    assert routed["intent"] == "course_grade_strategy"
+    assert routed["entities"]["course_name"] == "인공지능"
+    assert routed["entities"]["grade_goal"] == "C 이상"
 
 
 def test_ai_course_detail_is_student_friendly_and_does_not_mix_documents(tmp_path) -> None:

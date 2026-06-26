@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import time
 from datetime import date, datetime
@@ -51,11 +52,16 @@ SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView
 ROUTER_TO_INTERNAL_INTENT = {
     "professor_list": "faculty",
     "professor_detail": "faculty_detail",
+    "faculty_list": "faculty",
+    "faculty_detail": "faculty_detail",
     "curriculum": "course_table",
     "course_info": "course_detail",
+    "course_detail": "course_detail",
     "course_difficulty": "course_difficulty",
     "course_order": "course_order",
+    "course_roadmap": "course_roadmap",
     "course_grade": "course_grade_strategy",
+    "course_grade_strategy": "course_grade_strategy",
     "schedule": "schedule_list",
     "notice": "notice_list",
     "graduation": "text",
@@ -314,8 +320,54 @@ def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
 
 
 def analyze_question_intent(question: str, index: SearchIndex | None = None) -> dict[str, Any]:
-    faculty_catalog = index.faculty_catalog() if index and hasattr(index, "faculty_catalog") else []
-    return route_intent(question, faculty_catalog=faculty_catalog)
+    catalogs = {
+        "faculty": index.faculty_catalog() if index and hasattr(index, "faculty_catalog") else [],
+        "courses": index.course_catalog() if index and hasattr(index, "course_catalog") else [],
+    }
+    return route_intent(question, catalogs=catalogs)
+
+
+def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
+    """규칙 기반 confidence가 낮을 때만 사용하는 LLM Intent 보조 분류.
+
+    실패하거나 JSON 파싱이 안 되면 None을 반환해 RAG 원문 노출 대신 기존 안전 흐름을 유지한다.
+    """
+    provider = (config.LLM_PROVIDER or "").strip().lower()
+    if provider not in {"openai", "gemini"}:
+        return None
+    prompt = (
+        "다음 학생 질문의 의도를 아래 Intent 중 하나로 분류하라.\n"
+        "반드시 JSON만 반환하라.\n"
+        "Intent:\n"
+        "faculty_list, faculty_detail, curriculum, course_detail, course_difficulty,\n"
+        "course_grade_strategy, course_order, course_roadmap, notice, schedule,\n"
+        "graduation, faq, contact, out_of_scope, general_search\n"
+        f"질문:\n{question}\n"
+        "반환 예:\n"
+        "{\"intent\":\"course_grade_strategy\",\"confidence\":0.82,\"reason\":\"성적 목표와 학습 방법을 묻는 질문\"}"
+    )
+    try:
+        raw = call_llm_raw(prompt)
+        match = re.search(r"\{.*\}", raw or "", re.S)
+        if not match:
+            return None
+        parsed = json.loads(match.group(0))
+        intent = parsed.get("intent")
+        if intent not in ROUTER_TO_INTERNAL_INTENT and intent not in {"out_of_scope", "general_search"}:
+            return None
+        confidence = float(parsed.get("confidence") or 0)
+        return {
+            "intent": intent,
+            "confidence": min(max(confidence, 0), 1),
+            "entities": {},
+            "entity": {},
+            "search_scope": [],
+            "answer_type": ROUTER_TO_INTERNAL_INTENT.get(intent, intent),
+            "reason": parsed.get("reason") or "LLM intent classification",
+        }
+    except Exception as exc:
+        logger.info("LLM Intent 보조 분류 실패: %s", exc)
+        return None
 
 
 def detect_intent(question: str, index: SearchIndex | None = None) -> str:
@@ -338,6 +390,20 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
             "faq_list": "faq",
             "text": routed["intent"],
         }.get(internal, internal)
+    if routed.get("confidence", 0) < 0.7:
+        llm_routed = classify_intent_with_llm(question)
+        if llm_routed and llm_routed.get("confidence", 0) >= 0.7:
+            intent = llm_routed["intent"]
+            if intent in ROUTER_TO_INTERNAL_INTENT:
+                internal = ROUTER_TO_INTERNAL_INTENT[intent]
+                return {
+                    "course_table": "curriculum",
+                    "course_detail": "course_info",
+                    "schedule_list": "schedule",
+                    "notice_list": "notice",
+                    "faq_list": "faq",
+                    "text": intent,
+                }.get(internal, internal)
     if detect_faculty_member(question, index):
         return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
@@ -400,6 +466,10 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         return "course_detail"
     if routed.get("confidence", 0) >= 0.8 and routed.get("intent") in ROUTER_TO_INTERNAL_INTENT:
         return ROUTER_TO_INTERNAL_INTENT[routed["intent"]]
+    if routed.get("confidence", 0) < 0.7:
+        llm_routed = classify_intent_with_llm(question)
+        if llm_routed and llm_routed.get("confidence", 0) >= 0.7:
+            return ROUTER_TO_INTERNAL_INTENT.get(llm_routed["intent"], llm_routed["intent"])
     detected = detect_intent(question, index)
     mapping = {
         "curriculum": "course_table",

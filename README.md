@@ -223,6 +223,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `CRAWL_NOTICE_YEARS_LIMIT` | ACTIVE_NOTICE 활성 기준. 기본값 3년 |
 | `CRAWL_TEMPORARY_YEARS_LIMIT` | TEMPORARY 활성 기준. 기본값 1년 |
 | `ENABLE_DATA_TIERING` | 데이터 계층화 사용 여부. 기본값 true |
+| `STARTUP_INDEX_LOAD` | 서버 시작 시 Notion/인덱스 자동 로딩 여부. Render 포트 타임아웃 방지를 위해 기본값 false |
 | `SCHEDULE_URL` | 학과 일정 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4812/subview.do` |
 | `NOTICE_URL` | 공지사항 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4812/subview.do` |
 | `COMMUNITY_CRAWL_ENABLED` | c-knou 비공식 커뮤니티 보조 수집 활성화 여부 |
@@ -331,7 +332,7 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 
 검색 결과가 부족하면 `requires_llm_confirmation: true`가 반환됩니다. 사용자가 동의한 경우 동일 질문을 `allow_llm: true`로 다시 요청합니다.
 
-서버 시작 시 Notion 지식 DB를 자동 로딩해 검색 인덱스를 생성합니다. 첫 질문 시 인덱스가 비어 있으면 lazy loading을 다시 시도하며, 실패 원인은 Render 로그의 `[INDEX]` 및 `[CHAT]` 항목과 `/api/debug/index-status`에서 확인할 수 있습니다.
+Render 배포에서는 포트가 즉시 열리도록 서버 시작 시 Notion 지식 DB 자동 로딩을 기본 비활성화합니다. 첫 질문 시 인덱스가 비어 있으면 lazy loading을 시도하며, 관리자 UI의 “인덱스 재생성” 버튼으로 수동 로딩할 수 있습니다. 실패 원인은 Render 로그의 `[INDEX]` 및 `[CHAT]` 항목과 `/api/debug/index-status`에서 확인할 수 있습니다.
 
 ### 깊이별 크롤링
 
@@ -525,13 +526,15 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 1. 프로젝트를 GitHub 저장소에 push합니다.
 2. Render에서 `New +` → `Blueprint`를 선택하고 저장소를 연결합니다.
 3. `render.yaml` 설정을 확인합니다.
+   - 권장 Start Command: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
+   - 권장 Health Check Path: `/health`
 4. Render 대시보드에서 다음 Secret 환경변수를 입력합니다.
    - `NOTION_TOKEN`
    - `NOTION_KNOWLEDGE_DB_ID`
    - `NOTION_STATS_DB_ID`
    - `ADMIN_PASSWORD`
    - `OPENAI_API_KEY` 또는 `GEMINI_API_KEY`
-5. 배포 후 `/api/health`가 `ok: true`를 반환하는지 확인합니다.
+5. 배포 후 `/health` 또는 `/api/health`가 `ok: true`를 반환하는지 확인합니다.
 6. 관리자 UI에서 크롤링과 인덱스 재생성을 순서대로 실행합니다.
 
 Render 무료 인스턴스의 파일시스템은 재배포 시 초기화될 수 있습니다. 따라서 재배포 후 검색 인덱스를 다시 생성해야 합니다. 운영 안정성이 필요하면 인덱스 JSON을 영구 디스크 또는 외부 저장소에 보관하십시오.

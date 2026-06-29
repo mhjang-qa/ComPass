@@ -4,8 +4,8 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/health
+    startCommand: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.4
@@ -23,6 +23,8 @@ services:
         sync: false
       - key: PUBLIC_LOADER_URL
         value: https://mhjang-qa.github.io/ComPass/
+      - key: STARTUP_INDEX_LOAD
+        value: "false"
       - key: COMMUNITY_CRAWL_ENABLED
         value: "true"
       - key: COMMUNITY_LIST_PAGES

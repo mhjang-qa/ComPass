@@ -286,6 +286,21 @@ def initialize_notion_schemas() -> None:
 def startup_initialize_notion() -> None:
     if not admin_password_configured():
         logger.warning("[STARTUP] ADMIN_PASSWORD가 설정되지 않아 모든 관리자 기능을 차단합니다.")
+    if not config.STARTUP_INDEX_LOAD:
+        job_state["notion"] = {
+            "running": False,
+            "message": "STARTUP_INDEX_LOAD=false: 서버 기동 시 Notion 자동 로딩을 건너뛰었습니다.",
+            "result": None,
+        }
+        runtime_state.update(
+            loading=False,
+            last_reason="startup_skipped",
+            last_error="",
+        )
+        logger.info(
+            "[STARTUP] skipped Notion/index warmup. Use /api/index/rebuild or lazy chat loading."
+        )
+        return
     threading.Thread(target=initialize_notion_schemas, daemon=True).start()
 
 
@@ -755,8 +770,7 @@ def recent_knowledge(limit: int = 20, x_admin_password: str | None = Header(defa
         ) from exc
 
 
-@app.get("/api/health")
-def health():
+def health_payload() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "ComPass",
@@ -767,3 +781,10 @@ def health():
         "runtime": debug_index_payload(),
         "llm_provider": config.LLM_PROVIDER,
     }
+
+
+@app.get("/api/health")
+@app.get("/health")
+@app.get("/healthz")
+def health():
+    return health_payload()

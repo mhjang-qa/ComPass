@@ -40,7 +40,7 @@ def test_frontend_has_kst_formatter_and_protected_admin_tabs() -> None:
     assert "window.ComPassTime" in source
     assert 'sessionStorage.setItem("admin_auth", "true")' in source
     assert 'sessionStorage.removeItem("admin_auth")' in source
-    assert 'new Set(["crawl", "index", "stats"])' in source
+    assert 'new Set(["system", "crawl", "intents", "index", "stats", "quick", "icons"])' in source
 
 
 def test_mobile_admin_scroll_and_two_line_subtitle_contract() -> None:

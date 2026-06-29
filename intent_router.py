@@ -12,8 +12,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from synonyms import apply_synonyms
+
 
 DICTIONARY_PATH = Path(__file__).resolve().parent / "data" / "intent_dictionary.json"
+INTENTS_PATH = Path(__file__).resolve().parent / "data" / "intents.json"
 INTENT_PRIORITY = [
     "faculty_detail",
     "course_detail",
@@ -21,9 +24,13 @@ INTENT_PRIORITY = [
     "course_grade_strategy",
     "course_order",
     "course_roadmap",
+    "recent_notice",
     "faculty_list",
     "curriculum",
     "schedule",
+    "transfer",
+    "exam",
+    "scholarship",
     "notice",
     "graduation",
     "faq",
@@ -35,6 +42,7 @@ INTENT_PRIORITY = [
 SEARCH_SCOPES = {
     "faculty_list": ["faculty"],
     "faculty_detail": ["faculty"],
+    "recent_notice": ["notice"],
     "curriculum": ["curriculum"],
     "course_detail": ["course_detail", "curriculum"],
     "course_difficulty": ["course_detail", "curriculum"],
@@ -43,6 +51,9 @@ SEARCH_SCOPES = {
     "course_roadmap": ["curriculum", "course_detail"],
     "schedule": ["schedule"],
     "notice": ["notice"],
+    "transfer": ["transfer", "curated_knowledge", "curriculum"],
+    "exam": ["exam", "notice", "schedule", "curated_knowledge"],
+    "scholarship": ["scholarship", "notice", "curated_knowledge"],
     "graduation": ["graduation", "curated_knowledge"],
     "faq": ["faq"],
     "contact": ["contact", "core"],
@@ -60,13 +71,34 @@ def load_dictionary() -> dict[str, Any]:
         return {"synonyms": {}, "professors": [], "courses": [], "professor_keywords": [], "intent_keywords": {}}
 
 
+@lru_cache(maxsize=1)
+def load_intents() -> dict[str, Any]:
+    try:
+        return json.loads(INTENTS_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+
+
 def compact_text(value: str) -> str:
-    return re.sub(r"[\s\?\!\.,~요은는이가을를에에서으로로해줘알려줘]", "", value or "").lower()
+    text = apply_synonyms(value or "")
+    text = re.sub(
+        r"(알려줘|알려주세요|보여줘|보여주세요|궁금해|있어|있나요|좀|해주세요|해줘|"
+        r"컴퓨터과학과|한국방송통신대학교|방송대|학과에서)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"[\s\?\!\.,~요은는이가을를에에서으로로]", "", text).lower()
+
+
+def normalize_query(question: str) -> str:
+    """Intent Engine용 자연어 정규화: 소문자화, 유사어 치환, 조사/특수문자 제거."""
+    return compact_text(question)
 
 
 def normalize_question(question: str) -> str:
     """띄어쓰기·유사어·구두점을 정리한다."""
-    text = re.sub(r"\s+", " ", question or "").strip()
+    text = apply_synonyms(re.sub(r"\s+", " ", question or "").strip())
     dictionary = load_dictionary()
     for source, target in sorted((dictionary.get("synonyms") or {}).items(), key=lambda item: len(item[0]), reverse=True):
         text = re.sub(re.escape(source), target, text, flags=re.IGNORECASE)
@@ -155,12 +187,37 @@ def _result(intent: str, confidence: float, entities: dict[str, Any], normalized
         "answer_type": {
             "faculty_list": "faculty",
             "faculty_detail": "faculty_detail",
+            "recent_notice": "notice_list",
             "curriculum": "course_table",
             "notice": "notice_list",
             "schedule": "schedule_list",
+            "transfer": "course_roadmap",
+            "exam": "text",
+            "scholarship": "text",
         }.get(intent, intent),
         "reason": reason,
     }
+
+
+def _match_configured_intent(normalized: str) -> tuple[str, float, str]:
+    """data/intents.json 기반 Exact/Keyword intent 매칭."""
+    compact = normalize_query(normalized)
+    intents = load_intents()
+    for intent in INTENT_PRIORITY:
+        config = intents.get(intent) or {}
+        keywords = config.get("keywords") or []
+        normalized_keywords = [normalize_query(keyword) for keyword in keywords]
+        target_compact = compact.replace("인공지능", "") if intent == "recent_notice" else compact
+        if target_compact in normalized_keywords:
+            return intent, 0.99, "intent exact match"
+    for intent in INTENT_PRIORITY:
+        config = intents.get(intent) or {}
+        for keyword in config.get("keywords") or []:
+            key = normalize_query(keyword)
+            target_compact = compact.replace("인공지능", "") if intent == "recent_notice" else compact
+            if key and (key in target_compact or target_compact in key):
+                return intent, 0.9, "intent keyword/synonym match"
+    return "", 0.0, ""
 
 
 def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -190,6 +247,14 @@ def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]]
 
     if re.search(r"편입생|편입|직장인|처음|어떤\s*과목부터|과목\s*추천|수강\s*순서|로드맵|듣기\s*좋은|듣기\s*쉬운", normalized):
         return _result("course_roadmap", 0.88, entities, normalized, "수강 로드맵/추천 질문")
+
+    configured_intent, confidence, reason = _match_configured_intent(normalized)
+    if configured_intent:
+        if configured_intent == "faculty":
+            configured_intent = "faculty_list"
+        if configured_intent == "transfer":
+            configured_intent = "course_roadmap"
+        return _result(configured_intent, confidence, entities, normalized, reason)
 
     professor_keywords = dictionary.get("professor_keywords") or []
     if _contains_any(normalized, professor_keywords) or re.fullmatch(r"교수(?:진)?", compact):

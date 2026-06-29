@@ -6,6 +6,7 @@ import logging
 import secrets
 import threading
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,8 @@ index = SearchIndex()
 crawl_lock = threading.Lock()
 index_job_lock = threading.Lock()
 index_load_lock = threading.Lock()
+conversation_lock = threading.Lock()
+conversation_store: dict[str, deque[dict[str, str]]] = {}
 job_state: dict[str, Any] = {
     "crawl": {
         "running": False,
@@ -156,6 +159,28 @@ def attach_request_metadata(result: dict[str, Any], session_id: str, request_id:
         result["llm_type"] = req.llm_type
     result["allow_llm"] = bool(req.allow_llm)
     result["requires_llm_confirmation"] = bool(result.get("requires_llm_confirmation"))
+    return result
+
+
+def conversation_history(session_id: str, incoming: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+    """session_id별 최근 대화만 사용한다. 다른 사용자 대화는 절대 공유하지 않는다."""
+    if incoming:
+        return incoming[-10:]
+    with conversation_lock:
+        return list(conversation_store.get(session_id, deque(maxlen=10)))
+
+
+def remember_conversation(session_id: str, question: str, result: dict[str, Any]) -> None:
+    with conversation_lock:
+        history = conversation_store.setdefault(session_id, deque(maxlen=10))
+        history.append({"role": "user", "content": sanitize_input(question, 300)})
+        history.append({"role": "assistant", "content": sanitize_input(result.get("summary") or result.get("answer") or "", 500)})
+
+
+def finalize_chat_response(req: ChatRequest, result: dict[str, Any], session_id: str, request_id: str) -> dict[str, Any]:
+    attach_request_metadata(result, session_id, request_id, req)
+    remember_conversation(session_id, req.question, result)
+    record_interaction_async(req.question, result)
     return result
 
 
@@ -628,38 +653,33 @@ def chat(req: ChatRequest):
     session_id, request_id = request_ids(req)
     session_short = session_id[:8]
     clean_question = sanitize_input(req.question)
+    history = conversation_history(session_id, req.history)
     casual = casual_response(clean_question)
     if casual:
         casual["elapsed_ms"] = 0
-        attach_request_metadata(casual, session_id, request_id, req)
-        record_interaction_async(req.question, casual)
-        return casual
-    if match_curated(clean_question, None):
+        return finalize_chat_response(req, casual, session_id, request_id)
+    if match_curated(clean_question, history):
         result = answer_question(
             clean_question,
-            history=None,
+            history=history,
             allow_llm=req.allow_llm,
             llm_type=req.llm_type,
             session_id=session_id,
             request_id=request_id,
             index=index,
         )
-        attach_request_metadata(result, session_id, request_id, req)
-        record_interaction_async(req.question, result)
-        return result
+        return finalize_chat_response(req, result, session_id, request_id)
     if classify_intent(clean_question, index) == "course_difficulty":
         result = answer_question(
             clean_question,
-            history=None,
+            history=history,
             allow_llm=req.allow_llm,
             llm_type=req.llm_type,
             session_id=session_id,
             request_id=request_id,
             index=index,
         )
-        attach_request_metadata(result, session_id, request_id, req)
-        record_interaction_async(req.question, result)
-        return result
+        return finalize_chat_response(req, result, session_id, request_id)
     if index.status()["documents"] == 0:
         logger.warning(
             "[CHAT] empty index detected; attempting lazy load session=%s question_prefix=%r notion_connected=%s",
@@ -689,18 +709,16 @@ def chat(req: ChatRequest):
                 "failure_reason": runtime_state["last_error"] or "검색 인덱스 문서 0개",
                 "diagnostics": debug_index_payload(),
             }
-            attach_request_metadata(result, session_id, request_id, req)
             logger.error(
                 "[CHAT] search unavailable session=%s mode=%s error=%s",
                 session_short,
                 mode,
                 result["failure_reason"],
             )
-            record_interaction_async(req.question, result)
-            return result
+            return finalize_chat_response(req, result, session_id, request_id)
     result = answer_question(
         req.question,
-        history=None,
+        history=history,
         allow_llm=req.allow_llm,
         llm_type=req.llm_type,
         session_id=session_id,
@@ -716,11 +734,10 @@ def chat(req: ChatRequest):
     }
     if result.get("requires_llm_confirmation"):
         result["answer"] = (
-            f"공식 지식 DB {index.status()['documents']}개 문서를 검색했지만 충분한 근거를 찾지 못했습니다. "
-            "제한된 범위에서 LLM 보조 검색을 진행할까요?"
+            "현재 공식 데이터에서 관련 정보를 찾지 못했습니다. "
+            "원하시면 AI 보조 답변을 통해 관련 정보를 추가로 안내해드릴 수 있습니다."
         )
-    record_interaction_async(req.question, result)
-    return result
+    return finalize_chat_response(req, result, session_id, request_id)
 
 
 def debug_index_payload() -> dict[str, Any]:

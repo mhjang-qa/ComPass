@@ -7,3 +7,4 @@ data/*.json
 !data/.gitkeep
 !data/curated_knowledge.json
 !data/intent_dictionary.json
+!data/intents.json

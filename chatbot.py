@@ -51,6 +51,7 @@ SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
 SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
 ROUTER_TO_INTERNAL_INTENT = {
+    "recent_notice": "notice_list",
     "professor_list": "faculty",
     "professor_detail": "faculty_detail",
     "faculty_list": "faculty",
@@ -65,6 +66,9 @@ ROUTER_TO_INTERNAL_INTENT = {
     "course_grade_strategy": "course_grade_strategy",
     "schedule": "schedule_list",
     "notice": "notice_list",
+    "transfer": "course_roadmap",
+    "exam": "text",
+    "scholarship": "text",
     "graduation": "text",
     "faq": "faq_list",
     "contact": "text",
@@ -355,8 +359,8 @@ def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
         "반드시 JSON만 반환하라.\n"
         "Intent:\n"
         "faculty_list, faculty_detail, curriculum, course_detail, course_difficulty,\n"
-        "course_grade_strategy, course_order, course_roadmap, notice, schedule,\n"
-        "graduation, faq, contact, out_of_scope, general_search\n"
+        "course_grade_strategy, course_order, course_roadmap, recent_notice, notice, schedule,\n"
+        "graduation, transfer, exam, scholarship, faq, contact, out_of_scope, general_search\n"
         f"질문:\n{question}\n"
         "반환 예:\n"
         "{\"intent\":\"course_grade_strategy\",\"confidence\":0.82,\"reason\":\"성적 목표와 학습 방법을 묻는 질문\"}"
@@ -3168,8 +3172,8 @@ def answer_question(
     if not allow_llm:
         return {
             "answer": (
-                "공식 지식 DB에서 충분한 근거를 찾지 못했습니다.\n"
-                "공식 정보 범위 안에서 AI 보조 답변을 시도해볼까요?"
+                "현재 공식 데이터에서 관련 정보를 찾지 못했습니다.\n"
+                "원하시면 AI 보조 답변을 통해 관련 정보를 추가로 안내해드릴 수 있습니다."
             ),
             "answer_type": "text",
             "summary": "공식 데이터에서 충분한 근거를 찾지 못했습니다.",

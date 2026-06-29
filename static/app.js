@@ -3,7 +3,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const messages = $("#messages");
 const appShell = $("#appShell");
 const chatLauncher = $("#chatLauncher");
-const ADMIN_TABS = new Set(["crawl", "index", "stats"]);
+const ADMIN_TABS = new Set(["system", "crawl", "intents", "index", "stats", "quick", "icons"]);
 const APP_CONFIG = window.COMPASS_CONFIG;
 const STATIC_BASE = (() => {
   if (window.COMPASS_STATIC_BASE) return window.COMPASS_STATIC_BASE.replace(/\/$/, "");
@@ -18,6 +18,19 @@ const pendingByQuestion = new Map();
 let isChatPending = false;
 const DEFAULT_CHAT_PLACEHOLDER = "궁금한 컴퓨터과학과 정보를 질문해보세요";
 const PENDING_CHAT_PLACEHOLDER = "답변을 준비하고 있습니다...";
+const QUICK_QUESTIONS_KEY = "COMPASS_QUICK_QUESTIONS";
+const ICON_CONFIG_KEY = "COMPASS_ICON_CONFIG";
+const DEFAULT_QUICK_QUESTIONS = [
+  { id: 1, label: "교육과정", message: "컴퓨터과학과 교육과정을 알려줘", intent: "curriculum", enabled: true, sortOrder: 1 },
+  { id: 2, label: "교수진", message: "컴퓨터과학과 교수진을 알려줘", intent: "faculty", enabled: true, sortOrder: 2 },
+  { id: 3, label: "최근 공지", message: "컴퓨터과학과 최근 공지를 알려줘", intent: "recent_notice", enabled: true, sortOrder: 3 },
+  { id: 4, label: "학과 일정", message: "컴퓨터과학과 학과 일정을 알려줘", intent: "schedule", enabled: true, sortOrder: 4 },
+];
+const DEFAULT_ICONS = {
+  externalIcon: `${STATIC_BASE}/icons/chatbot-external.png`,
+  internalIcon: `${STATIC_BASE}/icons/chatbot-internal.png`,
+  faviconIcon: `${STATIC_BASE}/icons/favicon-32x32.png`,
+};
 
 function getSessionId() {
   let sessionId = sessionStorage.getItem("compass_session_id");
@@ -157,7 +170,7 @@ function updateAdminUi() {
 }
 
 function openAdminLogin(tabName) {
-  pendingAdminTab = ADMIN_TABS.has(tabName) ? tabName : "crawl";
+  pendingAdminTab = ADMIN_TABS.has(tabName) ? tabName : "system";
   $("#adminLoginError").textContent = "";
   $("#adminLoginPassword").value = "";
   $("#adminLoginModal").hidden = false;
@@ -175,9 +188,13 @@ async function enterAdminTab(tabName) {
     return;
   }
   activateTab(tabName);
+  if (tabName === "system") await loadSystemDashboard();
   if (tabName === "crawl") await loadKnowledge();
+  if (tabName === "intents") renderIntentOverview();
   if (tabName === "index") await loadIndexStatus();
   if (tabName === "stats") await loadStats();
+  if (tabName === "quick") renderQuickQuestionManager();
+  if (tabName === "icons") renderIconManager();
 }
 
 async function jsonFetch(url, options = {}) {
@@ -253,6 +270,205 @@ function appendSourceLinks(container, sources = []) {
     sourceList.appendChild(link);
   });
   container.appendChild(sourceList);
+}
+
+function normalizeQuickQuestions(items) {
+  const source = Array.isArray(items) && items.length ? items : DEFAULT_QUICK_QUESTIONS;
+  return source.map((item, index) => ({
+    id: Number(item.id || Date.now() + index),
+    label: String(item.label || "").trim() || "추천 질문",
+    message: String(item.message || "").trim() || String(item.label || "").trim(),
+    intent: String(item.intent || "").trim(),
+    enabled: item.enabled !== false,
+    sortOrder: Number(item.sortOrder || index + 1),
+  })).sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+}
+
+function loadQuickQuestions() {
+  try {
+    return normalizeQuickQuestions(JSON.parse(localStorage.getItem(QUICK_QUESTIONS_KEY) || "[]"));
+  } catch {
+    return normalizeQuickQuestions(DEFAULT_QUICK_QUESTIONS);
+  }
+}
+
+function saveQuickQuestions(items) {
+  const normalized = normalizeQuickQuestions(items).map((item, index) => ({ ...item, sortOrder: index + 1 }));
+  localStorage.setItem(QUICK_QUESTIONS_KEY, JSON.stringify(normalized));
+  renderQuickQuestions();
+  renderQuickQuestionManager();
+  return normalized;
+}
+
+function resetQuickQuestions() {
+  localStorage.setItem(QUICK_QUESTIONS_KEY, JSON.stringify(DEFAULT_QUICK_QUESTIONS));
+  renderQuickQuestions();
+  renderQuickQuestionManager();
+}
+
+function renderQuickQuestions() {
+  const container = $(".quick-actions");
+  if (!container) return;
+  const items = loadQuickQuestions().filter((item) => item.enabled).sort((a, b) => a.sortOrder - b.sortOrder);
+  container.innerHTML = items.map((item) => (
+    `<button data-question="${escapeHtml(item.message)}" data-intent="${escapeHtml(item.intent)}">${escapeHtml(item.label)}</button>`
+  )).join("");
+}
+
+function updateQuickQuestion(id, patch) {
+  const items = loadQuickQuestions().map((item) => (item.id === id ? { ...item, ...patch } : item));
+  saveQuickQuestions(items);
+}
+
+function moveQuickQuestion(id, direction) {
+  const items = loadQuickQuestions();
+  const index = items.findIndex((item) => item.id === id);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= items.length) return;
+  [items[index], items[target]] = [items[target], items[index]];
+  saveQuickQuestions(items);
+}
+
+function renderQuickQuestionManager() {
+  const tbody = $("#quickQuestionRows");
+  if (!tbody) return;
+  const items = loadQuickQuestions();
+  $("#quickQuestionCount").textContent = `총 ${items.length}개`;
+  tbody.innerHTML = items.map((item, index) => `
+    <tr data-id="${item.id}">
+      <td><label class="toggle-cell"><input type="checkbox" data-field="enabled" ${item.enabled ? "checked" : ""}> ON</label></td>
+      <td class="row-actions">
+        <button type="button" data-action="up" ${index === 0 ? "disabled" : ""}>↑</button>
+        <button type="button" data-action="down" ${index === items.length - 1 ? "disabled" : ""}>↓</button>
+      </td>
+      <td><input data-field="label" value="${escapeHtml(item.label)}"></td>
+      <td><input data-field="message" value="${escapeHtml(item.message)}"></td>
+      <td><input data-field="intent" value="${escapeHtml(item.intent)}"></td>
+      <td class="row-actions">
+        <button type="button" data-action="save">저장</button>
+        <button type="button" data-action="delete">삭제</button>
+      </td>
+    </tr>
+  `).join("") || '<tr><td colspan="6">등록된 추천 질문이 없습니다.</td></tr>';
+}
+
+function loadIconConfig() {
+  try {
+    return { ...DEFAULT_ICONS, ...JSON.parse(localStorage.getItem(ICON_CONFIG_KEY) || "{}") };
+  } catch {
+    return { ...DEFAULT_ICONS };
+  }
+}
+
+function saveIconConfig(config) {
+  localStorage.setItem(ICON_CONFIG_KEY, JSON.stringify({ ...loadIconConfig(), ...config }));
+  applyIconConfig();
+  renderIconManager();
+}
+
+function resetIconConfig() {
+  localStorage.removeItem(ICON_CONFIG_KEY);
+  applyIconConfig();
+  renderIconManager();
+}
+
+function updateFavicon(url) {
+  const selectors = [
+    'link[rel="icon"]',
+    'link[rel="apple-touch-icon"]',
+  ];
+  selectors.forEach((selector) => {
+    $$(selector).forEach((link) => { link.href = url; });
+  });
+}
+
+function applyIconConfig() {
+  const config = loadIconConfig();
+  $$(".launcher-compass img").forEach((img) => { img.src = config.externalIcon; });
+  $$(".topbar-logo, .bot-mark img, .loading-icon img").forEach((img) => { img.src = config.internalIcon; });
+  updateFavicon(config.faviconIcon);
+}
+
+function validatePngFile(file) {
+  if (!file) return "파일을 선택해 주세요.";
+  if (file.type !== "image/png") return "PNG 파일만 업로드할 수 있습니다.";
+  if (file.size > 1024 * 1024) return "아이콘 파일은 1MB 이하를 권장합니다.";
+  return "";
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("파일을 읽지 못했습니다."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderIconManager() {
+  const config = loadIconConfig();
+  const mapping = {
+    previewExternalIcon: config.externalIcon,
+    previewInternalIcon: config.internalIcon,
+    previewFaviconIcon: config.faviconIcon,
+  };
+  Object.entries(mapping).forEach(([id, src]) => {
+    const img = $(`#${id}`);
+    if (img) img.src = src;
+  });
+}
+
+function renderIntentOverview() {
+  const container = $("#intentOverview");
+  if (!container) return;
+  const intentNames = [
+    "recent_notice",
+    "faculty",
+    "schedule",
+    "curriculum",
+    "graduation",
+    "transfer",
+    "exam",
+    "scholarship",
+    "faq",
+    "contact",
+  ];
+  container.innerHTML = `
+    <div class="metric"><span>등록된 인텐트 수</span><strong>${intentNames.length}</strong></div>
+    <div class="metric"><span>운영 파일</span><strong>data/intents.json</strong></div>
+    <div class="metric"><span>검색 라우팅</span><strong>Intent 우선</strong></div>
+    <div class="metric"><span>현재 인텐트</span><strong>${intentNames.map(escapeHtml).join(", ")}</strong></div>
+  `;
+}
+
+async function loadSystemDashboard() {
+  const container = $("#systemDashboard");
+  if (!container) return;
+  container.innerHTML = '<div class="metric"><span>상태</span><strong>불러오는 중…</strong></div>';
+  const quickCount = loadQuickQuestions().length;
+  try {
+    const [health, indexStatus, crawlStatus] = await Promise.all([
+      jsonFetch("/api/health"),
+      jsonFetch("/api/index/status", { headers: adminHeaders() }).catch(() => ({})),
+      jsonFetch("/api/crawl/status", { headers: adminHeaders() }).catch(() => ({})),
+    ]);
+    const tierCounts = indexStatus.tier_counts || {};
+    const intentCount = 10;
+    const lastCrawl = crawlStatus.updated_at || crawlStatus.result?.timestamp || "";
+    container.innerHTML = `
+      <div class="metric"><span>등록된 인텐트 수</span><strong>${intentCount}</strong></div>
+      <div class="metric"><span>등록된 추천 질문 수</span><strong>${quickCount}</strong></div>
+      <div class="metric"><span>크롤링 문서 수</span><strong>${Number(indexStatus.documents || health.index?.documents || 0).toLocaleString("ko-KR")}</strong></div>
+      <div class="metric"><span>마지막 크롤링 시간</span><strong>${escapeHtml(lastCrawl ? formatKstDateTime(lastCrawl, true) : "기록 없음")}</strong></div>
+      <div class="metric"><span>챗봇 버전</span><strong>ComPass v2.0</strong></div>
+      <div class="metric"><span>마지막 배포 시간</span><strong>${escapeHtml(formatKstDateTime(document.lastModified, true))}</strong></div>
+      <div class="metric"><span>CORE 문서</span><strong>${Number(tierCounts.CORE || 0).toLocaleString("ko-KR")}</strong></div>
+      <div class="metric"><span>최근 공지 포함</span><strong>${Number(tierCounts.ACTIVE_NOTICE || 0).toLocaleString("ko-KR")}</strong></div>
+      <div class="metric"><span>운영 상태</span><strong>${health.ok ? "정상" : "확인 필요"}</strong></div>
+    `;
+  } catch (error) {
+    container.innerHTML = `<div class="metric"><span>상태</span><strong>${escapeHtml(error.message)}</strong></div>`;
+  }
 }
 
 function appendField(container, label, value) {
@@ -866,7 +1082,7 @@ function createSearchLoading() {
   const icon = document.createElement("span");
   icon.className = "loading-icon";
   const iconImage = document.createElement("img");
-  iconImage.src = `${STATIC_BASE}/icons/icon.png`;
+  iconImage.src = loadIconConfig().internalIcon;
   iconImage.alt = "";
   iconImage.onerror = () => { iconImage.style.display = "none"; };
   icon.appendChild(iconImage);
@@ -990,14 +1206,16 @@ $("#question").addEventListener("keydown", (event) => {
 $("#question").addEventListener("focus", () => {
   updateAppHeight();
 });
-$$("[data-question]").forEach((button) => button.addEventListener("click", () => {
+$(".quick-actions")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-question]");
+  if (!button) return;
   if (isChatPending) return;
   sendQuestion(button.dataset.question);
-}));
+});
 
 $$(".tab").forEach((button) => button.addEventListener("click", () => {
   if (button.dataset.action === "admin-login") {
-    openAdminLogin("crawl");
+    openAdminLogin("system");
     return;
   }
   const tabName = button.dataset.tab;
@@ -1041,6 +1259,87 @@ $("#adminLogout").addEventListener("click", () => {
   sessionStorage.removeItem("admin_auth");
   updateAdminUi();
   activateTab("chat");
+});
+
+$("#refreshSystemDashboard")?.addEventListener("click", loadSystemDashboard);
+
+$("#quickQuestionForm")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const label = $("#quickLabel").value.trim();
+  const message = $("#quickMessage").value.trim();
+  const intent = $("#quickIntent").value.trim();
+  if (!label || !message) return;
+  const items = loadQuickQuestions();
+  items.push({
+    id: Date.now(),
+    label,
+    message,
+    intent,
+    enabled: true,
+    sortOrder: items.length + 1,
+  });
+  saveQuickQuestions(items);
+  event.currentTarget.reset();
+});
+
+$("#resetQuickQuestions")?.addEventListener("click", () => {
+  if (confirm("추천 질문을 기본값으로 복원할까요?")) resetQuickQuestions();
+});
+
+$("#quickQuestionRows")?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const row = button.closest("tr[data-id]");
+  const id = Number(row?.dataset.id || 0);
+  const action = button.dataset.action;
+  if (action === "up") moveQuickQuestion(id, -1);
+  if (action === "down") moveQuickQuestion(id, 1);
+  if (action === "delete") saveQuickQuestions(loadQuickQuestions().filter((item) => item.id !== id));
+  if (action === "save") {
+    updateQuickQuestion(id, {
+      label: row.querySelector('[data-field="label"]').value.trim(),
+      message: row.querySelector('[data-field="message"]').value.trim(),
+      intent: row.querySelector('[data-field="intent"]').value.trim(),
+      enabled: row.querySelector('[data-field="enabled"]').checked,
+    });
+  }
+});
+
+$("#quickQuestionRows")?.addEventListener("change", (event) => {
+  if (event.target.matches('[data-field="enabled"]')) {
+    const row = event.target.closest("tr[data-id]");
+    updateQuickQuestion(Number(row.dataset.id), { enabled: event.target.checked });
+  }
+});
+
+async function handleIconUpload(field, input) {
+  const file = input.files?.[0];
+  const error = validatePngFile(file);
+  const status = $("#iconAdminStatus");
+  if (error) {
+    status.textContent = error;
+    input.value = "";
+    return;
+  }
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    saveIconConfig({ [field]: dataUrl });
+    status.textContent = "아이콘이 저장되어 즉시 반영되었습니다.";
+  } catch (err) {
+    status.textContent = err.message || "아이콘 저장에 실패했습니다.";
+  } finally {
+    input.value = "";
+  }
+}
+
+$("#externalIconInput")?.addEventListener("change", (event) => handleIconUpload("externalIcon", event.target));
+$("#internalIconInput")?.addEventListener("change", (event) => handleIconUpload("internalIcon", event.target));
+$("#faviconIconInput")?.addEventListener("change", (event) => handleIconUpload("faviconIcon", event.target));
+$("#resetIconConfig")?.addEventListener("click", () => {
+  if (confirm("챗봇 아이콘을 기본값으로 복원할까요?")) {
+    resetIconConfig();
+    $("#iconAdminStatus").textContent = "기본 아이콘으로 복원했습니다.";
+  }
 });
 
 async function pollCrawl() {
@@ -1236,5 +1535,7 @@ async function wakeServer() {
 }
 wakeServer();
 applyAppConstants();
+renderQuickQuestions();
+applyIconConfig();
 updateAdminUi();
 updateAppHeight();

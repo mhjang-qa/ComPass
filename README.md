@@ -81,6 +81,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 ├── config.py               # 환경변수 및 공통 설정
 ├── crawler.py              # 홈페이지 크롤러
 ├── intent_router.py        # 검색 전 NLU/Intent Routing
+├── synonyms.py             # Intent 정규화용 유사어 사전
 ├── notion_client.py        # Notion 조회/upsert 클라이언트
 ├── search_index.py         # 로컬 검색 인덱스
 ├── chatbot.py              # 범위 제한, DB 우선 답변, LLM fallback
@@ -88,13 +89,24 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 ├── templates/index.html    # 단일 관리자/챗봇 화면
 ├── static/style.css
 ├── static/app.js
-├── data/                   # 크롤링 스냅샷, 검색 인덱스, intent_dictionary.json
+├── data/                   # 크롤링 스냅샷, 검색 인덱스, intents.json, intent_dictionary.json
 ├── requirements.txt
 ├── .env.example
 └── render.yaml
 ```
 
 ## 처리 흐름
+
+ComPass v2.0은 단순 검색보다 Intent Engine을 먼저 실행합니다.
+
+1. Exact Match: 버튼/추천 질문과 고빈도 문장을 우선 매칭합니다.
+2. Intent Match: `data/intents.json`의 intent별 키워드를 검사합니다.
+3. Synonym Match: `synonyms.py`의 유사어를 공식 용어로 정규화합니다.
+4. Curated Knowledge: 졸업·시험범위 등 검증 지식을 확인합니다.
+5. SearchIndex: intent별 Search Scope 안에서만 RAG 검색합니다.
+6. LLM Fallback: 공식 근거가 부족하고 사용자가 동의한 경우에만 제한적으로 사용합니다.
+
+주요 Intent는 `recent_notice`, `faculty`, `curriculum`, `schedule`, `graduation`, `transfer`, `exam`, `scholarship`입니다.
 
 ```mermaid
 flowchart LR
@@ -426,11 +438,30 @@ ComPass는 문서 유형과 유효기간에 따라 지식 데이터를 다음 �
 ### 관리자 메뉴 접근 정책
 
 - 비로그인 상태의 상단 메뉴는 `챗봇`, `관리자 페이지`만 표시합니다.
-- `크롤링 관리`, `검색 인덱스`, `질문 통계` 메뉴와 관리자 패널은 인증 전 숨김 처리합니다.
+- `시스템 정보`, `크롤링 관리`, `인텐트 관리`, `검색 인덱스`, `질문 통계`, `추천 질문 관리`, `챗봇 아이콘 관리` 메뉴와 관리자 패널은 인증 전 숨김 처리합니다.
 - `관리자 페이지`를 누르면 관리자 로그인 모달을 표시합니다.
-- 로그인 성공 후에만 관리자 메뉴 3개를 노출하고 기본 탭은 `크롤링 관리`로 이동합니다.
+- 로그인 성공 후에만 관리자 메뉴를 노출하고 기본 탭은 `시스템 정보`로 이동합니다.
 - 로그아웃하면 관리자 메뉴를 다시 숨기고 챗봇 탭으로 복귀합니다.
 - 관리자 API는 기존처럼 `X-Admin-Password` 헤더와 `ADMIN_PASSWORD` 환경변수로 서버에서 검증합니다.
+
+### 관리자 CMS 기능
+
+운영자는 코드 수정 없이 브라우저 단위 설정을 관리할 수 있습니다. 현재 저장소 없는 경량 운영을 위해 `localStorage`를 사용합니다.
+
+- 추천 질문 관리
+  - 저장 키: `COMPASS_QUICK_QUESTIONS`
+  - 기본값: 교육과정, 교수진, 최근 공지, 학과 일정
+  - 필드: `id`, `label`, `message`, `intent`, `enabled`, `sortOrder`
+  - 기능: 추가, 수정, 삭제, ON/OFF, 위/아래 순서 변경, 기본값 복원
+  - 챗봇 하단 빠른 질문은 `enabled=true` 항목만 `sortOrder` 오름차순으로 표시합니다.
+- 챗봇 아이콘 관리
+  - 저장 키: `COMPASS_ICON_CONFIG`
+  - 관리 대상: 외부 플로팅 버튼, 내부 헤더/메시지 아이콘, favicon
+  - PNG만 허용하며 1MB를 초과하는 파일은 차단합니다.
+  - 저장 즉시 현재 화면의 버튼, 헤더, 환영 메시지, 검색 중 아이콘, favicon에 반영합니다.
+  - 기본 아이콘 경로: `static/icons/chatbot-external.png`, `static/icons/chatbot-internal.png`, `static/icons/favicon-32x32.png`
+- 시스템 정보 대시보드
+  - 등록된 인텐트 수, 등록된 추천 질문 수, 크롤링 문서 수, 마지막 크롤링 시간, 챗봇 버전, 마지막 배포 시간, 계층별 문서 수를 카드로 표시합니다.
 
 ### 크롤링/Notion 저장 상태 관리
 
@@ -493,7 +524,7 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 - `schedule_explain`: 학과 일정 쉬운 설명
 - `general_explain`: 공식 데이터 기반 일반 설명
 
-동시접속 안정성을 위해 `/api/chat`은 사용자별 상태를 전역 변수에 저장하지 않습니다.
+동시접속 안정성을 위해 `/api/chat`은 `session_id`별로 최근 대화만 분리 보관합니다.
 
 - 프론트는 `sessionStorage`에 `compass_session_id`를 생성하고 모든 `/api/chat` 요청에 포함합니다.
 - 각 요청마다 `request_id`를 생성해 로딩 메시지와 응답을 매칭합니다.
@@ -501,6 +532,7 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 - 답변 생성 중에는 `isChatPending` 상태로 입력창·전송 버튼·Quick Button을 비활성화하고 placeholder를 `답변을 준비하고 있습니다...`로 변경합니다.
 - 요청 성공, 네트워크 오류, 서버 오류, Abort 상황 모두 `finally`에서 입력 잠금을 해제합니다.
 - 서버는 `session_id`가 없으면 UUID를 생성하고 응답 JSON 및 통계 DB에 포함합니다.
+- 서버 대화 이력은 `session_id` 기준 `deque(maxlen=10)`으로 관리하며 다른 사용자 질문을 공유하지 않습니다.
 - LLM prompt에는 과거 대화 history를 넣지 않고, 현재 질문과 현재 공식 검색 결과 context만 사용합니다.
 - 프론트는 `AbortController`로 중복 동일 질문 요청을 취소할 수 있으며, `request_id`가 다른 stale 응답은 UI에 반영하지 않습니다.
 

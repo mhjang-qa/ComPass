@@ -16,7 +16,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="manifest" href="/static/manifest.json">
-  <link rel="stylesheet" href="/static/style.css?v=20">
+  <link rel="stylesheet" href="/static/style.css?v=21">
 </head>
 <body>
   <div class="knou-home" aria-label="한국방송통신대학교 컴퓨터과학과 메인 화면">
@@ -81,9 +81,13 @@
     <nav class="tabs" aria-label="주요 메뉴">
       <button class="tab active" data-tab="chat">챗봇</button>
       <button class="tab admin-login-tab" data-action="admin-login" type="button">관리자 페이지</button>
+      <button class="tab admin-only" data-tab="system" type="button">시스템 정보</button>
       <button class="tab admin-only" data-tab="crawl" type="button">크롤링 관리</button>
+      <button class="tab admin-only" data-tab="intents" type="button">인텐트 관리</button>
       <button class="tab admin-only" data-tab="index" type="button">검색 인덱스</button>
       <button class="tab admin-only" data-tab="stats" type="button">질문 통계</button>
+      <button class="tab admin-only" data-tab="quick" type="button">추천 질문 관리</button>
+      <button class="tab admin-only" data-tab="icons" type="button">챗봇 아이콘 관리</button>
     </nav>
 
     <main>
@@ -98,16 +102,28 @@
           </div>
           <div id="messages" class="messages" aria-live="polite"></div>
           <div class="suggestions quick-actions">
+            <button data-question="컴퓨터과학과 최근 공지를 알려줘">최근 공지</button>
             <button data-question="컴퓨터과학과 교육과정을 알려줘">교육과정</button>
             <button data-question="컴퓨터과학과 교수진 정보를 알려줘">교수진</button>
-            <button data-question="컴퓨터과학과 최근 공지를 알려줘">최근 공지</button>
             <button data-question="컴퓨터과학과 학과 일정을 알려줘">학과 일정</button>
+            <button data-question="졸업 요건을 알려줘">졸업 요건</button>
+            <button data-question="편입 안내를 알려줘">편입 안내</button>
+            <button data-question="시험 일정을 알려줘">시험 일정</button>
+            <button data-question="장학금 안내를 알려줘">장학금 안내</button>
           </div>
           <form id="chatForm" class="composer">
             <textarea id="question" rows="1" maxlength="1000" placeholder="궁금한 컴퓨터과학과 정보를 질문해보세요"></textarea>
             <button id="sendButton" type="submit">전송</button>
           </form>
         </div>
+      </section>
+
+      <section id="panel-system" class="panel admin-panel">
+        <div class="section-head">
+          <div><p class="eyebrow">SYSTEM</p><h2>시스템 정보</h2></div>
+          <button id="refreshSystemDashboard" class="primary" type="button">새로고침</button>
+        </div>
+        <div id="systemDashboard" class="metric-grid admin-dashboard"></div>
       </section>
 
       <section id="panel-crawl" class="panel admin-panel">
@@ -163,6 +179,22 @@
         </div>
       </section>
 
+      <section id="panel-intents" class="panel admin-panel">
+        <div class="section-head">
+          <div><p class="eyebrow">INTENT</p><h2>인텐트 관리</h2></div>
+        </div>
+        <div class="status-card">
+          <strong>현재 운영 방식</strong>
+          <p>ComPass는 자연어 질문을 먼저 Intent로 분류한 뒤, 해당 범위의 공식 데이터만 검색합니다.</p>
+          <ul class="admin-note-list">
+            <li>인텐트 사전: <code>data/intents.json</code></li>
+            <li>유사어 사전: <code>synonyms.py</code></li>
+            <li>관리자 화면 직접 편집은 다음 단계에서 연결 예정입니다.</li>
+          </ul>
+        </div>
+        <div id="intentOverview" class="metric-grid"></div>
+      </section>
+
       <section id="panel-index" class="panel admin-panel">
         <div class="section-head">
           <div><p class="eyebrow">RETRIEVAL</p><h2>검색 인덱스</h2></div>
@@ -209,6 +241,64 @@
           <div class="table-wrap"><table><thead><tr><th>질문일시</th><th>질문</th><th>방식</th><th>점수</th><th>응답시간</th></tr></thead><tbody id="statsRows"></tbody></table></div>
         </div>
       </section>
+
+      <section id="panel-quick" class="panel admin-panel">
+        <div class="section-head">
+          <div><p class="eyebrow">CMS</p><h2>추천 질문 관리</h2></div>
+          <div class="section-actions">
+            <button id="resetQuickQuestions" type="button">기본값 복원</button>
+          </div>
+        </div>
+        <form id="quickQuestionForm" class="admin-form-grid">
+          <label>버튼명<input id="quickLabel" maxlength="30" placeholder="예: 교육과정" required></label>
+          <label>전송 질문<input id="quickMessage" maxlength="200" placeholder="예: 컴퓨터과학과 교육과정을 알려줘" required></label>
+          <label>Intent<input id="quickIntent" maxlength="60" placeholder="예: curriculum"></label>
+          <button class="primary" type="submit">추천 질문 추가</button>
+        </form>
+        <div class="table-card">
+          <div class="card-head"><h3>등록된 추천 질문</h3><span id="quickQuestionCount" class="admin-muted"></span></div>
+          <div class="table-wrap">
+            <table class="admin-edit-table">
+              <thead><tr><th>노출</th><th>순서</th><th>버튼명</th><th>전송 질문</th><th>Intent</th><th>관리</th></tr></thead>
+              <tbody id="quickQuestionRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-icons" class="panel admin-panel">
+        <div class="section-head">
+          <div><p class="eyebrow">BRANDING</p><h2>챗봇 아이콘 관리</h2></div>
+          <button id="resetIconConfig" type="button">기본 아이콘 복원</button>
+        </div>
+        <div class="icon-admin-grid">
+          <article class="icon-admin-card" data-icon-field="externalIcon">
+            <img id="previewExternalIcon" alt="외부 챗봇 아이콘 미리보기">
+            <div>
+              <h3>외부 챗봇 아이콘</h3>
+              <p>우측 하단 PIP 버튼 · 권장 48×48 PNG</p>
+              <input id="externalIconInput" type="file" accept="image/png">
+            </div>
+          </article>
+          <article class="icon-admin-card" data-icon-field="internalIcon">
+            <img id="previewInternalIcon" alt="내부 상단 아이콘 미리보기">
+            <div>
+              <h3>내부 상단 아이콘</h3>
+              <p>ComPass 헤더/메시지 프로필 · 권장 39×44 PNG</p>
+              <input id="internalIconInput" type="file" accept="image/png">
+            </div>
+          </article>
+          <article class="icon-admin-card" data-icon-field="faviconIcon">
+            <img id="previewFaviconIcon" alt="favicon 미리보기">
+            <div>
+              <h3>favicon</h3>
+              <p>브라우저 탭 아이콘 · 권장 32×32 PNG</p>
+              <input id="faviconIconInput" type="file" accept="image/png">
+            </div>
+          </article>
+        </div>
+        <p id="iconAdminStatus" class="admin-muted" role="status"></p>
+      </section>
     </main>
   </div>
   <div id="adminLoginModal" class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle" hidden>
@@ -232,6 +322,6 @@
   </div>
   <script src="/static/config.js?v=2"></script>
   <script src="/static/time.js?v=1"></script>
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

@@ -43,10 +43,13 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "인공지능 C이상 맞으려면": "course_grade_strategy",
         "데이터베이스시스템 듣기 전에 뭐 알아야 해": "course_order",
         "편입생인데 어떤 과목부터 들어": "course_roadmap",
-        "최근 공지": "notice",
+        "최근 공지": "recent_notice",
+        "학과에서 새로 올라온 공지 있어?": "recent_notice",
         "학과 일정": "schedule",
         "시험 일정": "schedule",
         "졸업하려면 몇 학점": "graduation",
+        "편입 안내": "course_roadmap",
+        "장학금 안내": "scholarship",
         "학과 전화번호": "contact",
     }
 

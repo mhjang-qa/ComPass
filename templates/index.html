@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="{{ app_subtitle }} · 공식 데이터를 학생이 이해하기 쉽게 재해석하는 AI 학과 비서">
   <meta name="theme-color" content="#102a43">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="ComPass">
   <meta property="og:title" content="{{ app_name }}">
@@ -217,9 +218,10 @@
       <p class="eyebrow">ADMIN ACCESS</p>
       <h2 id="adminLoginTitle">관리자 로그인</h2>
       <p>관리자 기능을 사용하려면 비밀번호를 입력해주세요.</p>
+      <input type="text" name="username" autocomplete="username" class="sr-only" tabindex="-1" aria-hidden="true" value="admin">
       <label>
         관리자 비밀번호
-        <input id="adminLoginPassword" type="password" autocomplete="current-password" required>
+        <input id="adminLoginPassword" name="password" type="password" autocomplete="current-password" required>
       </label>
       <p id="adminLoginError" class="admin-login-error" role="alert"></p>
       <div class="modal-actions">

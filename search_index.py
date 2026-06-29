@@ -31,7 +31,7 @@ SYNONYMS = {
     "FAQ": ["자주하는질문", "자주 묻는 질문"],
 }
 FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
-CURRICULUM_URL = "https://cs.knou.ac.kr/cs1/4789/subview.do"
+CURRICULUM_URL = config.CURRICULUM_URL
 SCHEDULE_URL = config.SCHEDULE_URL
 NOTICE_URL = config.NOTICE_URL
 COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"

@@ -5,6 +5,11 @@ const appShell = $("#appShell");
 const chatLauncher = $("#chatLauncher");
 const ADMIN_TABS = new Set(["crawl", "index", "stats"]);
 const APP_CONFIG = window.COMPASS_CONFIG;
+const STATIC_BASE = (() => {
+  if (window.COMPASS_STATIC_BASE) return window.COMPASS_STATIC_BASE.replace(/\/$/, "");
+  if (window.location.hostname.endsWith("github.io")) return "/ComPass/static";
+  return "/static";
+})();
 let pendingAdminTab = "";
 let adminPassword = "";
 const mobilePointer = window.matchMedia("(pointer: coarse)");
@@ -861,8 +866,9 @@ function createSearchLoading() {
   const icon = document.createElement("span");
   icon.className = "loading-icon";
   const iconImage = document.createElement("img");
-  iconImage.src = "/static/icons/icon.png";
+  iconImage.src = `${STATIC_BASE}/icons/icon.png`;
   iconImage.alt = "";
+  iconImage.onerror = () => { iconImage.style.display = "none"; };
   icon.appendChild(iconImage);
   const copy = document.createElement("div");
   copy.className = "loading-copy";

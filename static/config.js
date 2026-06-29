@@ -1,4 +1,7 @@
 window.COMPASS_CONFIG = Object.freeze({
+  APP_NAME: "ComPass",
+  BASE_PATH: "/ComPass",
+  DEPLOY_TARGET: "github-pages",
   appName: "ComPass",
   appSubtitle: "Computer Science X Compass · 학생들의 길잡이",
   appSubtitleLine1: "Computer Science X Compass",

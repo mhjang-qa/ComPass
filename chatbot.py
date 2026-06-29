@@ -203,6 +203,20 @@ COURSE_ROADMAP_RE = re.compile(
 )
 NOTICE_EXPLAIN_RE = re.compile(r"공지.*(쉽게|요약|설명|해석)|최근\s*공지.*(쉽게|요약|설명|해석)", re.IGNORECASE)
 SCHEDULE_EXPLAIN_RE = re.compile(r"일정.*(쉽게|요약|설명|해석)|학사\s*일정.*(쉽게|요약|설명|해석)", re.IGNORECASE)
+PRIORITY_NOTICE_QUERIES = {
+    "컴퓨터과학과최근공지를알려줘",
+    "컴퓨터과학과최근공지",
+    "최근공지",
+    "공지사항",
+    "학과공지",
+}
+PRIORITY_CURRICULUM_QUERIES = {
+    "컴퓨터과학과교육과정을알려줘",
+    "컴퓨터과학과교육과정",
+    "교육과정",
+    "교과과정",
+    "커리큘럼",
+}
 KNOWN_COURSE_NAMES = (
     "파이썬프로그래밍기초",
     "데이터베이스시스템",
@@ -459,6 +473,9 @@ def detect_faculty_member(question: str, index: SearchIndex | None = None) -> di
 
 def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
+    priority_intent = priority_button_intent(question)
+    if priority_intent:
+        return priority_intent
     if is_course_recommendation(question):
         return "course_recommendation"
     routed = analyze_question_intent(question, index)
@@ -514,6 +531,20 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     if COURSE_DETAIL_RE.search(question):
         return "course_detail"
     return _list_answer_type(question) or "text"
+
+
+def priority_button_intent(question: str) -> str:
+    """버튼/추천 질문은 검색 점수보다 우선해 고정 intent로 라우팅한다."""
+    compact = re.sub(r"[\s\?\!\.,~요]", "", question or "")
+    if compact in PRIORITY_NOTICE_QUERIES:
+        return "notice_list"
+    if compact in PRIORITY_CURRICULUM_QUERIES:
+        return "course_table"
+    if re.fullmatch(r"(최근)?공지사항?|학과공지", compact):
+        return "notice_list"
+    if re.fullmatch(r"교육과정|교과과정|커리큘럼", compact):
+        return "course_table"
+    return ""
 
 
 def retrieve_documents(
@@ -681,6 +712,13 @@ def build_structured_response(
             keywords=keywords,
             started=started,
         )
+    if answer_type == "schedule_list" and not items:
+        return build_no_upcoming_schedule_response(
+            sources=sources,
+            score=score,
+            keywords=keywords,
+            started=started,
+        )
     titles = {
         "faculty": "컴퓨터과학과 교수진 안내입니다.",
         "course_table": "컴퓨터과학과 교육과정 안내입니다.",
@@ -705,6 +743,138 @@ def build_structured_response(
         "keywords": keywords,
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
     }
+
+
+def build_no_upcoming_schedule_response(
+    *,
+    sources: list[dict[str, Any]],
+    score: float,
+    keywords: list[str],
+    started: float,
+) -> dict[str, Any]:
+    """다가오는 일정이 없을 때 과거 일정을 대신 노출하지 않고 공식 일정 페이지로 안내한다."""
+    return {
+        "answer": "학과 일정 안내입니다.",
+        "answer_type": "schedule_list",
+        "summary": "현재 등록된 다가오는 학과 일정이 없습니다.",
+        "note": "최신 일정은 학과 일정 공식 페이지에서 확인해 주세요.",
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "source_urls": [SCHEDULE_URL],
+        "actions": [{"type": "link", "label": "학과 일정 바로가기", "url": SCHEDULE_URL}],
+        "mode": "DB검색",
+        "sources": sources,
+        "score": score,
+        "keywords": keywords,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def build_curriculum_link_response(
+    *,
+    sources: list[dict[str, Any]] | None = None,
+    score: float = 100,
+    keywords: list[str] | None = None,
+    started: float,
+) -> dict[str, Any]:
+    """교육과정 데이터가 부족해도 공식 교육과정 페이지로 즉시 안내한다."""
+    return {
+        "answer": "컴퓨터과학과 교육과정 안내입니다.",
+        "answer_type": CompatibleAnswerType("curriculum_by_grade", "course_table"),
+        "summary": "학년별 전공 교과목과 이수 흐름은 공식 교육과정 페이지에서 확인할 수 있습니다.",
+        "groups": [],
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "source_urls": [CURRICULUM_URL],
+        "actions": [{"type": "link", "label": "교육과정 바로가기", "url": CURRICULUM_URL}],
+        "mode": "DB검색",
+        "sources": sources or [{"title": "컴퓨터과학과 교육과정", "url": CURRICULUM_URL, "score": score}],
+        "score": score,
+        "keywords": keywords or ["교육과정"],
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "structured_intent": "curriculum",
+        "search_scope": ["curriculum"],
+    }
+
+
+def build_notice_empty_response(
+    *,
+    started: float,
+    keywords: list[str] | None = None,
+) -> dict[str, Any]:
+    """공지 데이터가 없을 때 LLM 확인 대신 공식 공지 링크로 안내한다."""
+    return {
+        "answer": "컴퓨터과학과 최근 공지 안내입니다.",
+        "answer_type": "notice_list",
+        "summary": "현재 검색 인덱스에서 최신 공지를 확인하지 못했습니다. 공식 공지 페이지에서 최신 내용을 확인해 주세요.",
+        "items": [],
+        "display_limit": 3,
+        "total_count": 0,
+        "source_urls": [NOTICE_URL],
+        "actions": [{"type": "link", "label": "공지사항 바로가기", "url": NOTICE_URL}],
+        "mode": "DB검색",
+        "sources": [{"title": "컴퓨터과학과 공지사항", "url": NOTICE_URL, "score": 0}],
+        "score": 0,
+        "keywords": keywords or ["공지"],
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "structured_intent": "recent_notice",
+        "search_scope": ["notice"],
+    }
+
+
+def build_priority_intent_response(
+    intent: str,
+    question: str,
+    index: SearchIndex,
+    started: float,
+) -> dict[str, Any]:
+    """quick/exact intent는 검색 점수 미달 fallback을 거치지 않고 공식 안내를 반환한다."""
+    keywords = tokenize(question)
+    if intent == "course_table":
+        hits = retrieve_documents(index, question, "course_table")
+        items = normalize_results("course_table", hits, question)
+        if not items:
+            return build_curriculum_link_response(
+                sources=[{"title": "컴퓨터과학과 교육과정", "url": CURRICULUM_URL, "score": 100}],
+                score=100,
+                keywords=keywords,
+                started=started,
+            )
+        return build_structured_response(
+            "course_table",
+            items,
+            source_url=CURRICULUM_URL,
+            sources=[{"title": "컴퓨터과학과 교육과정", "url": CURRICULUM_URL, "score": hits[0].get("score", 100) if hits else 100}],
+            score=hits[0].get("score", 100) if hits else 100,
+            keywords=keywords,
+            started=started,
+        )
+    if intent == "notice_list":
+        hits = retrieve_documents(index, question, "notice_list")
+        items = normalize_results("notice_list", hits, question)
+        items.sort(key=lambda item: (item.get("date") or "", item.get("title") or ""), reverse=True)
+        if not items:
+            return build_notice_empty_response(started=started, keywords=keywords)
+        response = build_structured_response(
+            "notice_list",
+            items,
+            source_url=NOTICE_URL,
+            sources=[
+                {"title": item.get("title") or "공지사항", "url": item.get("source_url") or NOTICE_URL, "score": 100}
+                for item in items[:3]
+            ],
+            score=hits[0].get("score", 100) if hits else 100,
+            keywords=keywords,
+            started=started,
+        )
+        response["answer"] = "컴퓨터과학과 최근 공지 안내입니다."
+        response["summary"] = "최신 공지 3개를 먼저 안내드립니다."
+        response["structured_intent"] = "recent_notice"
+        response["search_scope"] = ["notice"]
+        return response
+    raise ValueError(f"지원하지 않는 priority intent: {intent}")
 
 
 def build_schedule_unavailable_response(started: float, question: str = "") -> dict[str, Any]:
@@ -1078,6 +1248,7 @@ def _notice_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """현재 날짜(KST) 기준 종료되지 않은 학과 일정만 날짜 오름차순으로 반환한다."""
     items: list[dict[str, Any]] = []
     seen = set()
     for hit in hits:
@@ -1123,17 +1294,68 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
-    def is_upcoming(item: dict[str, Any]) -> bool:
-        if not item["end_date"]:
-            return True
-        try:
-            return date.fromisoformat(item["end_date"]) >= today
-        except ValueError:
-            return False
+    # 정렬/필터링 기준: 종료일이 오늘보다 과거이면 지난 일정으로 제외하고,
+    # 진행 중이거나 미래 일정은 시작일이 가까운 순서로 노출한다.
+    upcoming: list[tuple[date, date, dict[str, Any]]] = []
+    for item in items:
+        if not validate_schedule_item(item):
+            continue
+        start_date, end_date = parse_schedule_item_dates(item)
+        if not start_date:
+            continue
+        effective_end = end_date or start_date
+        if effective_end < today:
+            continue
+        item["start_date"] = start_date.isoformat()
+        item["end_date"] = effective_end.isoformat()
+        sort_start = start_date if start_date >= today else today
+        upcoming.append((sort_start, effective_end, item))
+    return [
+        item
+        for _, _, item in sorted(upcoming, key=lambda row: (row[0], row[1], row[2]["title"]))
+    ]
 
-    upcoming = [item for item in items if is_upcoming(item)]
-    selected = upcoming or items
-    return sorted([item for item in selected if validate_schedule_item(item)], key=lambda item: (item["start_date"], item["title"]))
+
+def parse_schedule_date(value: str, *, default_year: int | None = None) -> date | None:
+    """학과 일정 날짜 파싱: YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD, YYYY년 MM월 DD일, MM.DD를 지원한다."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"(20\d{2})[-./년\s]+(\d{1,2})[-./월\s]+(\d{1,2})", text)
+    if match:
+        year, month, day = (int(match.group(index)) for index in (1, 2, 3))
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+    match = re.search(r"\b(\d{1,2})[.월/ -]+(\d{1,2})\b", text)
+    if match and default_year:
+        month, day = int(match.group(1)), int(match.group(2))
+        try:
+            return date(default_year, month, day)
+        except ValueError:
+            return None
+    return None
+
+
+def parse_schedule_item_dates(item: dict[str, Any]) -> tuple[date | None, date | None]:
+    """기간형 날짜는 종료일 기준으로 지난 일정 여부를 판단한다."""
+    start_raw = str(item.get("start_date") or "")
+    end_raw = str(item.get("end_date") or "")
+    combined = " ~ ".join(part for part in (start_raw, end_raw) if part)
+    if "~" in start_raw and not end_raw:
+        combined = start_raw
+    parts = re.split(r"\s*~\s*", combined, maxsplit=1)
+    start = parse_schedule_date(parts[0])
+    default_year = start.year if start else datetime.now(ZoneInfo("Asia/Seoul")).year
+    end_source = parts[1] if len(parts) > 1 else end_raw
+    end = parse_schedule_date(end_source, default_year=default_year) if end_source else start
+    if start and end and end < start and re.search(r"^\s*\d{1,2}[./월 -]+\d{1,2}", end_source or ""):
+        try:
+            end = date(start.year + 1, end.month, end.day)
+        except ValueError:
+            pass
+    return start, end
 
 
 def validate_schedule_document_hit(hit: dict[str, Any]) -> bool:
@@ -1354,8 +1576,8 @@ def build_curriculum_by_grade_response(
         "items": [item for group in groups for item in group["items"]],
         "display_limit": 3,
         "total_count": len(items),
-        "source_urls": [COURSE_FULL_GUIDE_URL],
-        "actions": [{"type": "link", "label": "전체 교육과정 바로가기", "url": COURSE_FULL_GUIDE_URL}],
+        "source_urls": [CURRICULUM_URL],
+        "actions": [{"type": "link", "label": "교육과정 바로가기", "url": CURRICULUM_URL}],
         "mode": "DB검색",
         "sources": sources,
         "score": score,
@@ -2564,6 +2786,13 @@ def answer_question(
         casual["request_id"] = request_id
         return casual
     index = index or SearchIndex()
+    priority_intent = priority_button_intent(clean_question)
+    if priority_intent in {"notice_list", "course_table"}:
+        response = build_priority_intent_response(priority_intent, clean_question, index, started)
+        response["session_id"] = session_id
+        response["request_id"] = request_id
+        response["quick_intent"] = priority_intent
+        return response
     initial_intent = classify_intent(clean_question, index)
     if initial_intent == "faculty_detail":
         faculty = detect_faculty_member(clean_question, index)
@@ -2621,6 +2850,12 @@ def answer_question(
             "structured_intent": "faculty_list",
             "search_scope": ["faculty"],
         }
+    if initial_intent in {"course_table", "notice_list"}:
+        response = build_priority_intent_response(initial_intent, clean_question, index, started)
+        response["session_id"] = session_id
+        response["request_id"] = request_id
+        response["quick_intent"] = initial_intent
+        return response
     if initial_intent == "course_grade_strategy":
         course_name = detect_course_name(clean_question, index)
         hits = retrieve_documents(index, clean_question, "course_grade_strategy")

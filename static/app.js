@@ -1834,7 +1834,7 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  ensureIntroMessage();
+  // ensureIntroMessage();
 }
 initializeLanguage();
 wakeServer();

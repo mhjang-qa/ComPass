@@ -8,6 +8,8 @@ ComPass는 단순 검색 결과 제공 챗봇이 아닙니다. 공식 데이터�
 
 모든 응답은 공식 데이터 우선, 원문 전체 출력 금지, 핵심 요약 우선, 최대 3개 먼저 표시, 더보기 제공, 개별·전체 바로가기 제공, 모바일 가독성 우선 원칙을 따릅니다.
 
+한국어/영어 이중 언어 UI를 지원합니다. 최초 진입 시 언어 선택 팝업은 띄우지 않고 기본값은 한국어이며, 상단 언어 셀렉트에서 변경한 값은 `localStorage`에 저장됩니다. 설정 언어에 따라 헤더, 탭, 입력창, 추천 질문, 초기 안내 말풍선, 로딩/에러 문구, 응답 내부 바로가기 버튼이 즉시 갱신됩니다.
+
 질문은 답변 전에 `professor_list`, `professor_detail`, `curriculum`, `course_info`, `course_difficulty`, `course_order`, `course_grade`, `schedule`, `notice`, `graduation`, `faq`, `contact`, `general_search` 의도로 먼저 분류합니다. 결정된 의도와 관련된 공식 데이터만 선별하며, 서로 다른 문서 유형을 한 답변에 섞지 않습니다.
 
 자연어 질문은 RAG 검색 전에 `intent_router.py`의 `detect_intent()`로 먼저 분석합니다. `data/intent_dictionary.json`의 유사어 사전을 사용해 `컴퓨터 과학과`, `컴공`, `교수님`, `담당 교수`, `교수 소개` 같은 표현을 정규화합니다. `교수`, `교수진`, `컴퓨터과학과 교수`, `손진곤 교수` 같은 직접 입력은 Quick Button과 동일한 교수진 Handler로 라우팅합니다.
@@ -17,6 +19,8 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 과목 상세 질문은 교수진이나 공지사항을 함께 출력하지 않고, 과목 개요·쉬운 설명·주요 학습 내용·추천 대상·공식 바로가기로 재구성합니다.
 
 검색 인덱스를 만들 때 `course_catalog`도 함께 생성합니다. 과목명, 공백 제거 별칭, 주요 약칭, Notion 문서 ID, 공식 URL, 문서유형을 저장하며 질문에서 가장 긴 과목명 또는 별칭을 우선 감지합니다.
+
+과목명 비교 전에는 공백, 특수문자, 괄호, 영문 대소문자를 정규화합니다. 예를 들어 `데이터 정보처리 입문`, `데이터정보 처리입문`, `데이터정보처리입문`은 모두 `데이터정보처리입문` 과목으로 매칭됩니다. 과목명이 감지되면 `난이도`, `추천`, `입문`, `편입`, `선수지식` 같은 키워드보다 특정 과목 상세/난이도 응답을 우선합니다.
 
 교과목 질문 우선순위는 `course_difficulty > course_detail > course_recommendation > curriculum > notice`입니다. 특정 과목명이 감지되면 `과목상세`, `교과목목록`, `교육과정표`, `검증지식`만 검색하고 교수진·공지·게시판·일정 문서는 제외합니다.
 
@@ -36,6 +40,8 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 - robots.txt 준수, 요청 간 delay, 중복 URL 제거, 로그인·외부 링크 제외
 - 제목, 카테고리, 본문, 요약, 원본 URL, 게시일, 수집일, 키워드, 첨부파일 구조화
 - HTML 표를 `table_headers`, `table_rows`, `normalized_items`로 분리해 원문 표 노출 방지
+- PDF, Synap 문서 뷰어, `/synap/result/`, `.pdf`, `/bbs/` 문서형 자료를 별도 감지하고 제목·본문·카테고리를 추출해 검색 인덱스에 포함
+- PDF/Synap 문서 제목이 비어 있으면 HTML title, PDF 메타, 본문 내 학년도·학기·과목명, URL 파일명 순서로 `제목 없음`이 아닌 검색 가능한 제목 생성
 - URL 기준 Notion upsert 및 콘텐츠 해시 기반 `신규/변경/유지` 판정
 - 콘텐츠 해시가 같은 문서는 Notion API 쓰기를 수행하지 않는 완전 증분 동기화
 - 메뉴·푸터·스크립트 설정값을 제거하고 메인/일반페이지/게시판목록/게시물 표준 형식으로 저장
@@ -45,6 +51,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 - 교과목 안내(`/cs1/4791/subview.do`)의 `jf_detailView` POST 팝업을 과목별로 필수 수집해 `과목상세` 문서로 저장
 - 교수진 질문은 `faculty_list` 또는 `faculty_detail`로 선분류하고 교수진 공식 문서만 검색하도록 `source_urls=[FACULTY_URL]` 검색 범위를 적용
 - Intent별 Search Scope를 강제합니다. 예: `faculty_list/faculty_detail → faculty`, `course_detail/course_difficulty/course_grade_strategy/course_order → course_detail+curriculum`, `schedule → schedule`, `notice → notice`, `graduation → graduation+curated_knowledge`.
+- 교육과정 URL은 잘못된 고정 URL을 쓰지 않고 Notion/검색 인덱스의 원본 URL, 교육과정 유사 제목 문서 URL, 학과 홈 URL 순서로 결정합니다. 유효하지 않은 링크는 `https://cs.knou.ac.kr/sites/cs1/index.do`로 fallback합니다.
 - 검색 로그는 `[SEARCH_ROUTE] Intent=... Search Scope=... Candidate Count=... Selected=... Score=...` 형식으로 남깁니다. 예: `Intent=faculty`, `Search Scope=['https://cs.knou.ac.kr/cs1/4786/subview.do']`, `Selected=교수진 소개`, `Score=98`.
 - 졸업학점·추천 자격증·시험범위는 `의도/과목/시험종류/유효기준` 구조화 지식으로 정확 매칭
 - 명시적 현재 질문을 이전 대화보다 우선하여 후속 질문 문맥 충돌 방지
@@ -58,16 +65,19 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 - 크롤링 진행률은 크롤링 0~80%, Notion 저장 80~100%로 분리하고 `/api/crawl/status`에서 저장/실패/유지 건수와 현재 문서명을 확인
 - `/api/crawl/status`에서 전체 URL, 수집 완료, 3년 초과 제외, 게시일 없음 제외, 정적 페이지 수를 확인
 - Render 콜드 스타트 안내 화면 및 모바일 반응형 UI
-- GitHub Pages 콜드스타트 로더는 Render 응답 전에도 `/ComPass/static/icons/icon.png`를 표시하고, 이미지 실패 시 `ComPass` 텍스트 로고를 표시합니다. 로더 카드는 flex column 중앙 정렬로 로고, 제목, 안내 문구, 진행바, 하단 문구가 모바일/데스크톱에서 같은 축으로 정렬됩니다.
+- GitHub Pages 콜드스타트 로더는 Render 응답 전에도 상대경로 `./static/...` 리소스를 표시하고, 이미지 실패 시 `ComPass` 텍스트 로고를 표시합니다. 로더 카드는 flex column 중앙 정렬로 로고, 제목, 안내 문구, 진행바, 하단 문구가 모바일/데스크톱에서 같은 축으로 정렬됩니다.
 - 빈 화면 우측 하단 플로팅 아이콘, 채팅 창 모드, 전체 화면 전환
 - `static/icons/`의 ComPass 공식 PNG 아이콘을 플로팅 버튼, 헤더, 환영 메시지, favicon, PWA, 로딩 화면, 검색 중 애니메이션에 공통 적용
 - 모바일은 플로팅 버튼 선택 시 즉시 전체화면, 데스크톱은 기존 PIP 창 유지
+- 데스크톱 PIP는 언어 셀렉트, 전체화면 버튼, 닫기/최소화 버튼이 한 줄에서 겹치지 않도록 폭과 헤더 flex 레이아웃을 조정합니다.
+- 초기 안내 문구는 일반 텍스트가 아니라 실제 봇 답변과 같은 아이콘+말풍선 메시지 컴포넌트로 렌더링합니다. 언어 변경 시 해당 말풍선 문구만 갱신하고 사용자 입력이나 과거 대화는 임의 번역하지 않습니다.
 - 목록형 답변은 3개 우선 표시 후 더보기/접기와 공식 페이지 바로가기 제공
 - 교수진 답변은 교수명·직위·이메일·연락처·대표 담당과목을 카드로 표시하고, 교수 홈페이지가 있으면 개별 바로가기 버튼을 제공합니다.
 - 특정 교수명 질문은 `faculty_detail`로 분류해 해당 교수 1명만 표시하며, 전체 교수진 목록을 섞지 않습니다.
 - 최근 공지는 제목·게시일·80자 이내 요약만 카드로 표시하며 글번호·첨부 설명·본문 전문은 노출하지 않음
 - 학과 일정은 달력 원문 대신 시작일·종료일·일정명으로 구조화하고 다가오는 일정부터 표시
 - 학과 일정 질문은 `https://cs.knou.ac.kr/cs1/4812/subview.do` 또는 해당 게시판 상세 URL만 근거로 사용하며, 벼룩시장·학생광장·숫자 제목 문서는 제외
+- 학과 일정 데이터가 없으면 링크만 단독 노출하지 않고 “현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다. 학과 일정은 공식 홈페이지에서 확인할 수 있습니다.” 안내와 `학과 일정 바로가기` 버튼을 함께 제공합니다.
 - 검색 중에는 타이핑 및 점 애니메이션이 적용된 로딩 카드를 표시
 - 답변 생성 중에는 입력창, 전송 버튼, Quick Button, LLM 확인 버튼을 잠가 중복 `/api/chat` 요청과 응답 순서 꼬임을 방지
 - 짧은 대화는 메시지 하단에 자연스럽게 정렬하고, 입력 영역 높이 변화는 `ResizeObserver`로 보정
@@ -87,8 +97,11 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 ├── chatbot.py              # 범위 제한, DB 우선 답변, LLM fallback
 ├── stats.py                # Notion 질문 통계 저장/조회
 ├── templates/index.html    # 단일 관리자/챗봇 화면
+├── index.html              # GitHub Pages 콜드스타트 로더
+├── manifest.json           # GitHub Pages용 기본 Web App Manifest
 ├── static/style.css
 ├── static/app.js
+├── static/config.js        # 정적 배포 기본 설정
 ├── data/                   # 크롤링 스냅샷, 검색 인덱스, intents.json, intent_dictionary.json
 ├── requirements.txt
 ├── .env.example
@@ -211,8 +224,11 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 1. `관리자 페이지`를 눌러 관리자 비밀번호로 로그인합니다.
 2. 로그인 후 표시되는 `크롤링 관리`에서 `DB 테이블 구성`을 눌러 빈 Notion DB에 필수 컬럼을 자동 생성합니다.
 3. `수동 크롤링 실행`으로 홈페이지를 수집하고 Notion에 적재합니다.
-4. `검색 인덱스`에서 `인덱스 재생성`을 실행합니다.
-5. 검색 테스트 후 챗봇 탭에서 질문합니다.
+4. 크롤링과 Notion 저장이 끝나면 검색 인덱스가 자동 재생성됩니다.
+5. `검색 인덱스` 화면에서 문서 수, 제외 문서, 교과목 수, 계층별 포함/제외 수와 상태가 `검색 가능`으로 표시되는지 확인합니다.
+6. 검색 테스트 후 챗봇 탭에서 질문합니다.
+
+서버 시작 시 `data/search_index.json`이 있으면 먼저 메모리에 즉시 로드합니다. 이후 Notion 동기화와 인덱스 rebuild는 백그라운드에서 수행되므로 Render 콜드스타트 직후에도 기존 로컬 인덱스가 있으면 바로 검색할 수 있습니다. 인덱스가 아직 준비 중이면 `/api/chat`은 `status=index_loading`, `retry_after_ms=1500`을 반환하고 프론트엔드는 최대 3회 자동 재시도합니다.
 
 ## 환경변수
 
@@ -238,9 +254,11 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `SEARCH_INDEX_PATH` / `INDEX_PATH` | 검색 인덱스 JSON 저장 경로. 기본값 `./data/search_index.json` |
 | `AUTO_LOAD_INDEX_ON_START` / `STARTUP_INDEX_LOAD` | 서버 시작 시 기존 인덱스 파일을 로드하고, 비어 있으면 Notion 기준으로 재구성할지 여부. 기본값 true |
 | `AUTO_REBUILD_INDEX_AFTER_CRAWL` | 크롤링 및 Notion 저장 완료 후 검색 인덱스를 자동 재생성할지 여부. 기본값 true |
+| `DEPARTMENT_HOME_URL` | 공식 학과 홈 URL. 기본값 `https://cs.knou.ac.kr/sites/cs1/index.do` |
 | `CURRICULUM_URL` | 교육과정 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4789/subview.do` |
 | `SCHEDULE_URL` | 학과 일정 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4812/subview.do` |
 | `NOTICE_URL` | 공지사항 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4812/subview.do` |
+| `PUBLIC_LOADER_URL` | Render 직접 접속 시 안내할 GitHub Pages 로더 URL |
 | `COMMUNITY_CRAWL_ENABLED` | c-knou 비공식 커뮤니티 보조 수집 활성화 여부 |
 | `COMMUNITY_START_URL` | 커뮤니티 공개 게시판 시작 URL |
 | `COMMUNITY_ALLOWED_DOMAIN` | 커뮤니티 수집 허용 호스트 |
@@ -254,6 +272,8 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 이전 배포 환경과의 호환을 위해 `NOTION_API_KEY`는 `NOTION_TOKEN`의 별칭으로, `NOTION_DATABASE_ID`는 `NOTION_KNOWLEDGE_DB_ID`의 별칭으로 인식합니다. 신규 설정은 표의 공식 변수명을 사용하십시오.
 
+URL 환경변수는 순수 URL 값을 권장합니다. 기존 배포에서 `SCHEDULE_URL=https://...`처럼 key/value 문자열 전체가 값으로 들어간 경우에도 앱이 실제 URL 부분만 추출해 버튼 링크에 사용합니다.
+
 ## Notion 연동 준비
 
 1. Notion에서 Internal Integration을 생성합니다.
@@ -266,6 +286,8 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | 컬럼명 | Notion 타입 | 비고 |
 |---|---|---|
 | 제목 | Title | 필수 |
+| 출처구분 | Select | 공식 / 비공식 커뮤니티 |
+| 출처명 | Rich text | 공식 학과 홈페이지 등 |
 | 문서유형 | Select | 메인 / 일반페이지 / 게시판목록 / 게시물 |
 | 카테고리 | Select | |
 | 본문 | Rich text | 검색용 본문 앞부분, 전체 본문은 페이지 블록에도 저장 |
@@ -282,12 +304,15 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | table_headers | Rich text | HTML 표의 병합된 열 제목 JSON |
 | table_rows | Rich text | HTML 표의 원본 행 배열 JSON |
 | normalized_items | Rich text | 과목명·학년·학기·코드·강의매체·평가방법 JSON |
+| 응답가이드 | Rich text | 답변 노출 정책 |
 | 데이터계층 | Select | CORE / ACTIVE_NOTICE / TEMPORARY / IMPORTANT_ARCHIVE / NOISE |
 | 활성여부 | Checkbox | 검색 인덱스 포함 가능 여부 |
 | 보관사유 | Rich text | archived/noise 처리 사유 |
 | 유효시작일 | Date | 게시일 또는 정책상 시작일 |
 | 유효종료일 | Date | TEMPORARY 유효 종료 기준 |
 | 최근성점수 | Number | 검색 가중치 계산용 점수 |
+
+검색 인덱스 내부 payload에는 Notion 컬럼 외에도 `title_ko`, `title_en`, `content_ko`, `content_en`, `document_type`, `hash` 같은 필드를 함께 사용합니다. 한국어 질문은 한국어 제목/본문을, 영어 질문은 영어 제목/본문을 우선 검색하고 혼합 질문은 양쪽 필드를 함께 검색합니다.
 
 ### 통계 DB 컬럼
 
@@ -341,13 +366,27 @@ Notion DB 링크에서 32자리 ID를 가져와 환경변수에 입력합니다.
 {
   "question": "컴퓨터과학과 교육과정을 알려줘",
   "history": [],
-  "allow_llm": false
+  "allow_llm": false,
+  "language": "ko",
+  "context": {
+    "quick_intent": "curriculum"
+  }
 }
 ```
 
 검색 결과가 부족하면 `requires_llm_confirmation: true`가 반환됩니다. 사용자가 동의한 경우 동일 질문을 `allow_llm: true`로 다시 요청합니다.
 
-Render 배포에서는 포트가 즉시 열리도록 서버 시작 시 Notion 지식 DB 자동 로딩을 기본 비활성화합니다. 첫 질문 시 인덱스가 비어 있으면 lazy loading을 시도하며, 관리자 UI의 “인덱스 재생성” 버튼으로 수동 로딩할 수 있습니다. 실패 원인은 Render 로그의 `[INDEX]` 및 `[CHAT]` 항목과 `/api/debug/index-status`에서 확인할 수 있습니다.
+인덱스가 준비 중이면 오류 대신 아래처럼 재시도 가능한 응답을 반환합니다. 프론트엔드는 사용자 질문 말풍선을 중복 생성하지 않고 기존 로딩 메시지를 유지한 채 최대 3회 자동 재시도합니다.
+
+```json
+{
+  "status": "index_loading",
+  "retry_after_ms": 1500,
+  "message": "공식 정보 검색 인덱스를 준비 중입니다."
+}
+```
+
+추천 질문 버튼은 일반 검색 문구로 흘리지 않고 `context.quick_intent`로 고정 intent를 전달합니다. 기본 매핑은 `교육과정/Curriculum → curriculum`, `교수진/Faculty → faculty`, `최근 공지/Latest Notice → notice`, `학과 일정/Schedule → schedule`입니다.
 
 ### 깊이별 크롤링
 
@@ -396,6 +435,17 @@ ComPass는 문서 유형과 유효기간에 따라 지식 데이터를 다음 �
 관리자 `검색 인덱스` 화면의 `데이터 계층 재분류` 버튼은 기존 Notion 지식 DB 전체를 다시 읽어
 `데이터계층`, `활성여부`, `보관사유`, `최근성점수`를 업데이트한 뒤 검색 인덱스를 재생성합니다.
 
+### 검색 인덱스 시작/동시성 정책
+
+- 앱 시작 시 `[STARTUP] ComPass server startup started`, `[STARTUP] Health endpoint available`, `[STARTUP] FastAPI app ready` 로그를 남깁니다.
+- `/api/health`, `/health`, `/healthz`는 Notion 동기화나 인덱스 rebuild 완료 여부와 무관하게 즉시 200을 반환합니다.
+- 시작 시 `SEARCH_INDEX_PATH`에 기존 인덱스 파일이 있으면 먼저 로드하고 `index_ready=true`로 전환합니다.
+- 로컬 인덱스가 없거나 손상된 경우에만 Notion 기준 rebuild를 백그라운드로 시작합니다.
+- 인덱스 상태는 `loading`, `ready`, `failed`, `stale`로 관리하며 `index_loading`, `index_ready`, `index_last_error`, `retry_after_ms`를 관리자 화면과 `/api/index/status`에 노출합니다.
+- 이미 startup 또는 rebuild가 진행 중이면 lazy chat이 중복 rebuild를 만들지 않고 기존 작업을 기다리거나 `index_loading` 응답을 반환합니다.
+- 크롤링과 Notion 저장이 완료되면 `AUTO_REBUILD_INDEX_AFTER_CRAWL=true` 기준으로 검색 인덱스를 자동 재생성하고 `[INDEX] rebuild completed documents=... included=... excluded=...` 로그를 남깁니다.
+- 관리자 검색 인덱스 화면은 `0`만 표시하지 않고 준비 중, 검색 가능, 로딩 실패 상태와 문서 수, 제외 문서, 교과목 수, 계층별 포함/제외 수를 구분해 표시합니다.
+
 ## 답변 안전 정책
 
 - 한국방송통신대학교 컴퓨터과학과 공식 정보만 답변합니다.
@@ -432,7 +482,9 @@ ComPass는 문서 유형과 유효기간에 따라 지식 데이터를 다음 �
 - 입력창 focus 시 강제 `scrollIntoView()`를 실행하지 않아 모바일 화면 점프를 방지합니다.
 - iOS Safari 자동 확대 방지를 위해 입력창 글자 크기는 `16px` 이상으로 유지합니다.
 - composer는 `position: sticky`와 `safe-area-inset-bottom`을 사용해 키보드 위에 유지합니다.
-- 입력창 문구: `궁금한 컴퓨터과학과 정보를 질문해보세요`
+- 입력창 문구는 한국어 `궁금한 컴퓨터과학과 정보를 질문해보세요`, 영어 `Ask about CS department info`를 사용합니다.
+- 추천 질문은 한국어 `교육과정`, `교수진`, `최근 공지`, `학과 일정`, 영어 `Curriculum`, `Faculty`, `Latest Notice`, `Schedule`로 표시합니다.
+- 응답 내부 액션 버튼도 설정 언어 기준으로 번역합니다. 예: `교육과정 더보기 → View Curriculum`, `공지 더보기 → View More Notices`, `학과 일정 바로가기 → View Schedule`, `교과목 안내 바로가기 → View Course Information`, `인공지능 과목 바로가기 → View AI Course`, `LLM 보조 답변 사용 → Use AI Helper`, `검색 종료 → End Search`.
 - `faculty`, `course_table`, `notice_list`, `schedule_list`, `faq_list`,
   `course_recommendation`은 카드형 요약과 `actions` 버튼으로 렌더링합니다.
 - PIP/모바일의 교육과정 표는 `overflow-x:auto`와 최소 너비를 사용해 긴 특징 문구가 잘리지 않도록 좌우 스크롤로 확인합니다.
@@ -480,7 +532,8 @@ ComPass는 문서 유형과 유효기간에 따라 지식 데이터를 다음 �
 - 모바일 홈 화면: `static/icons/apple-touch-icon.png`
 - PWA 아이콘: `static/icons/icon-192.png`, `static/icons/icon-512.png`
 - Web App Manifest: `static/manifest.json`
-- GitHub Pages 로더는 `/ComPass/static/...` 경로를 사용합니다. Manifest 내부 아이콘은 상대경로(`icons/...`)를 사용해 GitHub Pages(`/ComPass/`)와 Render(`/`) 양쪽에서 404가 나지 않도록 유지합니다.
+- GitHub Pages 로더(`index.html`)는 `./static/icons/icon.png`, `./static/config.js`, `./manifest.json`처럼 상대경로를 사용합니다. 루트 `manifest.json`은 GitHub Pages용이며, Render 앱 내부 manifest는 `static/manifest.json`을 사용합니다.
+- `static/config.js`는 선택 설정 파일이지만 404 방지를 위해 항상 배포 산출물에 포함합니다.
 
 ### LLM fallback 품질 규칙
 
@@ -509,7 +562,9 @@ LLM 답변도 검색 결과를 그대로 붙여 넣지 않고 학생이 이해�
 - 과목 난이도 응답은 LLM 원문을 그대로 보여주지 않고 `official_overview` 1회, `difficulty_advice` object 표, 참고 안내, 바로가기 순서로만 렌더링합니다.
 - `dedupe_sentences()`와 `remove_duplicate_overview()`가 공식 개요와 유사한 LLM 문장·중복 제목을 제거합니다.
 - `wash_official_overview()`가 과목명 반복, 긴 공식 문장, 어색한 끝맺음을 학생이 읽기 쉬운 1~2문장으로 정리합니다.
-- 교육과정 버튼 응답은 `curriculum_by_grade` 구조로 1~4학년별 대표 과목 3개씩 먼저 보여주고, `전체 교육과정 바로가기`를 제공합니다.
+- 교육과정 버튼 응답은 `curriculum_by_grade` 구조로 1~4학년별 대표 과목 3개씩 먼저 보여주고, `교육과정 더보기`를 제공합니다. 공식 데이터가 부족해도 링크만 단독으로 반환하지 않고 안내 문구와 fallback 버튼을 함께 제공합니다.
+- 최근 공지 버튼 응답은 공지사항 문서만 대상으로 최근 등록순 3건의 제목과 등록일을 먼저 보여주고, 전체 공지 이동 버튼은 `공지 더보기`로 통일합니다.
+- 학과 일정 버튼 응답은 `SCHEDULE_URL` 값을 외부 URL로 그대로 사용하며, 프론트는 `http://` 또는 `https://` URL 앞에 현재 서비스 도메인을 붙이지 않습니다.
 - LLM 후처리는 `**`, `#`, 코드블록, 구분선, 중복 제목, 불완전한 문장 끝을 정리합니다.
 
 ### LLM helper와 요청 단위 독립성
@@ -541,6 +596,7 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 공유 캐시는 읽기 중심으로 유지합니다.
 
 - 검색 인덱스는 내부 `RLock`으로 보호하고, 재생성 시 새 payload를 만든 뒤 atomic하게 교체합니다.
+- 서버 runtime은 `index_ready_event`, `index_load_lock`, `index_job_lock`으로 startup load, lazy chat, 수동 rebuild, 크롤링 후 rebuild가 동시에 같은 인덱스를 중복 생성하지 않도록 제어합니다.
 - 크롤링 작업은 `crawl_lock`으로 중복 실행을 차단합니다.
 - 인덱스 수동 재생성은 `index_job_lock`으로 중복 실행을 차단합니다.
 - 크롤링/인덱스 재생성 중에도 챗봇은 기존 인덱스 스냅샷으로 답변합니다.
@@ -562,18 +618,21 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 1. 프로젝트를 GitHub 저장소에 push합니다.
 2. Render에서 `New +` → `Blueprint`를 선택하고 저장소를 연결합니다.
 3. `render.yaml` 설정을 확인합니다.
-   - 권장 Start Command: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
-   - 권장 Health Check Path: `/health`
+   - 권장 Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+   - 포트 fallback이 필요하면 `sh -c "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"` 형식을 사용합니다.
+   - 권장 Health Check Path: `/api/health`
 4. Render 대시보드에서 다음 Secret 환경변수를 입력합니다.
    - `NOTION_TOKEN`
    - `NOTION_KNOWLEDGE_DB_ID`
    - `NOTION_STATS_DB_ID`
    - `ADMIN_PASSWORD`
    - `OPENAI_API_KEY` 또는 `GEMINI_API_KEY`
-5. 배포 후 `/health` 또는 `/api/health`가 `ok: true`를 반환하는지 확인합니다.
-6. 관리자 UI에서 크롤링과 인덱스 재생성을 순서대로 실행합니다.
+5. 배포 후 `/api/health`가 `{"ok": true, "status": "running"}` 형태로 즉시 응답하는지 확인합니다.
+6. 관리자 UI의 `검색 인덱스` 화면에서 로컬 인덱스 로드 또는 백그라운드 Notion rebuild 상태를 확인합니다.
 
-Render 무료 인스턴스의 파일시스템은 재배포 시 초기화될 수 있습니다. 따라서 재배포 후 검색 인덱스를 다시 생성해야 합니다. 운영 안정성이 필요하면 인덱스 JSON을 영구 디스크 또는 외부 저장소에 보관하십시오.
+Render 로그가 `Running 'uvicorn main:app --host 0.0.0.0 --port $PORT'`에서 멈춘 것처럼 보이는 것은 서버 프로세스가 계속 실행 중이라는 의미일 수 있습니다. 정상 기동 판단은 `Application startup complete`, `[STARTUP] FastAPI app ready`, `/api/health` 200 응답으로 확인합니다.
+
+Render 파일시스템은 재배포 시 초기화될 수 있습니다. 로컬 `search_index.json`이 남아 있으면 즉시 로드하고, 없으면 서버 기동을 막지 않은 채 Notion 기준 rebuild를 백그라운드로 수행합니다. 운영 안정성이 필요하면 `SEARCH_INDEX_PATH`를 영구 디스크 또는 외부 저장소 경로로 지정하십시오.
 
 ### GitHub Pages 콜드 스타트 진입점
 
@@ -595,6 +654,14 @@ Render 주소를 직접 열면 Render 플랫폼이 애플리케이션 실행 전
 - 컴퓨터과학과 교과과정을 알려줘.
 - 최근 공지사항을 알려줘.
 - 학과 일정은 어디서 확인할 수 있어?
+- 데이터 정보처리 입문 과목 난이도
+- 파이썬 프로그래밍 기초 난이도
+- 이산수학 기출문제 있어?
+- 2017 이산수학 시험문제 알려줘
+- Show me curriculum
+- Who are the professors?
+- Latest notice
+- Department schedule
 - 자주 묻는 질문 중 수강 관련 내용을 찾아줘.
 - 3학년 편입생이 듣기 쉬운 과목 추천해줘.
 - 직장인이 듣기 편한 과목 알려줘.

@@ -528,7 +528,7 @@ function renderQuickQuestions() {
   if (!container) return;
   const items = loadQuickQuestions().filter((item) => item.enabled).sort((a, b) => a.sortOrder - b.sortOrder);
   container.innerHTML = items.map((item) => (
-    `<button data-question="${escapeHtml(item.message)}" data-intent="${escapeHtml(item.intent)}">${escapeHtml(item.label)}</button>`
+    `<button class="quick-action-btn" type="button" data-question="${escapeHtml(item.message)}" data-intent="${escapeHtml(item.intent)}">${escapeHtml(item.label)}</button>`
   )).join("");
 }
 
@@ -1315,32 +1315,41 @@ function ensureIntroMessage() {
   let row = messages.querySelector('[data-intro-message="true"]');
   if (!row) {
     row = addMessage("bot", t("introMessage"), [], false, { isWelcome: true });
-    row.classList.add("with-avatar", "welcome-message", "message-row", "assistant");
+    row.className = "message bot with-avatar welcome-message message-row assistant";
     row.dataset.introMessage = "true";
     row.dataset.i18nKey = "introMessage";
 
-    const icon = document.createElement("div");
-    icon.className = "bot-mark";
-    const iconImage = document.createElement("img");
-    iconImage.className = "message-avatar";
-    iconImage.src = loadIconConfig().internalIcon;
-    iconImage.alt = "";
-    iconImage.setAttribute("aria-hidden", "true");
-    iconImage.onerror = () => { iconImage.style.display = "none"; };
-    icon.appendChild(iconImage);
-
-    const bubble = row.querySelector(".bubble");
-    bubble?.classList.add("message-bubble", "assistant-bubble");
-    row.prepend(icon);
     messages.prepend(row);
   }
+
+  row.className = "message bot with-avatar welcome-message message-row assistant";
+  row.dataset.introMessage = "true";
+  row.dataset.i18nKey = "introMessage";
+
+  let icon = row.querySelector(".bot-mark");
+  if (!icon) {
+    icon = document.createElement("div");
+    icon.className = "bot-mark";
+    row.prepend(icon);
+  }
+
+  let iconImage = icon.querySelector("img.message-avatar");
+  if (!iconImage) {
+    iconImage = document.createElement("img");
+    iconImage.className = "message-avatar";
+    iconImage.alt = "ComPass";
+    iconImage.onerror = () => { iconImage.style.display = "none"; };
+    icon.appendChild(iconImage);
+  }
+
+  const bubble = row.querySelector(".bubble");
+  bubble?.classList.add("message-bubble", "assistant-bubble");
 
   const paragraph = row.querySelector(".message-content.text-paragraph");
   if (paragraph) {
     paragraph.dataset.i18nKey = "introMessage";
     paragraph.textContent = t("introMessage");
   }
-  const iconImage = row.querySelector(".bot-mark img");
   if (iconImage) iconImage.src = loadIconConfig().internalIcon;
   return row;
 }

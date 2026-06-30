@@ -642,3 +642,121 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
 .message-content.text-paragraph {
   font-size: 13px;
 }
+
+/* Initial chat screen guards */
+.quick-actions,
+.suggestions.quick-actions,
+.widget-window .suggestions.quick-actions,
+.mobile-fullscreen .suggestions.quick-actions,
+.app-shell.fullscreen .suggestions.quick-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  align-self: auto;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  padding: 10px 16px;
+  overflow-x: visible;
+  overflow-y: visible;
+  white-space: normal;
+  border-top: 1px solid #d8e5f0;
+}
+
+.quick-actions .quick-action-btn,
+.quick-actions button,
+.suggestions.quick-actions .quick-action-btn,
+.suggestions.quick-actions button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: 34px;
+  min-height: 34px;
+  max-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  line-height: 1;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
+
+.message-row.assistant,
+.welcome-message {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  margin: 14px 16px;
+}
+
+.message-row.assistant .bot-mark,
+.welcome-message .bot-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  margin-top: 2px;
+}
+
+.message-row.assistant .message-avatar,
+.welcome-message .message-avatar {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.message-row.assistant .message-bubble,
+.welcome-message .message-bubble,
+.welcome-message .assistant-bubble,
+.message.bot.with-avatar.welcome-message .bubble {
+  width: auto;
+  max-width: min(78%, 560px);
+  padding: 12px 14px;
+  border: 1px solid #d6e4f0;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(15, 95, 159, 0.08);
+}
+
+.welcome-message .message-content,
+.welcome-message .message-content.text-paragraph {
+  margin: 0;
+  line-height: 1.45;
+  white-space: pre-line;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .quick-actions,
+  .suggestions.quick-actions {
+    padding: 9px 12px;
+  }
+
+  .quick-actions .quick-action-btn,
+  .quick-actions button,
+  .suggestions.quick-actions .quick-action-btn,
+  .suggestions.quick-actions button {
+    height: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding-inline: 12px;
+  }
+
+  .message-row.assistant .message-bubble,
+  .welcome-message .message-bubble,
+  .welcome-message .assistant-bubble,
+  .message.bot.with-avatar.welcome-message .bubble {
+    max-width: calc(100% - 42px);
+  }
+}

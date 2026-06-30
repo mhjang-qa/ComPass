@@ -74,10 +74,13 @@ def test_welcome_message_uses_bot_bubble_and_language_popup_is_disabled() -> Non
     assert 'const DEFAULT_LANG = "ko"' in script
     assert 'setLanguage(localStorage.getItem(LANGUAGE_KEY) || DEFAULT_LANG)' in script
     assert 'addMessage("bot", t("introMessage")' in script
-    assert 'row.classList.add("with-avatar", "welcome-message", "message-row", "assistant")' in script
+    assert 'row.className = "message bot with-avatar welcome-message message-row assistant"' in script
     assert 'bubble?.classList.add("message-bubble", "assistant-bubble")' in script
     assert ".welcome-message .assistant-bubble" in style
     assert ".message-avatar" in style
+    assert "quick-action-btn" in script + html
+    assert "flex: 0 0 auto" in style
+    assert "height: 34px" in style
 
 
 def test_answer_type_renderers_and_per_item_links_are_present() -> None:

@@ -56,7 +56,7 @@ const I18N = {
     confirmNo: "검색 종료",
   },
   en: {
-    placeholder: "Ask about Computer Science department information",
+    placeholder: "Ask about CS department info",
     pending: "Preparing the answer...",
     waiting: "Searching official data",
     waitingSub: "Please wait a moment.",

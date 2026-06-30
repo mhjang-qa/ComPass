@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import string
@@ -16,6 +17,8 @@ from typing import Any
 import config
 from crawler import DATA_TIERS, classify_data_tier, search_recency_boost, should_collect_document_record
 from notion_client import NotionClient
+
+logger = logging.getLogger(__name__)
 
 SYNONYMS = {
     "등록금": ["수업료", "납부", "학비"],
@@ -135,11 +138,14 @@ class SearchIndex:
         self.path = path
         self._lock = threading.RLock()
         self.payload: dict[str, Any] = {"built_at": None, "documents": [], "course_catalog": []}
+        self.load_error = ""
         self.load()
 
-    def load(self) -> None:
+    def load(self) -> bool:
         if not self.path.exists():
-            return
+            self.load_error = f"index file not found: {self.path}"
+            logger.warning("[INDEX] file not found path=%s", self.path)
+            return False
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if not payload.get("course_catalog"):
@@ -152,9 +158,21 @@ class SearchIndex:
                 )
             with self._lock:
                 self.payload = payload
-        except (OSError, json.JSONDecodeError):
+            self.load_error = ""
+            logger.info(
+                "[INDEX] loaded documents=%d courses=%d excluded=%d path=%s",
+                len(payload.get("documents") or []),
+                len(payload.get("course_catalog") or []),
+                payload.get("excluded", 0),
+                self.path,
+            )
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            self.load_error = f"{type(exc).__name__}: {exc}"
             with self._lock:
                 self.payload = {"built_at": None, "documents": [], "course_catalog": [], "faculty_catalog": []}
+            logger.exception("[INDEX] load failed path=%s error=%s", self.path, self.load_error)
+            return False
 
     def rebuild(self, documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         documents = documents if documents is not None else NotionClient().knowledge_documents()
@@ -219,6 +237,14 @@ class SearchIndex:
         self.path.write_text(json.dumps(new_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         with self._lock:
             self.payload = new_payload
+        logger.info(
+            "[INDEX] rebuild completed documents=%d included=%d excluded=%d courses=%d path=%s",
+            len(documents),
+            len(indexed),
+            excluded,
+            len(course_catalog),
+            self.path,
+        )
         return {
             "built_at": new_payload["built_at"],
             "documents": len(indexed),
@@ -578,6 +604,7 @@ class SearchIndex:
             "excluded_by_tier": dict(self.payload.get("excluded_by_tier") or {}),
             "excluded": self.payload.get("excluded", 0),
             "path": str(self.path),
+            "load_error": self.load_error,
         }
 
     @staticmethod

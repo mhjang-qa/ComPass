@@ -235,7 +235,9 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `CRAWL_NOTICE_YEARS_LIMIT` | ACTIVE_NOTICE 활성 기준. 기본값 3년 |
 | `CRAWL_TEMPORARY_YEARS_LIMIT` | TEMPORARY 활성 기준. 기본값 1년 |
 | `ENABLE_DATA_TIERING` | 데이터 계층화 사용 여부. 기본값 true |
-| `STARTUP_INDEX_LOAD` | 서버 시작 시 Notion/인덱스 자동 로딩 여부. Render 포트 타임아웃 방지를 위해 기본값 false |
+| `SEARCH_INDEX_PATH` / `INDEX_PATH` | 검색 인덱스 JSON 저장 경로. 기본값 `./data/search_index.json` |
+| `AUTO_LOAD_INDEX_ON_START` / `STARTUP_INDEX_LOAD` | 서버 시작 시 기존 인덱스 파일을 로드하고, 비어 있으면 Notion 기준으로 재구성할지 여부. 기본값 true |
+| `AUTO_REBUILD_INDEX_AFTER_CRAWL` | 크롤링 및 Notion 저장 완료 후 검색 인덱스를 자동 재생성할지 여부. 기본값 true |
 | `CURRICULUM_URL` | 교육과정 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4789/subview.do` |
 | `SCHEDULE_URL` | 학과 일정 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4812/subview.do` |
 | `NOTICE_URL` | 공지사항 공식 URL. 기본값 `https://cs.knou.ac.kr/cs1/4812/subview.do` |

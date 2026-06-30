@@ -174,6 +174,7 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   overscroll-behavior: contain;
 }
 .messages > .message:first-child { margin-top: auto; }
+.messages > .message:first-child[data-i18n-key] { margin-top: 0; }
 .message { display: flex; margin: 0 0 16px; }
 .message.user { justify-content: flex-end; }
 .bubble { max-width: 82%; padding: 13px 16px; border-radius: 18px 18px 18px 5px; background: white; border: 1px solid var(--line); line-height: 1.6; white-space: pre-wrap; box-shadow: 0 4px 14px rgba(16,42,67,.05); }
@@ -277,7 +278,8 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   background: var(--white);
 }
 .composer textarea {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   resize: none;
   min-height: 48px;
   max-height: 140px;
@@ -290,9 +292,10 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   -webkit-text-size-adjust: 100%;
   touch-action: manipulation;
 }
-.composer textarea::placeholder { overflow: hidden; color: #8493a1; font-size: clamp(12px, 3.2vw, 14px); text-overflow: ellipsis; white-space: nowrap; }
+.composer textarea::placeholder { overflow: visible; color: #8493a1; font-size: clamp(12px, 3.2vw, 14px); text-overflow: clip; white-space: normal; }
 .composer textarea:focus, input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(23,105,170,.12); }
 .composer button, .primary, .search-test button { border: 0; border-radius: 12px; padding: 0 20px; color: white; background: var(--blue); font-weight: 800; }
+.composer button { flex: 0 0 auto; min-width: 58px; }
 .composer textarea:disabled {
   background: #f4f7fb;
   color: #8a99aa;
@@ -398,10 +401,13 @@ th { color: var(--muted); font-size: .77rem; }
 .widget-window .chat-intro p { font-size: .75rem; }
 .widget-window .messages {
   padding: 14px;
+  min-height: 120px;
+  padding-bottom: 16px;
 }
 .widget-window .suggestions { padding: 8px 12px; }
 .widget-window .composer { padding: 10px 12px 12px; }
 .widget-window .composer textarea { min-width: 0; }
+.widget-window .composer button { min-width: 52px; padding-inline: 14px; }
 .widget-window .table-scroll-hint,
 .mobile-fullscreen .table-scroll-hint {
   display: block;

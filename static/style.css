@@ -170,7 +170,7 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   background: #fbfdff;
   overscroll-behavior: contain;
 }
-.messages > .message:first-child { margin-top: auto; }
+.messages > .message:first-child {margin-top: 0;}
 .messages > .message:first-child[data-i18n-key] { margin-top: 0; }
 .message { display: flex; margin: 0 0 16px; }
 .message.user { justify-content: flex-end; }

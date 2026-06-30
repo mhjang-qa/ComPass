@@ -760,3 +760,16 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
     max-width: calc(100% - 42px);
   }
 }
+
+.chat-layout {
+
+  grid-template-rows: minmax(0, 1fr) auto auto;
+
+}
+
+@media (max-width: 768px) {
+  .chat-layout {
+    border-radius: 16px;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+  }
+}

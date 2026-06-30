@@ -121,3 +121,27 @@ def test_response_buttons_are_localized_on_language_change() -> None:
     assert 'link.dataset.actionLabelKo = action.label || buttonLabel("link")' in script
     assert 'link.textContent = actionText(link.dataset.actionLabelKo)' in script
     assert "updateRenderedButtonLabels();" in script
+
+
+def test_english_mode_localizes_card_internal_labels() -> None:
+    script = Path("static/app.js").read_text(encoding="utf-8")
+
+    for expected in (
+        'curriculumTitle: "Computer Science curriculum information."',
+        'courseName: "Course Name"',
+        'category: "Category"',
+        'description: "Description"',
+        'facultyTitle: "Faculty information."',
+        'researchArea: "Research Area"',
+        'date: "Date"',
+        'period: "Period"',
+        '"컴퓨터의이해": "Introduction to Computer Science"',
+        '"파이썬프로그래밍기초": "Basic Python Programming"',
+        '"자료구조": "Data Structures"',
+        '"인공지능": "AI"',
+    ):
+        assert expected in script
+    assert "function cardText(key)" in script
+    assert "function translateCardText(value)" in script
+    assert 'appendField(card, cardText("date"), formatDateOnly(item.date))' in script
+    assert 'appendField(card, cardText("period"), formatSchedulePeriod(item))' in script

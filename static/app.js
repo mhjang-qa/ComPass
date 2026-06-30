@@ -75,6 +75,28 @@ const I18N = {
       original: "원문 보기",
       link: "바로가기",
     },
+    cards: {
+      curriculumTitle: "컴퓨터과학과 교육과정 안내입니다.",
+      curriculumDesc: "공식 학과 페이지의 교육과정 메뉴에서 학년별 과목과 이수 흐름을 확인할 수 있습니다.",
+      courseName: "과목명",
+      category: "구분",
+      description: "특징",
+      gradeSemester: "학년/학기",
+      facultyTitle: "교수진 안내입니다.",
+      facultyDesc: "공식 학과 페이지에서 교수진 프로필과 연구 분야를 확인할 수 있습니다.",
+      position: "직위",
+      researchArea: "연구 분야",
+      email: "이메일",
+      office: "연구실",
+      phone: "연락처",
+      subjects: "담당 과목",
+      date: "등록일",
+      period: "기간",
+      summary: "요약",
+      details: "설명",
+      swipeHint: "← 좌우로 밀어서 전체 내용을 확인할 수 있습니다.",
+      compactView: "간단히 보기",
+    },
   },
   en: {
     placeholder: "Ask about CS department info",
@@ -110,6 +132,28 @@ const I18N = {
       original: "View Original",
       link: "Open Link",
     },
+    cards: {
+      curriculumTitle: "Computer Science curriculum information.",
+      curriculumDesc: "You can check courses by year and study flow in the Curriculum menu on the official department page.",
+      courseName: "Course Name",
+      category: "Category",
+      description: "Description",
+      gradeSemester: "Year/Semester",
+      facultyTitle: "Faculty information.",
+      facultyDesc: "You can check professor profiles and research areas on the official department page.",
+      position: "Position",
+      researchArea: "Research Area",
+      email: "Email",
+      office: "Office",
+      phone: "Phone",
+      subjects: "Courses",
+      date: "Date",
+      period: "Period",
+      summary: "Summary",
+      details: "Description",
+      swipeHint: "Swipe horizontally to view the full table.",
+      compactView: "Show Less",
+    },
   },
 };
 const COURSE_LABEL_TRANSLATIONS = {
@@ -118,10 +162,49 @@ const COURSE_LABEL_TRANSLATIONS = {
     "데이터베이스시스템": "Database Systems",
     "운영체제": "Operating Systems",
     "이산수학": "Discrete Mathematics",
-    "파이썬프로그래밍기초": "Python Programming Basics",
+    "파이썬프로그래밍기초": "Basic Python Programming",
     "데이터정보처리입문": "Introduction to Data and Information Processing",
-    "컴퓨터의이해": "Understanding Computers",
+    "컴퓨터의이해": "Introduction to Computer Science",
+    "유비쿼터스컴퓨팅개론": "Introduction to Ubiquitous Computing",
     "Java프로그래밍": "Java Programming",
+    "HTML5웹프로그래밍": "HTML5 Web Programming",
+    "자료구조": "Data Structures",
+    "알고리즘": "Algorithms",
+    "컴퓨터그래픽스": "Computer Graphics",
+    "컴퓨터구조": "Computer Architecture",
+    "소프트웨어공학": "Software Engineering",
+    "정보보호": "Information Security",
+    "컴퓨터보안": "Computer Security",
+    "클라우드컴퓨팅": "Cloud Computing",
+  },
+};
+const CARD_TEXT_TRANSLATIONS = {
+  en: {
+    "전공": "Major",
+    "전공선택": "Major Elective",
+    "전공필수": "Required Major",
+    "교양": "General Education",
+    "일반선택": "General Elective",
+    "1학년": "Year 1",
+    "2학년": "Year 2",
+    "3학년": "Year 3",
+    "4학년": "Year 4",
+    "교수": "Professor",
+    "부교수": "Associate Professor",
+    "조교수": "Assistant Professor",
+    "컴퓨터과학 입문": "Introductory course in computer science",
+    "프로그래밍 기초": "Basic programming course",
+    "객체지향 프로그래밍": "Object-oriented programming",
+    "전공 수학 기초": "Foundational mathematics for computer science",
+    "자료구조 기초": "Foundations of data structures",
+    "운영체제 기초": "Foundations of operating systems",
+    "데이터 관리 기초": "Foundations of data management",
+    "AI 기초": "Foundations of AI",
+    "그래픽스 기초": "Foundations of computer graphics",
+    "보안 기초": "Foundations of security",
+    "클라우드 기술 이해": "Understanding cloud technologies",
+    "학과 공식 일정": "Official department schedule",
+    "학과 일정 관련 공식 안내입니다.": "Official department schedule information.",
   },
 };
 const DEFAULT_ICONS = {
@@ -173,6 +256,17 @@ function t(key) {
 function buttonLabel(key) {
   const language = currentLanguage || "ko";
   return (I18N[language]?.buttons || I18N.ko.buttons)[key] || I18N.ko.buttons[key] || key;
+}
+
+function cardText(key) {
+  const language = currentLanguage || "ko";
+  return (I18N[language]?.cards || I18N.ko.cards)[key] || I18N.ko.cards[key] || key;
+}
+
+function translateCardText(value) {
+  const text = String(value || "");
+  if ((currentLanguage || "ko") !== "en" || !text) return text;
+  return CARD_TEXT_TRANSLATIONS.en[text] || COURSE_LABEL_TRANSLATIONS.en[text] || text;
 }
 
 function translateButtonLabel(label = "") {
@@ -698,20 +792,20 @@ function appendField(container, label, value) {
   const strong = document.createElement("strong");
   strong.textContent = `${label}:`;
   const span = document.createElement("span");
-  span.textContent = value;
+  span.textContent = translateCardText(value);
   row.append(strong, span);
   container.appendChild(row);
 }
 
 function appendSubjectList(container, item) {
   const groups = [
-    ["(대학)", item.subjects_undergraduate || []],
-    ["(대학원)", item.subjects_graduate || []],
+    [currentLanguage === "en" ? "(Undergraduate)" : "(대학)", item.subjects_undergraduate || []],
+    [currentLanguage === "en" ? "(Graduate)" : "(대학원)", item.subjects_graduate || []],
   ].filter(([, subjects]) => subjects.length);
   if (!groups.length) return;
   const label = document.createElement("strong");
   label.className = "subjects-label";
-  label.textContent = "담당과목";
+  label.textContent = cardText("subjects");
   container.appendChild(label);
   const list = document.createElement("ul");
   list.className = "subject-list";
@@ -719,8 +813,8 @@ function appendSubjectList(container, item) {
     const li = document.createElement("li");
     const strong = document.createElement("strong");
     strong.textContent = level;
-    const summary = subjects.slice(0, 3).join(", ");
-    const suffix = subjects.length > 3 ? " 등" : "";
+    const summary = subjects.slice(0, 3).map(translateCardText).join(", ");
+    const suffix = subjects.length > 3 ? (currentLanguage === "en" ? ", etc." : " 등") : "";
     li.append(strong, document.createTextNode(` ${summary}${suffix}`));
     list.appendChild(li);
   });
@@ -751,7 +845,7 @@ function appendKeyValueTable(container, rows = {}) {
   table.className = "answer-table";
   const thead = document.createElement("thead");
   const head = document.createElement("tr");
-  ["항목", "안내"].forEach((label) => {
+  [cardText("category"), cardText("details")].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
     head.appendChild(th);
@@ -776,14 +870,14 @@ function appendKeyValueTable(container, rows = {}) {
 function appendCourseMiniTable(container, items = []) {
   const hint = document.createElement("p");
   hint.className = "table-scroll-hint";
-  hint.textContent = "← 좌우로 밀어서 전체 내용을 확인할 수 있습니다.";
+  hint.textContent = cardText("swipeHint");
   const wrap = document.createElement("div");
   wrap.className = "answer-table-wrap curriculum-table-wrap";
   const table = document.createElement("table");
   table.className = "answer-table curriculum-table";
   const thead = document.createElement("thead");
   const head = document.createElement("tr");
-  ["과목명", "구분", "특징"].forEach((label) => {
+  [cardText("courseName"), cardText("category"), cardText("description")].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
     head.appendChild(th);
@@ -795,7 +889,7 @@ function appendCourseMiniTable(container, items = []) {
     const tr = document.createElement("tr");
     [item.course_name || item.title || "", item.category || "", item.feature_summary || item.feature || ""].forEach((value) => {
       const td = document.createElement("td");
-      td.textContent = value;
+      td.textContent = translateCardText(value);
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -822,7 +916,7 @@ function appendExpandButton(container, cards, totalCount, answerType, messageRow
   button.addEventListener("click", () => {
     expanded = !expanded;
     cards.slice(limit).forEach((card) => card.classList.toggle("is-collapsed-item", !expanded));
-    button.textContent = expanded ? "간단히 보기" : expandedLabel;
+    button.textContent = expanded ? cardText("compactView") : expandedLabel;
     button.setAttribute("aria-expanded", String(expanded));
     scrollMessageIntoView(expanded ? cards[limit] : messageRow);
   });
@@ -902,9 +996,11 @@ function renderFacultyList(bubble, payload, messageRow) {
   const header = document.createElement("div");
   header.className = "answer-heading";
   const title = document.createElement("strong");
-  title.textContent = payload.answer || "컴퓨터과학과 교수진 정보입니다.";
+  title.textContent = currentLanguage === "en" ? cardText("facultyTitle") : (payload.answer || cardText("facultyTitle"));
   const count = document.createElement("span");
-  count.textContent = payload.summary || `총 ${payload.total_count || payload.items.length}명의 교수 정보를 확인했습니다.`;
+  count.textContent = currentLanguage === "en"
+    ? cardText("facultyDesc")
+    : (payload.summary || `총 ${payload.total_count || payload.items.length}명의 교수 정보를 확인했습니다.`);
   header.append(title, count);
   bubble.appendChild(header);
 
@@ -917,15 +1013,15 @@ function renderFacultyList(bubble, payload, messageRow) {
     const badge = document.createElement("span");
     badge.className = "faculty-number";
     badge.textContent = String(index + 1);
-    heading.append(badge, document.createTextNode(`${item.name} ${item.position || item.title || "교수"}`));
+    heading.append(badge, document.createTextNode(`${item.name} ${translateCardText(item.position || item.title || "교수")}`));
     card.appendChild(heading);
-    appendField(card, "직위", item.position || item.title);
-    appendField(card, "이메일", item.email);
-    appendField(card, "연락처", item.phone);
+    appendField(card, cardText("position"), translateCardText(item.position || item.title));
+    appendField(card, cardText("email"), item.email);
+    appendField(card, cardText("phone"), item.phone);
     appendSubjectList(card, item);
-    appendSimpleList(card, "연구 분야", item.research || []);
+    appendSimpleList(card, cardText("researchArea"), item.research || []);
     appendItemActions(card, item);
-    appendItemLink(card, item, payload.source_urls?.[0], "교수진 페이지 바로가기");
+    appendItemLink(card, item, payload.source_urls?.[0], I18N.ko.buttons.facultyPage);
     list.appendChild(card);
     return card;
   });
@@ -968,9 +1064,9 @@ function renderGenericItems(bubble, payload, messageRow) {
       value.textContent = item.value;
       card.appendChild(value);
     } else if (payload.answer_type === "course_table") {
-      appendField(card, "학년/학기", [item.grade, item.semester].filter(Boolean).join(" "));
-      appendField(card, "구분", item.category);
-      appendField(card, "특징", item.feature);
+      appendField(card, cardText("gradeSemester"), [item.grade, item.semester].filter(Boolean).join(" "));
+      appendField(card, cardText("category"), item.category);
+      appendField(card, cardText("description"), item.feature);
     } else if (payload.answer_type === "course_recommendation") {
       appendField(card, "추천유형", item.group_name);
       appendField(card, "추천 이유", item.reason);
@@ -991,14 +1087,14 @@ function renderGenericItems(bubble, payload, messageRow) {
       note.textContent = item.disclaimer;
       card.appendChild(note);
     } else if (payload.answer_type === "notice_list") {
-      appendField(card, "게시일", formatDateOnly(item.date));
-      appendField(card, "요약", item.description);
+      appendField(card, cardText("date"), formatDateOnly(item.date));
+      appendField(card, cardText("summary"), item.description);
     } else if (payload.answer_type === "schedule_list") {
-      appendField(card, "기간", formatSchedulePeriod(item));
-      appendField(card, "설명", item.description);
+      appendField(card, cardText("period"), formatSchedulePeriod(item));
+      appendField(card, cardText("details"), item.description);
     } else {
-      appendField(card, "카테고리", item.category);
-      appendField(card, "게시일", item.published_at);
+      appendField(card, cardText("category"), item.category);
+      appendField(card, cardText("date"), item.published_at);
     }
     if (item.summary && payload.answer_type !== "course_table") {
       const summary = document.createElement("p");
@@ -1026,9 +1122,9 @@ function renderCurriculumByGrade(bubble, payload) {
   const header = document.createElement("div");
   header.className = "answer-heading";
   const title = document.createElement("strong");
-  title.textContent = payload.answer || "컴퓨터과학과 교육과정 안내입니다.";
+  title.textContent = currentLanguage === "en" ? cardText("curriculumTitle") : (payload.answer || cardText("curriculumTitle"));
   const summary = document.createElement("span");
-  summary.textContent = payload.summary || "학년별 대표 과목을 3개씩 먼저 정리했습니다.";
+  summary.textContent = currentLanguage === "en" ? cardText("curriculumDesc") : (payload.summary || cardText("curriculumDesc"));
   header.append(title, summary);
   bubble.appendChild(header);
 
@@ -1038,7 +1134,7 @@ function renderCurriculumByGrade(bubble, payload) {
     const card = document.createElement("article");
     card.className = "answer-card curriculum-grade-card";
     const heading = document.createElement("h3");
-    heading.textContent = group.grade || "학년";
+    heading.textContent = translateCardText(group.grade || "학년");
     card.appendChild(heading);
     appendCourseMiniTable(card, group.items || []);
     list.appendChild(card);

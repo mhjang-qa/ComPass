@@ -893,7 +893,7 @@ def build_notice_empty_response(
     return {
         "answer": "컴퓨터과학과 최근 공지 안내입니다.",
         "answer_type": "notice_list",
-        "summary": "현재 검색 인덱스에서 최신 공지를 확인하지 못했습니다. 공식 공지 페이지에서 최신 내용을 확인해 주세요.",
+        "summary": "현재 저장된 공식 데이터에서 최근 공지를 찾지 못했습니다.\n공식 공지사항 페이지에서 확인할 수 있습니다.",
         "items": [],
         "display_limit": 3,
         "total_count": 0,
@@ -956,7 +956,7 @@ def build_priority_intent_response(
             started=started,
         )
         response["answer"] = "컴퓨터과학과 최근 공지 안내입니다."
-        response["summary"] = "최신 공지 3개를 먼저 안내드립니다."
+        response["summary"] = "컴퓨터과학과 최근 공지 3건을 안내드립니다."
         response["structured_intent"] = "recent_notice"
         response["search_scope"] = ["notice"]
         return response
@@ -978,7 +978,7 @@ def build_priority_intent_response(
             started=started,
         )
         response["answer"] = "컴퓨터과학과 학과 일정 안내입니다."
-        response["summary"] = "학과 일정 3개를 먼저 안내드립니다."
+        response["summary"] = "컴퓨터과학과 주요 학과 일정 3건을 안내드립니다."
         response["structured_intent"] = "schedule"
         response["search_scope"] = ["schedule"]
         return response
@@ -1371,7 +1371,15 @@ def _notice_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
         items.append(
             {
                 "title": title,
-                "date": hit.get("published_at") or "",
+                "date": (
+                    hit.get("published_at")
+                    or hit.get("date")
+                    or hit.get("created_at")
+                    or hit.get("updated_at")
+                    or hit.get("notion_last_edited_time")
+                    or hit.get("collected_at")
+                    or ""
+                ),
                 "description": _clean_notice_summary(hit),
                 "source_url": source_url,
                 "fallback_url": NOTICE_URL,

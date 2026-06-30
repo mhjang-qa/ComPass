@@ -108,5 +108,5 @@ def test_loading_animation_and_compact_message_layout_are_present() -> None:
     assert "}, 800);" in script
     assert "잠시만 기다려주세요." in script
     assert "new ResizeObserver" in script
-    assert ".messages > .message:first-child { margin-top: auto; }" in style
+    assert ".messages > .message:first-child {margin-top: 0;}" in style
     assert "var(--composer-height)\\n    + var(--quick-menu-height)" not in style

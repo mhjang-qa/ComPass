@@ -248,8 +248,8 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
         "faculty_detail": ("Faculty profile information.", "Here is the official faculty profile information."),
         "curriculum_by_grade": ("Computer Science curriculum information.", "You can check courses by year and study flow in the Curriculum menu on the official department page."),
         "course_table": ("Computer Science curriculum information.", "You can check courses by year and study flow in the Curriculum menu on the official department page."),
-        "notice_list": ("Latest department notices.", "Here are the latest official department notices."),
-        "schedule_list": ("Department schedule information.", "Here are upcoming department schedule items from official data."),
+        "notice_list": ("Latest department notices.", "Here are the 3 latest Computer Science department notices."),
+        "schedule_list": ("Department schedule information.", "Here are 3 key Computer Science department schedule items."),
         "course_difficulty": (f"{course_name or 'This course'} study workload guide.", "Difficulty and workload are reference guidance, not an official standard."),
         "course_recommendation": ("Recommended courses for beginners and transfer students.", "Here are representative courses based on the official curriculum."),
         "document_list": ("Official material search results.", "Here are relevant past exam, exam material, and PDF documents from official data."),
@@ -259,7 +259,15 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
     answer, summary = defaults.get(answer_type, defaults["text"])
     result["answer"] = answer
     if result.get("summary"):
-        result["summary"] = summary
+        original_summary = str(result.get("summary") or "")
+        if answer_type == "notice_list" and not (result.get("items") or []):
+            result["summary"] = "No recent notices were found in the saved official data.\nYou can check notices on the official department page."
+        elif answer_type == "schedule_list" and not (result.get("items") or []):
+            result["summary"] = "No schedule items were found in the saved official data.\nYou can check the academic schedule on the official department page."
+        elif "3건" in original_summary or "3개" in original_summary or answer_type in {"notice_list", "schedule_list"}:
+            result["summary"] = summary
+        else:
+            result["summary"] = summary
     for action in result.get("actions") or []:
         label = action.get("label") or ""
         action["label"] = translate_action_label_en(label)

@@ -116,13 +116,24 @@ def validate_notice_document(doc: dict[str, Any]) -> bool:
     title = (doc.get("title") or "").strip()
     category = doc.get("category") or ""
     document_type = doc.get("document_type") or ""
+    source_type = doc.get("source_type") or ""
     source_url = doc.get("source_url") or ""
-    marker = f"{source_url} {category} {document_type} {title}"
+    marker = f"{source_url} {category} {document_type} {source_type} {title}"
     if not title or re.fullmatch(r"\d+", title):
         return False
     if NOTICE_BAD_RE.search(marker):
         return False
     if source_url == NOTICE_URL:
+        return True
+    if (
+        "공지" in category
+        or "notice" in category.lower()
+        or "공지" in source_type
+        or "notice" in source_type.lower()
+        or document_type in {"공지사항", "notice", "게시물"}
+        or "공지" in title
+        or "notice" in title.lower()
+    ):
         return True
     if not NOTICE_URL_RE.search(source_url):
         return False

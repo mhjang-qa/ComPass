@@ -234,3 +234,36 @@ def test_backend_localizes_dynamic_action_labels_to_english() -> None:
         "View Course Information",
     ]
     assert localized["items"][0]["link_label"] == "View AI Course"
+
+
+def test_backend_localizes_notice_and_schedule_summaries_to_english() -> None:
+    from main import localize_response
+
+    notice = localize_response(
+        {
+            "answer": "컴퓨터과학과 최근 공지 안내입니다.",
+            "answer_type": "notice_list",
+            "summary": "컴퓨터과학과 최근 공지 3건을 안내드립니다.",
+            "items": [{"title": "공지", "date": "2026-06-01"}],
+            "actions": [{"type": "link", "label": "공지 더보기", "url": "https://example.com"}],
+        },
+        "en",
+    )
+    schedule_empty = localize_response(
+        {
+            "answer": "학과 일정 안내입니다.",
+            "answer_type": "schedule_list",
+            "summary": "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다.",
+            "items": [],
+            "actions": [{"type": "link", "label": "학과 일정 바로가기", "url": "https://example.com"}],
+        },
+        "en",
+    )
+
+    assert notice["summary"] == "Here are the 3 latest Computer Science department notices."
+    assert notice["actions"][0]["label"] == "View More Notices"
+    assert schedule_empty["summary"] == (
+        "No schedule items were found in the saved official data.\n"
+        "You can check the academic schedule on the official department page."
+    )
+    assert schedule_empty["actions"][0]["label"] == "View Schedule"

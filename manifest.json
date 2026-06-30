@@ -2,22 +2,14 @@
   "name": "ComPass",
   "short_name": "ComPass",
   "start_url": "./",
-  "scope": "./",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#102a43",
+  "theme_color": "#0f5f9f",
   "icons": [
     {
-      "src": "./static/icons/icon-192.png",
+      "src": "./static/icons/icon.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "./static/icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
     }
   ]
 }

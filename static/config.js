@@ -1,10 +1,4 @@
-window.COMPASS_CONFIG = Object.freeze({
-  APP_NAME: "ComPass",
-  BASE_PATH: "/ComPass",
-  DEPLOY_TARGET: "github-pages",
-  appName: "ComPass",
-  appSubtitle: "Computer Science X Compass · 학생들의 길잡이",
-  appSubtitleLine1: "Computer Science X Compass",
-  appSubtitleLine2: "· 학생들의 길잡이",
-  timeZone: "Asia/Seoul",
-});
+window.COMPASS_CONFIG = window.COMPASS_CONFIG || {
+  ENV: "github-pages",
+  API_BASE_URL: "https://compass-knou-cs-ai-navigator.onrender.com"
+};

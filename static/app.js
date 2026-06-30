@@ -45,8 +45,10 @@ const I18N = {
     waitingSub: "잠시만 기다려주세요.",
     send: "전송",
     pendingButton: "대기",
+    subtitleLine2: "· 학생들의 길잡이",
     intro_title: "안녕하세요, ComPass입니다.",
     intro_copy: "공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
+    introMessage: "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
     tab_chat: "챗봇",
     tab_admin: "관리자 페이지",
     incomplete: "답변이 완전히 생성되지 않았습니다. 다시 시도해 주세요.",
@@ -60,8 +62,10 @@ const I18N = {
     waitingSub: "Please wait a moment.",
     send: "Send",
     pendingButton: "Wait",
+    subtitleLine2: "A guide for students",
     intro_title: "How can I help you?",
     intro_copy: "I can guide you through Computer Science department information.",
+    introMessage: "Hello, this is ComPass.\nI summarize official information in a way students can easily understand.",
     tab_chat: "Chat",
     tab_admin: "Admin",
     incomplete: "The answer was not completed. Please try again.",
@@ -127,6 +131,8 @@ function setLanguage(language) {
   $$("[data-i18n]").forEach((node) => {
     node.textContent = t(node.dataset.i18n);
   });
+  applyAppConstants();
+  updateI18nKeyedText();
   const input = $("#question");
   if (input) input.placeholder = isChatPending ? PENDING_CHAT_PLACEHOLDER : DEFAULT_CHAT_PLACEHOLDER;
   renderQuickQuestions();
@@ -144,6 +150,8 @@ function initializeLanguage() {
     $$("[data-i18n]").forEach((node) => {
       node.textContent = t(node.dataset.i18n);
     });
+    applyAppConstants();
+    updateI18nKeyedText();
     return;
   }
   setLanguage(stored);
@@ -167,7 +175,13 @@ function activateTab(tabName) {
 function applyAppConstants() {
   $$("[data-app-name]").forEach((node) => { node.textContent = APP_CONFIG.appName; });
   $$("[data-app-subtitle-line1]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitleLine1; });
-  $$("[data-app-subtitle-line2]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitleLine2; });
+  $$("[data-app-subtitle-line2]").forEach((node) => { node.textContent = t("subtitleLine2"); });
+}
+
+function updateI18nKeyedText() {
+  $$("[data-i18n-key]").forEach((node) => {
+    node.textContent = t(node.dataset.i18nKey);
+  });
 }
 
 function isMobileDevice() {
@@ -1155,6 +1169,15 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
   return row;
 }
 
+function addI18nSystemMessage(key) {
+  const row = addMessage("bot", t(key), [], false, { i18nKey: key });
+  row.dataset.i18nKey = key;
+  row.querySelectorAll(".message-content.text-paragraph").forEach((node) => {
+    node.dataset.i18nKey = key;
+  });
+  return row;
+}
+
 function createSearchLoading() {
   const requestId = arguments[0] || "";
   const row = document.createElement("div");
@@ -1626,13 +1649,16 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  addMessage("bot", currentLanguage === "en"
-    ? "How can I help you?\nI can guide you through Computer Science department information."
-    : "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.");
+  if (messages.querySelector('[data-i18n-key="introMessage"]')) {
+    updateI18nKeyedText();
+    return;
+  }
+  addI18nSystemMessage("introMessage");
 }
 initializeLanguage();
 wakeServer();
 applyAppConstants();
+updateI18nKeyedText();
 renderQuickQuestions();
 applyIconConfig();
 updateAdminUi();

@@ -49,9 +49,10 @@
       background: rgba(255,255,255,.96);
       box-shadow: 0 22px 60px rgba(16,42,67,.25);
     }
-    .mark { display: grid; place-items: center; width: 64px; height: 64px; margin: 0; animation: float 1.5s ease-in-out infinite; }
+    .mark { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 64px; margin: 0; animation: float 1.5s ease-in-out infinite; }
     .mark img, .coldstart-logo, .boot-logo { width: 64px; height: 64px; object-fit: contain; display: block; margin: 0 auto; }
-    .coldstart-logo-fallback { display: none; width: 100%; margin: 0; color: #1769aa; font-size: 24px; font-weight: 900; letter-spacing: -.02em; text-align: center; }
+    .coldstart-logo-fallback { display: none; align-items: center; justify-content: center; width: 100%; margin: 0 auto; color: #1769aa; font-size: 24px; font-weight: 900; letter-spacing: 0; text-align: center; }
+    .coldstart-logo-fallback[style*="block"] { display: flex !important; }
     .boot h2, .coldstart-title, .boot-title { width: 100%; margin: 0; color: #102a43; text-align: center; }
     .boot p, .coldstart-message, .boot-message { width: 100%; margin: 0; color: #66788a; font-size: 14px; line-height: 1.55; text-align: center; }
     .progress, .coldstart-progress { position: relative; width: 100%; max-width: 320px; height: 7px; margin: 8px auto 0; overflow: hidden; border-radius: 99px; background: #e4edf4; }

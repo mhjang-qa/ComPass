@@ -60,6 +60,13 @@ STATIC_DOCUMENT_TYPES = {
     "과목상세",
     "학과일정",
     "검증지식",
+    "pdf",
+    "synap",
+    "기출문제",
+    "시험자료",
+    "교과목자료",
+    "공지자료",
+    "학과자료",
 }
 BOARD_DOCUMENT_TYPES = {"게시물", "게시판목록", "커뮤니티게시물"}
 DATA_TIERS = ("CORE", "ACTIVE_NOTICE", "TEMPORARY", "IMPORTANT_ARCHIVE", "NOISE")
@@ -79,6 +86,8 @@ ATTACHMENT_EXTENSIONS = (
     ".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".zip", ".txt", ".csv", ".jpg", ".jpeg", ".png",
 )
+DOCUMENT_URL_RE = re.compile(r"/synap/skin/doc\.html|/synap/result/|/bbs/|\.pdf(?:$|\?)", re.IGNORECASE)
+EXAM_DOCUMENT_RE = re.compile(r"학년도|학기|교시|출제위원|출제범위|객관식|다음 중|정답|배점|기출|시험문제")
 REQUIRED_DOCUMENT_URLS = (
     "https://cs.knou.ac.kr/cs1/4786/subview.do",
     "https://cs.knou.ac.kr/cs1/4789/subview.do",
@@ -232,11 +241,12 @@ def classify_data_tier(record: dict[str, Any], today: date | None = None) -> dic
     valid_end = ""
 
     compact_body = re.sub(r"\s+", "", body)
+    is_document_resource = document_type in {"pdf", "synap", "기출문제", "시험자료", "교과목자료", "공지자료", "학과자료"} or DOCUMENT_URL_RE.search(url)
     is_noise = (
         title in {"", "제목 없음"}
         or (is_board_document_record(record) and len(compact_body) < 100 and not IMPORTANT_ARCHIVE_HINT_RE.search(full_text))
         or bool(NOISE_HINT_RE.search(clean_text(body)))
-    )
+    ) and not is_document_resource
     if is_noise:
         return {
             "data_tier": "NOISE",
@@ -353,6 +363,11 @@ class CrawlDocument:
     content_hash: str = ""
     status: str = "신규"
     search_text: str = ""
+    title_ko: str = ""
+    title_en: str = ""
+    content_ko: str = ""
+    content_en: str = ""
+    content_text: str = ""
     document_type: str = "일반페이지"
     table_headers: list[str] = field(default_factory=list)
     table_rows: list[list[str]] = field(default_factory=list)
@@ -368,6 +383,14 @@ class CrawlDocument:
 
     def finalize(self) -> "CrawlDocument":
         self.body = clean_text(self.body)
+        self.title = self.title or self.title_ko or "컴퓨터과학과 PDF 자료"
+        self.title_ko = self.title_ko or self.title
+        self.content_ko = self.content_ko or self.body
+        self.content_text = self.content_text or self.body
+        if not self.title_en:
+            self.title_en = translate_label_en(self.title)
+        if not self.content_en:
+            self.content_en = translate_label_en(self.body[:1200])
         self.summary = summarize(self.body)
         self.keywords = extract_keywords(f"{self.title} {self.category} {self.body}")
         normalized_text = " ".join(
@@ -376,7 +399,7 @@ class CrawlDocument:
         )
         searchable_body = normalized_text or self.summary or self.body[:1000]
         self.search_text = clean_text(
-            " ".join([self.title, self.category, self.summary, " ".join(self.keywords), searchable_body])
+            " ".join([self.title, self.title_ko, self.title_en, self.category, self.summary, " ".join(self.keywords), searchable_body, self.content_en])
         )
         digest_source = json.dumps(
             {
@@ -393,8 +416,11 @@ class CrawlDocument:
             sort_keys=True,
         )
         self.content_hash = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
+        preserved_document_type = self.document_type if self.document_type in STATIC_DOCUMENT_TYPES else ""
         if self.source_type == "community":
             self.document_type = "커뮤니티게시물"
+        elif preserved_document_type:
+            self.document_type = preserved_document_type
         else:
             self.document_type = classify_document_type(self.source_url, self.category)
         if self.source_type != "community" and self.normalized_items and any(item.get("overview") for item in self.normalized_items):
@@ -434,6 +460,44 @@ def clean_text(text: str) -> str:
             continue
         cleaned.append(line)
     return "\n".join(cleaned).strip()
+
+
+TRANSLATION_TERMS = {
+    "교과과정": "Curriculum",
+    "교육과정": "Curriculum",
+    "커리큘럼": "Curriculum",
+    "교수진": "Faculty",
+    "학과일정": "Department Schedule",
+    "공지사항": "Notice",
+    "공지": "Notice",
+    "졸업요건": "Graduation Requirements",
+    "졸업": "Graduation",
+    "기출문제": "Past Exam Questions",
+    "시험문제": "Exam Questions",
+    "시험": "Exam",
+    "이산수학": "Discrete Mathematics",
+    "데이터정보처리입문": "Data Processing Introduction",
+    "파이썬프로그래밍기초": "Python Programming Basics",
+    "인공지능": "Artificial Intelligence",
+    "운영체제": "Operating Systems",
+    "자료구조": "Data Structures",
+    "알고리즘": "Algorithms",
+    "학년도": "academic year",
+    "학기": "semester",
+    "출제위원": "exam writer",
+    "출제범위": "exam scope",
+    "객관식": "multiple choice",
+    "정답": "answer",
+    "배점": "points",
+}
+
+
+def translate_label_en(text: str) -> str:
+    """외부 번역 API 없이 검색용 영문 필드를 보강하는 용어 중심 번역."""
+    value = text or ""
+    for ko, en in sorted(TRANSLATION_TERMS.items(), key=lambda item: len(item[0]), reverse=True):
+        value = value.replace(ko, en)
+    return value
 
 
 def summarize(text: str, limit: int = 500) -> str:
@@ -519,6 +583,13 @@ def extract_schedule_items(text: str) -> list[dict[str, str]]:
 
 def classify_document_type(url: str, category: str) -> str:
     path = urlsplit(url).path.lower()
+    full = f"{url} {category}"
+    if "/synap/skin/doc.html" in path:
+        return "synap"
+    if path.endswith(".pdf") or "/synap/result/" in path:
+        return "pdf"
+    if EXAM_DOCUMENT_RE.search(full):
+        return "시험자료"
     if "artclview.do" in path:
         return "게시물"
     if "artcllist.do" in path or "게시판" in category or "공지" in category:
@@ -558,7 +629,7 @@ class KnouCrawler:
         self.allowed_path_prefixes = tuple(
             sorted(
                 configured_prefixes
-                | {"/cs1", "/sites/cs1", "/bbs/cs1", "/learningInformation/cs1"}
+                | {"/cs1", "/sites/cs1", "/bbs/cs1", "/learningInformation/cs1", "/synap"}
             )
         )
         self.session = requests.Session()
@@ -659,6 +730,10 @@ class KnouCrawler:
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "")
                 if "text/html" not in content_type:
+                    document = self._parse_binary_document(url, response)
+                    if document:
+                        documents.append(document.finalize())
+                        self.stats["collected"] = len(documents)
                     continue
                 response.encoding = response.apparent_encoding or response.encoding
                 soup = BeautifulSoup(response.text, "lxml")
@@ -744,6 +819,12 @@ class KnouCrawler:
         for tag in soup.select("a[href]"):
             candidate = normalize_url(tag.get("href", ""), current_url)
             if self.is_allowed(candidate):
+                links.append(candidate)
+            elif candidate and DOCUMENT_URL_RE.search(candidate) and urlsplit(candidate).netloc == config.ALLOWED_DOMAIN:
+                links.append(candidate)
+        for tag in soup.select("iframe[src], object[data], embed[src]"):
+            candidate = normalize_url(tag.get("src") or tag.get("data") or "", current_url)
+            if candidate and self.is_allowed(candidate):
                 links.append(candidate)
         links.extend(self._extract_board_page_links(current_url, soup))
         return list(dict.fromkeys(links))
@@ -923,7 +1004,7 @@ class KnouCrawler:
             None,
         )
         title = clean_text(title_tag.get_text(" ", strip=True) if title_tag else "")
-        title = re.sub(r"\s*[-|]\s*컴퓨터과학과.*$", "", title).strip() or "제목 없음"
+        title = re.sub(r"\s*[-|]\s*컴퓨터과학과.*$", "", title).strip()
 
         breadcrumbs = [
             clean_text(node.get_text(" ", strip=True))
@@ -937,6 +1018,8 @@ class KnouCrawler:
 
         attachments = self._extract_attachments(url, soup)
         content = self._select_content(url, soup)
+        if content is None and DOCUMENT_URL_RE.search(url):
+            content = soup.body or soup
         if content is None:
             return None
         content = BeautifulSoup(str(content), "lxml")
@@ -950,8 +1033,11 @@ class KnouCrawler:
         if not normalized_items and ("교수진" in category or "/4786/" in url):
             normalized_items = self._extract_faculty_items(content, url)
         body = self._structured_text(content)
+        if DOCUMENT_URL_RE.search(url):
+            body = self._augment_synap_text(url, soup, body)
         if not body:
             return None
+        title = self._document_title(title, url, body)
         if not normalized_items and ("학과일정" in category or "/4792/" in url):
             normalized_items = extract_schedule_items(body)
         if not normalized_items and normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
@@ -971,6 +1057,8 @@ class KnouCrawler:
             table_rows=table_rows,
             normalized_items=normalized_items,
         )
+        if DOCUMENT_URL_RE.search(url):
+            self._apply_document_metadata(document)
         if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
             document.category = "학과일정"
             document.document_type = "학과일정"
@@ -1020,6 +1108,102 @@ class KnouCrawler:
             self._ensure_stats()
             self.stats["static_pages"] += 1
         return document
+
+    def _parse_binary_document(self, url: str, response: requests.Response) -> CrawlDocument | None:
+        """PDF 등 비 HTML 첨부를 실패 허용 방식으로 검색 가능한 문서로 변환한다."""
+        try:
+            content_type = response.headers.get("content-type", "")
+            body = ""
+            if "pdf" in content_type.lower() or urlsplit(url).path.lower().endswith(".pdf"):
+                body = self._extract_pdf_text(response.content)
+            if not body:
+                body = urlsplit(url).path.rsplit("/", 1)[-1]
+            title = self._document_title("", url, body)
+            document = CrawlDocument(
+                title=title,
+                category=self._classify_document_category(body, title),
+                body=body,
+                source_url=url,
+                collected_at=datetime.now().astimezone().isoformat(),
+            )
+            self._apply_document_metadata(document)
+            return document
+        except Exception as exc:
+            logger.warning("[DOCUMENT_PARSE_FAIL] url=%s error=%s", url, exc)
+            fallback = self._document_title("", url, "")
+            document = CrawlDocument(
+                title=fallback,
+                category="학과자료",
+                body=f"문서 텍스트 추출 실패: {url}",
+                source_url=url,
+                collected_at=datetime.now().astimezone().isoformat(),
+            )
+            self._apply_document_metadata(document)
+            return document
+
+    @staticmethod
+    def _extract_pdf_text(data: bytes) -> str:
+        try:
+            from pypdf import PdfReader
+            import io
+
+            reader = PdfReader(io.BytesIO(data))
+            pages = []
+            for page in reader.pages[:10]:
+                pages.append(page.extract_text() or "")
+            return clean_text("\n".join(pages))
+        except Exception as exc:
+            logger.warning("PDF 텍스트 추출 실패: %s", exc)
+            return ""
+
+    def _augment_synap_text(self, url: str, soup: BeautifulSoup, body: str) -> str:
+        texts = [body]
+        for selector in ("title", "meta[name='title']", "meta[property='og:title']"):
+            node = soup.select_one(selector)
+            if not node:
+                continue
+            texts.append(node.get("content") or node.get_text(" ", strip=True))
+        for tag in soup.select("iframe[src], object[data], embed[src], a[href]"):
+            candidate = normalize_url(tag.get("src") or tag.get("data") or tag.get("href") or "", url)
+            if candidate and candidate != url:
+                texts.append(candidate)
+        return clean_text("\n".join(text for text in texts if text))
+
+    @staticmethod
+    def _document_title(title: str, url: str, body: str) -> str:
+        clean_title = clean_text(title)
+        if clean_title and clean_title.lower() not in {"제목 없음", "untitled", "noise"} and not re.fullmatch(r"temp_\d+", clean_title):
+            return clean_title[:300]
+        head = clean_text(body[:300])
+        year = re.search(r"(20\d{2})\s*학년도", head)
+        semester = re.search(r"([12])\s*학기", head)
+        courses = ("이산수학", "데이터정보처리입문", "파이썬프로그래밍기초", "인공지능", "운영체제", "자료구조", "알고리즘")
+        course = next((name for name in courses if name in re.sub(r"\s+", "", head)), "")
+        if year and semester and course:
+            suffix = "기출문제" if EXAM_DOCUMENT_RE.search(head) else "자료"
+            return f"{year.group(1)}학년도 {semester.group(1)}학기 {course} {suffix}"
+        filename = urlsplit(url).path.rsplit("/", 1)[-1]
+        if filename and not re.fullmatch(r"temp_\d+(?:\.\w+)?", filename, re.IGNORECASE):
+            return clean_text(re.sub(r"\.[A-Za-z0-9]+$", "", filename))[:300]
+        return "컴퓨터과학과 PDF 자료"
+
+    @staticmethod
+    def _classify_document_category(body: str, title: str = "") -> str:
+        text = f"{title} {body}"
+        if EXAM_DOCUMENT_RE.search(text):
+            return "기출문제"
+        if re.search(r"교과목|과목|강의", text):
+            return "교과목자료"
+        if re.search(r"공지|안내", text):
+            return "공지자료"
+        return "학과자료"
+
+    def _apply_document_metadata(self, document: CrawlDocument) -> None:
+        category = self._classify_document_category(document.body, document.title)
+        document.category = category
+        document.document_type = "기출문제" if category == "기출문제" else classify_document_type(document.source_url, category)
+        if document.document_type not in {"pdf", "synap", "기출문제"} and DOCUMENT_URL_RE.search(document.source_url):
+            document.document_type = "synap" if "/synap/" in document.source_url else "pdf"
 
     @classmethod
     def _extract_faculty_items(cls, content: BeautifulSoup, base_url: str) -> list[dict[str, Any]]:

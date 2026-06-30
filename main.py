@@ -112,6 +112,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     request_id: str | None = None
     context: dict[str, Any] | None = None
+    language: str = "ko"
 
 
 class SearchRequest(BaseModel):
@@ -159,6 +160,60 @@ def attach_request_metadata(result: dict[str, Any], session_id: str, request_id:
         result["llm_type"] = req.llm_type
     result["allow_llm"] = bool(req.allow_llm)
     result["requires_llm_confirmation"] = bool(result.get("requires_llm_confirmation"))
+    result["language"] = "en" if req.language == "en" else "ko"
+    return result
+
+
+EN_ACTION_LABELS = {
+    "교육과정 확인하기": "View Curriculum",
+    "교육과정 바로가기": "View Curriculum",
+    "전체 교육과정 바로가기": "View Full Curriculum",
+    "교수진 페이지 바로가기": "View Faculty",
+    "공지사항 바로가기": "View Notices",
+    "공지 바로가기": "View Notice",
+    "학과 일정 바로가기": "View Department Schedule",
+    "자료 확인하기": "View Material",
+    "PDF 보기": "View PDF",
+    "원문 보기": "View Original",
+    "LLM 보조 답변 사용": "Use AI Helper",
+}
+
+
+def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
+    if language != "en":
+        return result
+    if result.get("mode") in {"DB_LOAD_ERROR", "INDEX_EMPTY"}:
+        result["answer"] = (
+            "The official knowledge database could not be loaded. Please try again later."
+            if result.get("mode") == "DB_LOAD_ERROR"
+            else "The backend is reachable, but the search index is empty. Please run crawling or rebuild the index from the admin menu."
+        )
+        return result
+    answer_type = str(result.get("answer_type") or "")
+    course_name = result.get("course_name") or ""
+    defaults = {
+        "faculty": ("Computer Science faculty information.", "Here are the main faculty details from the official department data."),
+        "faculty_detail": ("Faculty profile information.", "Here is the official faculty profile information."),
+        "curriculum_by_grade": ("Computer Science curriculum information.", "You can check courses by year and study flow in the Curriculum menu on the official department page."),
+        "course_table": ("Computer Science curriculum information.", "You can check courses by year and study flow in the Curriculum menu on the official department page."),
+        "notice_list": ("Latest department notices.", "Here are the latest official department notices."),
+        "schedule_list": ("Department schedule information.", "Here are upcoming department schedule items from official data."),
+        "course_difficulty": (f"{course_name or 'This course'} study workload guide.", "Difficulty and workload are reference guidance, not an official standard."),
+        "course_recommendation": ("Recommended courses for beginners and transfer students.", "Here are representative courses based on the official curriculum."),
+        "document_list": ("Official material search results.", "Here are relevant past exam, exam material, and PDF documents from official data."),
+        "llm_confirmation_required": ("AI helper confirmation is required.", "Official data does not define perceived difficulty. AI helper guidance can be used as reference only."),
+        "text": ("Official department information.", result.get("summary") or "Here is information based on official department data."),
+    }
+    answer, summary = defaults.get(answer_type, defaults["text"])
+    result["answer"] = answer
+    if result.get("summary"):
+        result["summary"] = summary
+    for action in result.get("actions") or []:
+        label = action.get("label") or ""
+        action["label"] = EN_ACTION_LABELS.get(label, label)
+    for item in result.get("items") or []:
+        if item.get("link_label"):
+            item["link_label"] = EN_ACTION_LABELS.get(item["link_label"], item["link_label"])
     return result
 
 
@@ -178,6 +233,7 @@ def remember_conversation(session_id: str, question: str, result: dict[str, Any]
 
 
 def finalize_chat_response(req: ChatRequest, result: dict[str, Any], session_id: str, request_id: str) -> dict[str, Any]:
+    result = localize_response(result, "en" if req.language == "en" else "ko")
     attach_request_metadata(result, session_id, request_id, req)
     remember_conversation(session_id, req.question, result)
     record_interaction_async(req.question, result)

@@ -22,6 +22,14 @@ body { margin: 0; color: var(--ink); background: #fff; font-family: Pretendard, 
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.language-gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(16, 42, 67, .62); backdrop-filter: blur(10px); }
+.language-gate[hidden] { display: none; }
+.language-panel { width: min(360px, 100%); padding: 28px; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; color: var(--ink); background: white; box-shadow: 0 24px 70px rgba(16, 42, 67, .25); }
+.language-panel p { margin: 0 0 6px; color: var(--blue); font-size: .82rem; font-weight: 800; }
+.language-panel h2 { margin: 0 0 18px; font-size: 1.6rem; }
+.language-options { display: grid; gap: 10px; }
+.language-options button { min-height: 46px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: #f8fbfd; font-weight: 800; }
+.language-options button:hover { border-color: var(--blue); background: var(--sky); }
 .knou-home { position: fixed; inset: 0; z-index: 0; overflow: hidden; color: #17212b; background: white; }
 .knou-utility { height: 44px; padding: 12px 30px; color: white; background: #1e315e; font-size: 13px; }
 .knou-utility > span:first-child { padding: 14px 24px; background: #2196e1; }
@@ -123,6 +131,8 @@ button { cursor: pointer; }
 .bot-mark img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .window-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .window-actions button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid rgba(255,255,255,.28); border-radius: 11px; color: white; background: rgba(255,255,255,.1); font-size: 1.2rem; font-weight: 800; }
+.language-menu select { height: 38px; max-width: 116px; padding: 0 8px; border: 1px solid rgba(255,255,255,.28); border-radius: 8px; color: white; background: rgba(255,255,255,.12); font-weight: 800; }
+.language-menu option { color: var(--ink); background: white; }
 .window-actions button[hidden] { display: none; }
 .window-actions button:hover { background: rgba(255,255,255,.2); }
 .tabs { display: flex; gap: 4px; padding: 0 30px; border-bottom: 1px solid var(--line); overflow-x: auto; }

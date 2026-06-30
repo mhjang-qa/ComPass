@@ -16,8 +16,10 @@ const mobilePointer = window.matchMedia("(pointer: coarse)");
 const pendingRequests = new Map();
 const pendingByQuestion = new Map();
 let isChatPending = false;
-const DEFAULT_CHAT_PLACEHOLDER = "궁금한 컴퓨터과학과 정보를 질문해보세요";
-const PENDING_CHAT_PLACEHOLDER = "답변을 준비하고 있습니다...";
+const LANGUAGE_KEY = "compass_language";
+let currentLanguage = localStorage.getItem(LANGUAGE_KEY) || "";
+let DEFAULT_CHAT_PLACEHOLDER = "궁금한 컴퓨터과학과 정보를 질문해보세요";
+let PENDING_CHAT_PLACEHOLDER = "답변을 준비하고 있습니다...";
 const QUICK_QUESTIONS_KEY = "COMPASS_QUICK_QUESTIONS";
 const ICON_CONFIG_KEY = "COMPASS_ICON_CONFIG";
 const DEFAULT_QUICK_QUESTIONS = [
@@ -26,6 +28,47 @@ const DEFAULT_QUICK_QUESTIONS = [
   { id: 3, label: "최근 공지", message: "컴퓨터과학과 최근 공지를 알려줘", intent: "recent_notice", enabled: true, sortOrder: 3 },
   { id: 4, label: "학과 일정", message: "컴퓨터과학과 학과 일정을 알려줘", intent: "schedule", enabled: true, sortOrder: 4 },
 ];
+const QUICK_QUESTIONS_BY_LANGUAGE = {
+  ko: DEFAULT_QUICK_QUESTIONS,
+  en: [
+    { id: 1, label: "Curriculum", message: "Show me curriculum", intent: "curriculum", enabled: true, sortOrder: 1 },
+    { id: 2, label: "Faculty", message: "Who are the professors?", intent: "faculty", enabled: true, sortOrder: 2 },
+    { id: 3, label: "Latest Notice", message: "Latest notice", intent: "recent_notice", enabled: true, sortOrder: 3 },
+    { id: 4, label: "Schedule", message: "Department schedule", intent: "schedule", enabled: true, sortOrder: 4 },
+  ],
+};
+const I18N = {
+  ko: {
+    placeholder: "궁금한 컴퓨터과학과 정보를 질문해보세요",
+    pending: "답변을 준비하고 있습니다...",
+    waiting: "공식 데이터를 검색하고 있습니다",
+    waitingSub: "잠시만 기다려주세요.",
+    send: "전송",
+    pendingButton: "대기",
+    intro_title: "안녕하세요, ComPass입니다.",
+    intro_copy: "공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
+    tab_chat: "챗봇",
+    tab_admin: "관리자 페이지",
+    incomplete: "답변이 완전히 생성되지 않았습니다. 다시 시도해 주세요.",
+    retry: "답변 다시 생성",
+    confirmNo: "검색 종료",
+  },
+  en: {
+    placeholder: "Ask about Computer Science department information",
+    pending: "Preparing the answer...",
+    waiting: "Searching official data",
+    waitingSub: "Please wait a moment.",
+    send: "Send",
+    pendingButton: "Wait",
+    intro_title: "How can I help you?",
+    intro_copy: "I can guide you through Computer Science department information.",
+    tab_chat: "Chat",
+    tab_admin: "Admin",
+    incomplete: "The answer was not completed. Please try again.",
+    retry: "Regenerate answer",
+    confirmNo: "End search",
+  },
+};
 const DEFAULT_ICONS = {
   externalIcon: `${STATIC_BASE}/icons/chatbot-external.png`,
   internalIcon: `${STATIC_BASE}/icons/chatbot-internal.png`,
@@ -58,7 +101,7 @@ function setChatPending(pending) {
   }
   if (sendButton) {
     sendButton.disabled = isChatPending;
-    sendButton.textContent = isChatPending ? "대기" : "전송";
+    sendButton.textContent = isChatPending ? t("pendingButton") : t("send");
   }
   $$("[data-question]").forEach((button) => {
     button.disabled = isChatPending;
@@ -66,6 +109,44 @@ function setChatPending(pending) {
   $$(".confirm-actions button").forEach((button) => {
     button.disabled = isChatPending;
   });
+}
+
+function t(key) {
+  return (I18N[currentLanguage || "ko"] || I18N.ko)[key] || I18N.ko[key] || key;
+}
+
+function setLanguage(language) {
+  currentLanguage = language === "en" ? "en" : "ko";
+  localStorage.setItem(LANGUAGE_KEY, currentLanguage);
+  DEFAULT_CHAT_PLACEHOLDER = t("placeholder");
+  PENDING_CHAT_PLACEHOLDER = t("pending");
+  document.documentElement.lang = currentLanguage;
+  $("#languageGate")?.setAttribute("hidden", "");
+  const select = $("#languageSelect");
+  if (select) select.value = currentLanguage;
+  $$("[data-i18n]").forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  const input = $("#question");
+  if (input) input.placeholder = isChatPending ? PENDING_CHAT_PLACEHOLDER : DEFAULT_CHAT_PLACEHOLDER;
+  renderQuickQuestions();
+}
+
+function initializeLanguage() {
+  const stored = localStorage.getItem(LANGUAGE_KEY);
+  if (!stored) {
+    $("#languageGate")?.removeAttribute("hidden");
+    currentLanguage = "ko";
+    DEFAULT_CHAT_PLACEHOLDER = t("placeholder");
+    PENDING_CHAT_PLACEHOLDER = t("pending");
+    const select = $("#languageSelect");
+    if (select) select.value = currentLanguage;
+    $$("[data-i18n]").forEach((node) => {
+      node.textContent = t(node.dataset.i18n);
+    });
+    return;
+  }
+  setLanguage(stored);
 }
 
 // 새로고침 시 인증을 반드시 다시 받는다. 비밀번호는 브라우저 저장소에 보관하지 않는다.
@@ -286,9 +367,10 @@ function normalizeQuickQuestions(items) {
 
 function loadQuickQuestions() {
   try {
-    return normalizeQuickQuestions(JSON.parse(localStorage.getItem(QUICK_QUESTIONS_KEY) || "[]"));
+    const stored = JSON.parse(localStorage.getItem(QUICK_QUESTIONS_KEY) || "[]");
+    return normalizeQuickQuestions(stored.length ? stored : QUICK_QUESTIONS_BY_LANGUAGE[currentLanguage || "ko"]);
   } catch {
-    return normalizeQuickQuestions(DEFAULT_QUICK_QUESTIONS);
+    return normalizeQuickQuestions(QUICK_QUESTIONS_BY_LANGUAGE[currentLanguage || "ko"]);
   }
 }
 
@@ -1026,11 +1108,11 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
   if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
     (renderers[payload.answer_type] || renderGenericCards)(bubble, payload, row);
   } else if (role === "bot" && isIncompleteAnswerText(text)) {
-    renderTextAnswer(bubble, "답변이 완전히 생성되지 않았습니다. 다시 시도해 주세요.");
+    renderTextAnswer(bubble, t("incomplete"));
     const retry = document.createElement("button");
     retry.className = "retry-answer-button";
     retry.type = "button";
-    retry.textContent = "답변 다시 생성";
+    retry.textContent = t("retry");
     retry.onclick = () => sendQuestion(payload.client_question || payload.question || "", {
       allowLlm: true,
       llmType: payload.llm_type || "general_explain",
@@ -1050,6 +1132,7 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     const yes = document.createElement("button");
     const confirmAction = (payload.actions || []).find((action) => action.type === "confirm_llm");
     yes.textContent = confirmAction?.label || "LLM 보조 답변 사용";
+    if (!confirmAction?.label && currentLanguage === "en") yes.textContent = "Use AI Helper";
     yes.onclick = () => {
       yes.disabled = true;
       no.disabled = true;
@@ -1061,7 +1144,7 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
       });
     };
     const no = document.createElement("button");
-    no.textContent = "검색 종료";
+    no.textContent = t("confirmNo");
     no.onclick = () => actions.remove();
     actions.append(yes, no);
     bubble.appendChild(actions);
@@ -1090,13 +1173,13 @@ function createSearchLoading() {
   copy.className = "loading-copy";
   const title = document.createElement("strong");
   const subtitle = document.createElement("span");
-  subtitle.textContent = "잠시만 기다려주세요.";
+  subtitle.textContent = t("waitingSub");
   copy.append(title, subtitle);
   bubble.append(icon, copy);
   row.appendChild(bubble);
   messages.appendChild(row);
 
-  const phrase = "공식 데이터를 검색하고 있습니다";
+  const phrase = t("waiting");
   let index = 0;
   let dots = 0;
   const typingTimer = window.setInterval(() => {
@@ -1151,6 +1234,7 @@ async function sendQuestion(raw, options = {}) {
         llm_type: llmType,
         session_id: SESSION_ID,
         request_id: requestId,
+        language: currentLanguage || "ko",
         context,
       }),
     });
@@ -1196,6 +1280,17 @@ $("#chatForm").addEventListener("submit", (event) => {
   const value = $("#question").value;
   $("#question").value = "";
   sendQuestion(value);
+});
+
+$("#languageSelect")?.addEventListener("change", (event) => {
+  localStorage.removeItem(QUICK_QUESTIONS_KEY);
+  setLanguage(event.target.value);
+});
+$$("[data-select-language]").forEach((button) => {
+  button.addEventListener("click", () => {
+    localStorage.removeItem(QUICK_QUESTIONS_KEY);
+    setLanguage(button.dataset.selectLanguage);
+  });
 });
 $("#question").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -1531,8 +1626,11 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  addMessage("bot", "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.");
+  addMessage("bot", currentLanguage === "en"
+    ? "How can I help you?\nI can guide you through Computer Science department information."
+    : "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.");
 }
+initializeLanguage();
 wakeServer();
 applyAppConstants();
 renderQuickQuestions();

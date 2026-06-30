@@ -11,6 +11,10 @@
       "학과에서 새로 올라온 공지",
       "새로 올라온 공지",
       "공지 있어"
+      ,"notice",
+      "announcement",
+      "latest notice",
+      "recent notice"
     ]
   },
   "faculty": {
@@ -21,7 +25,13 @@
       "교수 정보",
       "학과 교수",
       "담당 교수",
-      "교수 목록"
+      "교수 목록",
+      "professor",
+      "professors",
+      "faculty",
+      "teacher",
+      "instructor",
+      "who are the professors"
     ]
   },
   "schedule": {
@@ -33,7 +43,11 @@
       "오리엔테이션",
       "학사일정",
       "행사 일정",
-      "시험 일정"
+      "시험 일정",
+      "schedule",
+      "calendar",
+      "department schedule",
+      "academic schedule"
     ]
   },
   "curriculum": {
@@ -44,7 +58,13 @@
       "수업",
       "전공과목",
       "학년별 과목",
-      "수업 구성"
+      "수업 구성",
+      "curriculum",
+      "course list",
+      "course roadmap",
+      "study plan",
+      "education program",
+      "show me curriculum"
     ]
   },
   "graduation": {
@@ -54,7 +74,10 @@
       "졸업 조건",
       "졸업 학점",
       "졸업 요건",
-      "전공 몇 학점"
+      "전공 몇 학점",
+      "graduation",
+      "graduation requirements",
+      "degree requirements"
     ]
   },
   "transfer": {

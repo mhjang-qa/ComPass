@@ -58,10 +58,10 @@
     "컴퓨터의이해"
   ],
   "intent_keywords": {
-    "curriculum": ["교육과정", "교과목", "학년별과목", "전공과목", "1학년과목", "2학년과목", "3학년과목", "4학년과목"],
-    "schedule": ["학과일정", "학사일정", "시험일정", "중간고사일정", "기말고사일정", "개강일정", "종강일정", "오리엔테이션일정"],
-    "notice": ["공지사항", "최근공지사항", "새공지사항", "학과공지사항", "경진대회공지사항", "시험공지사항"],
-    "graduation": ["졸업", "졸업요건", "졸업학점", "졸업조건", "전공몇학점"],
+    "curriculum": ["교육과정", "교과목", "학년별과목", "전공과목", "1학년과목", "2학년과목", "3학년과목", "4학년과목", "curriculum", "course list", "course roadmap", "study plan", "education program"],
+    "schedule": ["학과일정", "학사일정", "시험일정", "중간고사일정", "기말고사일정", "개강일정", "종강일정", "오리엔테이션일정", "schedule", "calendar", "department schedule", "academic schedule"],
+    "notice": ["공지사항", "최근공지사항", "새공지사항", "학과공지사항", "경진대회공지사항", "시험공지사항", "notice", "announcement", "latest notice", "recent notice"],
+    "graduation": ["졸업", "졸업요건", "졸업학점", "졸업조건", "전공몇학점", "graduation", "graduation requirements", "degree requirements"],
     "faq": ["faq", "자주묻는질문", "질문답변"],
     "contact": ["연락처", "사무실", "전화번호", "문의", "이메일", "주소"]
   }

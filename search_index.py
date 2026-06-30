@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import string
 import threading
 from collections import Counter
 from datetime import datetime
@@ -32,10 +33,12 @@ SYNONYMS = {
 }
 FACULTY_URL = "https://cs.knou.ac.kr/cs1/4786/subview.do"
 CURRICULUM_URL = config.CURRICULUM_URL
+DEPARTMENT_HOME_URL = config.DEPARTMENT_HOME_URL
 SCHEDULE_URL = config.SCHEDULE_URL
 NOTICE_URL = config.NOTICE_URL
 COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
 COURSE_DOCUMENT_TYPES = {"과목상세", "교과목목록", "교육과정표", "검증지식"}
+DOCUMENT_RESOURCE_TYPES = {"pdf", "synap", "기출문제", "시험자료", "교과목자료", "공지자료", "학과자료"}
 COURSE_ALIASES = {
     "인공지능": ["AI", "에이아이"],
     "파이썬프로그래밍기초": ["파이썬", "파이썬기초", "Python"],
@@ -45,7 +48,8 @@ COURSE_ALIASES = {
     "정보통신망": ["네트워크"],
     "소프트웨어공학": ["소공"],
 }
-FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수", re.IGNORECASE)
+COURSE_ALIASES.setdefault("데이터정보처리입문", ["데이터 정보처리 입문", "데이터정보 처리입문", "데이터 정보 처리 입문"])
+FACULTY_QUERY_RE = re.compile(r"교수진|교수\s*(정보|소개|목록)?|선생님|담당\s*교수|professors?|faculty|teacher|instructor", re.IGNORECASE)
 QUICK_INTENTS = (
     ("curriculum", re.compile(r"교육과정|교과과정|커리큘럼", re.IGNORECASE), ("교육과정", "교과과정", "교과정보")),
     ("notice", re.compile(r"최근\s*공지|공지사항|학과\s*공지", re.IGNORECASE), ("공지사항", "공지", "학과광장")),
@@ -61,6 +65,14 @@ STOPWORDS = {
     "무엇", "뭐", "어떻게", "알려줘", "알려주세요", "대한", "관련", "있는", "있나요",
     "인가요", "합니다", "해주세요", "그리고", "에서", "으로", "컴퓨터과학과",
 }
+PUNCT_TABLE = str.maketrans("", "", string.punctuation + "·ㆍ()[]{}<>《》「」『』“”‘’")
+
+
+def normalize_course_key(value: str) -> str:
+    """과목명 비교용 정규화: 공백·괄호·특수문자를 제거하고 대소문자를 통일한다."""
+    text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\{[^}]*\}", "", value or "")
+    text = text.translate(PUNCT_TABLE)
+    return re.sub(r"\s+", "", text).lower()
 
 
 def tokenize(text: str) -> list[str]:
@@ -177,12 +189,17 @@ class SearchIndex:
             text = doc.get("search_text") or " ".join(
                 [
                     doc.get("title", ""),
+                    doc.get("title_ko", ""),
+                    doc.get("title_en", ""),
                     doc.get("document_type", ""),
                     doc.get("category", ""),
                     doc.get("summary", ""),
                     " ".join(doc.get("keywords") or []),
                     self._normalized_item_text(doc.get("normalized_items") or []),
                     doc.get("body", ""),
+                    doc.get("content_text", ""),
+                    doc.get("content_ko", ""),
+                    doc.get("content_en", ""),
                 ]
             )
             item = {**doc, "tokens": tokenize(text), "search_text": text}
@@ -251,7 +268,7 @@ class SearchIndex:
                 name = (item.get("course_name") or item.get("title") or "").strip()
                 if not name:
                     continue
-                aliases = [name, re.sub(r"\s+", "", name), *COURSE_ALIASES.get(name, [])]
+                aliases = [name, normalize_course_key(name), *COURSE_ALIASES.get(name, [])]
                 entry = catalog.setdefault(
                     name,
                     {
@@ -339,11 +356,11 @@ class SearchIndex:
         return max(matches, key=lambda match: match[0])[1] if matches else None
 
     def detect_course(self, query: str) -> dict[str, Any] | None:
-        compact = re.sub(r"\s+", "", query or "").lower()
+        compact = normalize_course_key(query or "")
         candidates = []
         for course in self.course_catalog():
             for alias in course.get("aliases") or []:
-                normalized = re.sub(r"\s+", "", alias).lower()
+                normalized = normalize_course_key(alias)
                 if normalized and normalized in compact:
                     candidates.append((len(normalized), course))
                     break
@@ -369,10 +386,10 @@ class SearchIndex:
         def matches_course(doc: dict[str, Any]) -> bool:
             if not course_name:
                 return True
-            target = re.sub(r"\s+", "", course_name).lower()
-            title = re.sub(r"\s+", "", doc.get("title") or "").lower()
+            target = normalize_course_key(course_name)
+            title = normalize_course_key(doc.get("title") or "")
             item_names = [
-                re.sub(r"\s+", "", item.get("course_name") or item.get("title") or "").lower()
+                normalize_course_key(item.get("course_name") or item.get("title") or "")
                 for item in (doc.get("normalized_items") or [])
             ]
             return title == target or target in item_names
@@ -415,10 +432,10 @@ class SearchIndex:
             compact_text = re.sub(r"\s+", "", text)
             source_url = doc.get("source_url") or ""
             if course_name:
-                normalized_course = re.sub(r"\s+", "", course_name).lower()
-                normalized_title = re.sub(r"\s+", "", title)
+                normalized_course = normalize_course_key(course_name)
+                normalized_title = normalize_course_key(title)
                 normalized_items = [
-                    re.sub(r"\s+", "", item.get("course_name") or "").lower()
+                    normalize_course_key(item.get("course_name") or "")
                     for item in (doc.get("normalized_items") or [])
                 ]
                 if normalized_course in normalized_items:
@@ -520,6 +537,31 @@ class SearchIndex:
                 )
                 return notices[:top_k]
         return ranked[:top_k]
+
+    def find_curriculum_url(self) -> str:
+        """인덱스에 저장된 공식 교육과정 원본 URL을 우선 반환한다."""
+        with self._lock:
+            documents = list(self.payload.get("documents") or [])
+        candidates: list[tuple[int, str]] = []
+        for doc in documents:
+            url = doc.get("source_url") or doc.get("url") or ""
+            if not url:
+                continue
+            marker = f"{doc.get('title') or ''} {doc.get('category') or ''} {doc.get('document_type') or ''}"
+            score = 0
+            if doc.get("document_type") == "교육과정표":
+                score += 80
+            if any(term in marker for term in ("교과과정", "교육과정", "커리큘럼", "학과 교육과정")):
+                score += 60
+            if url == CURRICULUM_URL:
+                score += 20
+            if "4591/subview.do" in url:
+                score -= 500
+            if score > 0:
+                candidates.append((score, url))
+        if not candidates:
+            return CURRICULUM_URL or DEPARTMENT_HOME_URL
+        return sorted(candidates, reverse=True)[0][1]
 
     def status(self) -> dict[str, Any]:
         with self._lock:

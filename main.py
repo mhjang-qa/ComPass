@@ -501,8 +501,11 @@ def initialize_search_index_on_startup() -> None:
 
 @app.on_event("startup")
 def startup_initialize_notion() -> None:
+    logger.info("[STARTUP] ComPass server startup started")
     if not admin_password_configured():
         logger.warning("[STARTUP] ADMIN_PASSWORD가 설정되지 않아 모든 관리자 기능을 차단합니다.")
+    logger.info("[STARTUP] Health endpoint available")
+    logger.info("[STARTUP] FastAPI app ready")
     if not config.AUTO_LOAD_INDEX_ON_START:
         job_state["notion"] = {
             "running": False,
@@ -1078,6 +1081,7 @@ def recent_knowledge(limit: int = 20, x_admin_password: str | None = Header(defa
 def health_payload() -> dict[str, Any]:
     return {
         "ok": True,
+        "status": "running",
         "service": "ComPass",
         "meaning": config.APP_SUBTITLE,
         "index": index.status(),

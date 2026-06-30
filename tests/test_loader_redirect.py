@@ -19,3 +19,13 @@ def test_github_loader_iframe_can_open_render_app() -> None:
 
     assert response.status_code == 200
     assert "ComPass" in response.text
+
+
+def test_health_endpoint_is_immediately_available() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["status"] == "running"

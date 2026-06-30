@@ -39,6 +39,14 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def env_url(name: str, default: str = "") -> str:
+    value = env(name, default)
+    prefix = f"{name}="
+    if value.startswith(prefix):
+        value = value[len(prefix):].strip()
+    return value
+
+
 NOTION_TOKEN = env("NOTION_TOKEN") or env("NOTION_API_KEY")
 NOTION_TOKEN_SOURCE = "NOTION_TOKEN" if env("NOTION_TOKEN") else ("NOTION_API_KEY" if env("NOTION_API_KEY") else "")
 NOTION_KNOWLEDGE_DB_ID = (
@@ -85,7 +93,7 @@ PUBLIC_LOADER_URL = env("PUBLIC_LOADER_URL", "https://mhjang-qa.github.io/ComPas
 AUTO_LOAD_INDEX_ON_START = env_bool("AUTO_LOAD_INDEX_ON_START", env_bool("STARTUP_INDEX_LOAD", True))
 STARTUP_INDEX_LOAD = AUTO_LOAD_INDEX_ON_START
 AUTO_REBUILD_INDEX_AFTER_CRAWL = env_bool("AUTO_REBUILD_INDEX_AFTER_CRAWL", True)
-DEPARTMENT_HOME_URL = env("DEPARTMENT_HOME_URL", "https://cs.knou.ac.kr/sites/cs1/index.do")
-CURRICULUM_URL = env("CURRICULUM_URL", "https://cs.knou.ac.kr/cs1/4789/subview.do")
-SCHEDULE_URL = env("SCHEDULE_URL", "https://cs.knou.ac.kr/cs1/4812/subview.do")
-NOTICE_URL = env("NOTICE_URL", "https://cs.knou.ac.kr/cs1/4812/subview.do")
+DEPARTMENT_HOME_URL = env_url("DEPARTMENT_HOME_URL", "https://cs.knou.ac.kr/sites/cs1/index.do")
+CURRICULUM_URL = env_url("CURRICULUM_URL", "https://cs.knou.ac.kr/cs1/4789/subview.do")
+SCHEDULE_URL = env_url("SCHEDULE_URL", "https://cs.knou.ac.kr/cs1/4812/subview.do")
+NOTICE_URL = env_url("NOTICE_URL", "https://cs.knou.ac.kr/cs1/4812/subview.do")

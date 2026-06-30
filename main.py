@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import threading
 import uuid
@@ -172,19 +173,62 @@ def attach_request_metadata(result: dict[str, Any], session_id: str, request_id:
     return result
 
 
+def quick_intent_from_context(context: dict[str, Any] | None) -> str:
+    intent = str((context or {}).get("quick_intent") or "").strip().lower()
+    return {
+        "curriculum": "curriculum",
+        "course_table": "curriculum",
+        "notice": "notice",
+        "recent_notice": "notice",
+        "notice_list": "notice",
+        "schedule": "schedule",
+        "schedule_list": "schedule",
+    }.get(intent, "")
+
+
 EN_ACTION_LABELS = {
     "교육과정 확인하기": "View Curriculum",
     "교육과정 바로가기": "View Curriculum",
+    "교육과정 더보기": "View Curriculum",
     "전체 교육과정 바로가기": "View Full Curriculum",
     "교수진 페이지 바로가기": "View Faculty",
+    "교수진 바로가기": "View Faculty",
+    "교수 홈페이지 바로가기": "Visit Faculty Homepage",
     "공지사항 바로가기": "View Notices",
     "공지 바로가기": "View Notice",
-    "학과 일정 바로가기": "View Department Schedule",
+    "공지 더보기": "View More Notices",
+    "학과 일정 바로가기": "View Schedule",
+    "교과목 안내 바로가기": "View Course Information",
+    "공식 홈페이지 바로가기": "Visit Official Website",
+    "공식 페이지 바로가기": "Visit Official Website",
+    "자세히 보기": "View Details",
     "자료 확인하기": "View Material",
     "PDF 보기": "View PDF",
     "원문 보기": "View Original",
     "LLM 보조 답변 사용": "Use AI Helper",
+    "AI Helper 사용": "Use AI Helper",
 }
+EN_COURSE_LABELS = {
+    "인공지능": "AI",
+    "데이터베이스시스템": "Database Systems",
+    "운영체제": "Operating Systems",
+    "이산수학": "Discrete Mathematics",
+    "파이썬프로그래밍기초": "Python Programming Basics",
+    "데이터정보처리입문": "Introduction to Data and Information Processing",
+    "컴퓨터의이해": "Understanding Computers",
+    "Java프로그래밍": "Java Programming",
+}
+
+
+def translate_action_label_en(label: str) -> str:
+    label = (label or "").strip()
+    if label in EN_ACTION_LABELS:
+        return EN_ACTION_LABELS[label]
+    match = re.match(r"^(.+?)\s*과목\s*바로가기$", label)
+    if match:
+        course_name = match.group(1).strip()
+        return f"View {EN_COURSE_LABELS.get(course_name, course_name)} Course"
+    return label
 
 
 def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
@@ -218,10 +262,10 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
         result["summary"] = summary
     for action in result.get("actions") or []:
         label = action.get("label") or ""
-        action["label"] = EN_ACTION_LABELS.get(label, label)
+        action["label"] = translate_action_label_en(label)
     for item in result.get("items") or []:
         if item.get("link_label"):
-            item["link_label"] = EN_ACTION_LABELS.get(item["link_label"], item["link_label"])
+            item["link_label"] = translate_action_label_en(item["link_label"])
     return result
 
 
@@ -928,11 +972,12 @@ def chat(req: ChatRequest):
     session_short = session_id[:8]
     clean_question = sanitize_input(req.question)
     history = conversation_history(session_id, req.history)
+    quick_intent = quick_intent_from_context(req.context)
     casual = casual_response(clean_question)
     if casual:
         casual["elapsed_ms"] = 0
         return finalize_chat_response(req, casual, session_id, request_id)
-    if match_curated(clean_question, history):
+    if not quick_intent and match_curated(clean_question, history):
         result = answer_question(
             clean_question,
             history=history,
@@ -943,7 +988,7 @@ def chat(req: ChatRequest):
             index=index,
         )
         return finalize_chat_response(req, result, session_id, request_id)
-    if classify_intent(clean_question, index) == "course_difficulty":
+    if not quick_intent and classify_intent(clean_question, index) == "course_difficulty":
         result = answer_question(
             clean_question,
             history=history,
@@ -1007,6 +1052,7 @@ def chat(req: ChatRequest):
         session_id=session_id,
         request_id=request_id,
         index=index,
+        forced_intent=quick_intent,
     )
     attach_request_metadata(result, session_id, request_id, req)
     result["diagnostics"] = {

@@ -17,7 +17,8 @@ const pendingRequests = new Map();
 const pendingByQuestion = new Map();
 let isChatPending = false;
 const LANGUAGE_KEY = "compass_language";
-let currentLanguage = localStorage.getItem(LANGUAGE_KEY) || "";
+const DEFAULT_LANG = "ko";
+let currentLanguage = localStorage.getItem(LANGUAGE_KEY) || DEFAULT_LANG;
 let DEFAULT_CHAT_PLACEHOLDER = "궁금한 컴퓨터과학과 정보를 질문해보세요";
 let PENDING_CHAT_PLACEHOLDER = "답변을 준비하고 있습니다...";
 const QUICK_QUESTIONS_KEY = "COMPASS_QUICK_QUESTIONS";
@@ -27,7 +28,7 @@ const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
 const DEFAULT_QUICK_QUESTIONS = [
   { id: 1, label: "교육과정", message: "컴퓨터과학과 교육과정을 알려줘", intent: "curriculum", enabled: true, sortOrder: 1 },
   { id: 2, label: "교수진", message: "컴퓨터과학과 교수진을 알려줘", intent: "faculty", enabled: true, sortOrder: 2 },
-  { id: 3, label: "최근 공지", message: "컴퓨터과학과 최근 공지를 알려줘", intent: "recent_notice", enabled: true, sortOrder: 3 },
+  { id: 3, label: "최근 공지", message: "컴퓨터과학과 최근 공지를 알려줘", intent: "notice", enabled: true, sortOrder: 3 },
   { id: 4, label: "학과 일정", message: "컴퓨터과학과 학과 일정을 알려줘", intent: "schedule", enabled: true, sortOrder: 4 },
 ];
 const QUICK_QUESTIONS_BY_LANGUAGE = {
@@ -35,7 +36,7 @@ const QUICK_QUESTIONS_BY_LANGUAGE = {
   en: [
     { id: 1, label: "Curriculum", message: "Show me curriculum", intent: "curriculum", enabled: true, sortOrder: 1 },
     { id: 2, label: "Faculty", message: "Who are the professors?", intent: "faculty", enabled: true, sortOrder: 2 },
-    { id: 3, label: "Latest Notice", message: "Latest notice", intent: "recent_notice", enabled: true, sortOrder: 3 },
+    { id: 3, label: "Latest Notice", message: "Latest notice", intent: "notice", enabled: true, sortOrder: 3 },
     { id: 4, label: "Schedule", message: "Department schedule", intent: "schedule", enabled: true, sortOrder: 4 },
   ],
 };
@@ -48,14 +49,32 @@ const I18N = {
     send: "전송",
     pendingButton: "대기",
     subtitleLine2: "· 학생들의 길잡이",
-    intro_title: "안녕하세요, ComPass입니다.",
-    intro_copy: "공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
     introMessage: "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
     tab_chat: "챗봇",
     tab_admin: "관리자 페이지",
     incomplete: "답변이 완전히 생성되지 않았습니다. 다시 시도해 주세요.",
     retry: "답변 다시 생성",
     confirmNo: "검색 종료",
+    buttons: {
+      curriculumMore: "교육과정 더보기",
+      noticeMore: "공지 더보기",
+      schedule: "학과 일정 바로가기",
+      faculty: "교수진 바로가기",
+      facultyPage: "교수진 페이지 바로가기",
+      facultyHomepage: "교수 홈페이지 바로가기",
+      courseInfo: "교과목 안내 바로가기",
+      official: "공식 홈페이지 바로가기",
+      officialPage: "공식 페이지 바로가기",
+      notices: "공지사항 바로가기",
+      notice: "공지 바로가기",
+      useAiHelper: "LLM 보조 답변 사용",
+      endSearch: "검색 종료",
+      details: "자세히 보기",
+      material: "자료 확인하기",
+      pdf: "PDF 보기",
+      original: "원문 보기",
+      link: "바로가기",
+    },
   },
   en: {
     placeholder: "Ask about CS department info",
@@ -65,14 +84,44 @@ const I18N = {
     send: "Send",
     pendingButton: "Wait",
     subtitleLine2: "A guide for students",
-    intro_title: "How can I help you?",
-    intro_copy: "I can guide you through Computer Science department information.",
     introMessage: "Hello, this is ComPass.\nI summarize official information in a way students can easily understand.",
     tab_chat: "Chat",
     tab_admin: "Admin",
     incomplete: "The answer was not completed. Please try again.",
     retry: "Regenerate answer",
     confirmNo: "End search",
+    buttons: {
+      curriculumMore: "View Curriculum",
+      noticeMore: "View More Notices",
+      schedule: "View Schedule",
+      faculty: "View Faculty",
+      facultyPage: "View Faculty",
+      facultyHomepage: "Visit Faculty Homepage",
+      courseInfo: "View Course Information",
+      official: "Visit Official Website",
+      officialPage: "Visit Official Website",
+      notices: "View Notices",
+      notice: "View Notice",
+      useAiHelper: "Use AI Helper",
+      endSearch: "End Search",
+      details: "View Details",
+      material: "View Material",
+      pdf: "View PDF",
+      original: "View Original",
+      link: "Open Link",
+    },
+  },
+};
+const COURSE_LABEL_TRANSLATIONS = {
+  en: {
+    "인공지능": "AI",
+    "데이터베이스시스템": "Database Systems",
+    "운영체제": "Operating Systems",
+    "이산수학": "Discrete Mathematics",
+    "파이썬프로그래밍기초": "Python Programming Basics",
+    "데이터정보처리입문": "Introduction to Data and Information Processing",
+    "컴퓨터의이해": "Understanding Computers",
+    "Java프로그래밍": "Java Programming",
   },
 };
 const DEFAULT_ICONS = {
@@ -121,6 +170,86 @@ function t(key) {
   return (I18N[currentLanguage || "ko"] || I18N.ko)[key] || I18N.ko[key] || key;
 }
 
+function buttonLabel(key) {
+  const language = currentLanguage || "ko";
+  return (I18N[language]?.buttons || I18N.ko.buttons)[key] || I18N.ko.buttons[key] || key;
+}
+
+function translateButtonLabel(label = "") {
+  const raw = String(label || "").replace(/\s*↗\s*$/, "").trim();
+  const englishToKo = {
+    [I18N.en.buttons.curriculumMore]: I18N.ko.buttons.curriculumMore,
+    "View More Curriculum": I18N.ko.buttons.curriculumMore,
+    [I18N.en.buttons.noticeMore]: I18N.ko.buttons.noticeMore,
+    [I18N.en.buttons.schedule]: I18N.ko.buttons.schedule,
+    "View Department Schedule": I18N.ko.buttons.schedule,
+    [I18N.en.buttons.faculty]: I18N.ko.buttons.facultyPage,
+    [I18N.en.buttons.facultyPage]: I18N.ko.buttons.facultyPage,
+    [I18N.en.buttons.facultyHomepage]: I18N.ko.buttons.facultyHomepage,
+    [I18N.en.buttons.courseInfo]: I18N.ko.buttons.courseInfo,
+    [I18N.en.buttons.official]: I18N.ko.buttons.officialPage,
+    [I18N.en.buttons.officialPage]: I18N.ko.buttons.officialPage,
+    [I18N.en.buttons.notices]: I18N.ko.buttons.notices,
+    [I18N.en.buttons.notice]: I18N.ko.buttons.notice,
+    [I18N.en.buttons.useAiHelper]: I18N.ko.buttons.useAiHelper,
+    [I18N.en.buttons.endSearch]: I18N.ko.buttons.endSearch,
+    [I18N.en.buttons.details]: I18N.ko.buttons.details,
+    [I18N.en.buttons.material]: I18N.ko.buttons.material,
+    [I18N.en.buttons.pdf]: I18N.ko.buttons.pdf,
+    [I18N.en.buttons.original]: I18N.ko.buttons.original,
+    [I18N.en.buttons.link]: I18N.ko.buttons.link,
+    "View AI Course": "인공지능 과목 바로가기",
+  };
+  if (!raw) return buttonLabel("link");
+  if (currentLanguage !== "en") return englishToKo[raw] || raw;
+  const exact = {
+    [I18N.ko.buttons.curriculumMore]: buttonLabel("curriculumMore"),
+    "전체 교육과정 바로가기": buttonLabel("curriculumMore"),
+    "교육과정 바로가기": buttonLabel("curriculumMore"),
+    "교육과정 확인하기": buttonLabel("curriculumMore"),
+    [I18N.ko.buttons.noticeMore]: buttonLabel("noticeMore"),
+    "전체 공지 바로가기": buttonLabel("noticeMore"),
+    [I18N.ko.buttons.schedule]: buttonLabel("schedule"),
+    [I18N.ko.buttons.faculty]: buttonLabel("faculty"),
+    [I18N.ko.buttons.facultyPage]: buttonLabel("facultyPage"),
+    [I18N.ko.buttons.facultyHomepage]: buttonLabel("facultyHomepage"),
+    [I18N.ko.buttons.courseInfo]: buttonLabel("courseInfo"),
+    [I18N.ko.buttons.official]: buttonLabel("official"),
+    [I18N.ko.buttons.officialPage]: buttonLabel("officialPage"),
+    [I18N.ko.buttons.notices]: buttonLabel("notices"),
+    [I18N.ko.buttons.notice]: buttonLabel("notice"),
+    [I18N.ko.buttons.useAiHelper]: buttonLabel("useAiHelper"),
+    "AI Helper 사용": buttonLabel("useAiHelper"),
+    [I18N.ko.buttons.endSearch]: buttonLabel("endSearch"),
+    [I18N.ko.buttons.details]: buttonLabel("details"),
+    [I18N.ko.buttons.material]: buttonLabel("material"),
+    [I18N.ko.buttons.pdf]: buttonLabel("pdf"),
+    [I18N.ko.buttons.original]: buttonLabel("original"),
+    [I18N.ko.buttons.link]: buttonLabel("link"),
+  };
+  if (exact[raw]) return exact[raw];
+  const courseMatch = raw.match(/^(.+?)\s*과목\s*바로가기$/);
+  if (courseMatch) {
+    const courseName = courseMatch[1].trim();
+    const translatedCourse = COURSE_LABEL_TRANSLATIONS.en[courseName] || courseName;
+    return `View ${translatedCourse} Course`;
+  }
+  return raw;
+}
+
+function actionText(label) {
+  return `${translateButtonLabel(label)} ↗`;
+}
+
+function updateRenderedButtonLabels() {
+  $$("[data-action-label-ko]").forEach((node) => {
+    node.textContent = actionText(node.dataset.actionLabelKo);
+  });
+  $$("[data-button-label-ko]").forEach((node) => {
+    node.textContent = translateButtonLabel(node.dataset.buttonLabelKo);
+  });
+}
+
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -131,7 +260,6 @@ function setLanguage(language) {
   DEFAULT_CHAT_PLACEHOLDER = t("placeholder");
   PENDING_CHAT_PLACEHOLDER = t("pending");
   document.documentElement.lang = currentLanguage;
-  $("#languageGate")?.setAttribute("hidden", "");
   const select = $("#languageSelect");
   if (select) select.value = currentLanguage;
   $$("[data-i18n]").forEach((node) => {
@@ -139,28 +267,15 @@ function setLanguage(language) {
   });
   applyAppConstants();
   updateI18nKeyedText();
+  updateRenderedButtonLabels();
   const input = $("#question");
   if (input) input.placeholder = isChatPending ? PENDING_CHAT_PLACEHOLDER : DEFAULT_CHAT_PLACEHOLDER;
   renderQuickQuestions();
 }
 
 function initializeLanguage() {
-  const stored = localStorage.getItem(LANGUAGE_KEY);
-  if (!stored) {
-    $("#languageGate")?.removeAttribute("hidden");
-    currentLanguage = "ko";
-    DEFAULT_CHAT_PLACEHOLDER = t("placeholder");
-    PENDING_CHAT_PLACEHOLDER = t("pending");
-    const select = $("#languageSelect");
-    if (select) select.value = currentLanguage;
-    $$("[data-i18n]").forEach((node) => {
-      node.textContent = t(node.dataset.i18n);
-    });
-    applyAppConstants();
-    updateI18nKeyedText();
-    return;
-  }
-  setLanguage(stored);
+  localStorage.removeItem("compass_language_popup_seen");
+  setLanguage(localStorage.getItem(LANGUAGE_KEY) || DEFAULT_LANG);
 }
 
 // 새로고침 시 인증을 반드시 다시 받는다. 비밀번호는 브라우저 저장소에 보관하지 않는다.
@@ -349,7 +464,7 @@ const chatChromeObserver = new ResizeObserver(() => {
     scrollMessageIntoView(lastMessage, "auto");
   }
 });
-[".chat-intro", ".suggestions", ".composer"].forEach((selector) => {
+[".suggestions", ".composer"].forEach((selector) => {
   const node = $(selector);
   if (node) chatChromeObserver.observe(node);
 });
@@ -734,13 +849,20 @@ function appendActionLinks(container, payload) {
   links.forEach((action) => {
     const link = document.createElement("a");
     link.className = "answer-link";
-    link.href = action.url;
+    link.href = normalizeUrl(action.url);
     link.target = "_blank";
     link.rel = "noopener noreferrer";
-    link.textContent = `${action.label || "바로가기"} ↗`;
+    link.dataset.actionLabelKo = action.label || buttonLabel("link");
+    link.textContent = actionText(link.dataset.actionLabelKo);
     actions.appendChild(link);
   });
   container.appendChild(actions);
+}
+
+function normalizeUrl(url) {
+  if (!url) return "#";
+  if (/^https?:\/\//i.test(url)) return url;
+  return url;
 }
 
 function appendItemLink(card, item, fallbackUrl = "", fallbackLabel = "자세히 보기") {
@@ -755,10 +877,11 @@ function appendDirectLink(card, url, label = "바로가기") {
   actions.className = "answer-card-actions";
   const link = document.createElement("a");
   link.className = "answer-link-button";
-  link.href = url;
+  link.href = normalizeUrl(url);
   link.target = "_blank";
   link.rel = "noopener noreferrer";
-  link.textContent = `${label} ↗`;
+  link.dataset.actionLabelKo = label || buttonLabel("link");
+  link.textContent = actionText(link.dataset.actionLabelKo);
   actions.appendChild(link);
   card.appendChild(actions);
 }
@@ -771,7 +894,7 @@ function appendItemActions(card, item) {
     appendDirectLink(card, action.url, action.label || "바로가기");
   });
   if (item.homepage_url && !seen.has(item.homepage_url)) {
-    appendDirectLink(card, item.homepage_url, "교수 홈페이지 바로가기");
+    appendDirectLink(card, item.homepage_url, I18N.ko.buttons.facultyHomepage);
   }
 }
 
@@ -1154,8 +1277,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     actions.className = "confirm-actions";
     const yes = document.createElement("button");
     const confirmAction = (payload.actions || []).find((action) => action.type === "confirm_llm");
-    yes.textContent = confirmAction?.label || "LLM 보조 답변 사용";
-    if (!confirmAction?.label && currentLanguage === "en") yes.textContent = "Use AI Helper";
+    yes.dataset.buttonLabelKo = confirmAction?.label || I18N.ko.buttons.useAiHelper;
+    yes.textContent = translateButtonLabel(yes.dataset.buttonLabelKo);
     yes.onclick = () => {
       yes.disabled = true;
       no.disabled = true;
@@ -1167,7 +1290,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
       });
     };
     const no = document.createElement("button");
-    no.textContent = t("confirmNo");
+    no.dataset.buttonLabelKo = I18N.ko.buttons.endSearch;
+    no.textContent = translateButtonLabel(no.dataset.buttonLabelKo);
     no.onclick = () => actions.remove();
     actions.append(yes, no);
     bubble.appendChild(actions);
@@ -1190,33 +1314,32 @@ function addI18nSystemMessage(key) {
 function ensureIntroMessage() {
   let row = messages.querySelector('[data-intro-message="true"]');
   if (!row) {
-    row = document.createElement("div");
-    row.className = "message bot with-avatar welcome-message";
+    row = addMessage("bot", t("introMessage"), [], false, { isWelcome: true });
+    row.classList.add("with-avatar", "welcome-message", "message-row", "assistant");
     row.dataset.introMessage = "true";
     row.dataset.i18nKey = "introMessage";
 
     const icon = document.createElement("div");
     icon.className = "bot-mark";
     const iconImage = document.createElement("img");
+    iconImage.className = "message-avatar";
     iconImage.src = loadIconConfig().internalIcon;
     iconImage.alt = "";
     iconImage.setAttribute("aria-hidden", "true");
     iconImage.onerror = () => { iconImage.style.display = "none"; };
     icon.appendChild(iconImage);
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    const paragraph = document.createElement("p");
-    paragraph.className = "message-content text-paragraph";
-    paragraph.dataset.i18nKey = "introMessage";
-    bubble.appendChild(paragraph);
-
-    row.append(icon, bubble);
+    const bubble = row.querySelector(".bubble");
+    bubble?.classList.add("message-bubble", "assistant-bubble");
+    row.prepend(icon);
     messages.prepend(row);
   }
 
   const paragraph = row.querySelector(".message-content.text-paragraph");
-  if (paragraph) paragraph.textContent = t("introMessage");
+  if (paragraph) {
+    paragraph.dataset.i18nKey = "introMessage";
+    paragraph.textContent = t("introMessage");
+  }
   const iconImage = row.querySelector(".bot-mark img");
   if (iconImage) iconImage.src = loadIconConfig().internalIcon;
   return row;
@@ -1360,12 +1483,6 @@ $("#languageSelect")?.addEventListener("change", (event) => {
   localStorage.removeItem(QUICK_QUESTIONS_KEY);
   setLanguage(event.target.value);
 });
-$$("[data-select-language]").forEach((button) => {
-  button.addEventListener("click", () => {
-    localStorage.removeItem(QUICK_QUESTIONS_KEY);
-    setLanguage(button.dataset.selectLanguage);
-  });
-});
 $("#question").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -1379,7 +1496,9 @@ $(".quick-actions")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-question]");
   if (!button) return;
   if (isChatPending) return;
-  sendQuestion(button.dataset.question);
+  sendQuestion(button.dataset.question, {
+    context: { quick_intent: button.dataset.intent || "" },
+  });
 });
 
 $$(".tab").forEach((button) => button.addEventListener("click", () => {

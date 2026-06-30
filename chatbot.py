@@ -233,6 +233,15 @@ PRIORITY_CURRICULUM_QUERIES = {
     "courselist",
     "studyplan",
 }
+FORCED_QUICK_INTENTS = {
+    "curriculum": "course_table",
+    "course_table": "course_table",
+    "notice": "notice_list",
+    "recent_notice": "notice_list",
+    "notice_list": "notice_list",
+    "schedule": "schedule_list",
+    "schedule_list": "schedule_list",
+}
 KNOWN_COURSE_NAMES = (
     "파이썬프로그래밍기초",
     "데이터베이스시스템",
@@ -567,6 +576,8 @@ def priority_button_intent(question: str) -> str:
         return "notice_list"
     if re.fullmatch(r"교육과정|교과과정|커리큘럼", compact):
         return "course_table"
+    if re.fullmatch(r"학과일정|학사일정|일정|departmentschedule|schedule|calendar", compact):
+        return "schedule_list"
     return ""
 
 
@@ -862,7 +873,7 @@ def build_curriculum_link_response(
         "display_limit": 3,
         "total_count": 0,
         "source_urls": [curriculum_url],
-        "actions": [{"type": "link", "label": "교육과정 확인하기", "url": curriculum_url}],
+        "actions": [{"type": "link", "label": "교육과정 더보기", "url": curriculum_url}],
         "mode": "DB검색",
         "sources": sources or [{"title": "컴퓨터과학과 교육과정", "url": curriculum_url, "score": score}],
         "score": score,
@@ -887,7 +898,7 @@ def build_notice_empty_response(
         "display_limit": 3,
         "total_count": 0,
         "source_urls": [NOTICE_URL],
-        "actions": [{"type": "link", "label": "공지사항 바로가기", "url": NOTICE_URL}],
+        "actions": [{"type": "link", "label": "공지 더보기", "url": NOTICE_URL}],
         "mode": "DB검색",
         "sources": [{"title": "컴퓨터과학과 공지사항", "url": NOTICE_URL, "score": 0}],
         "score": 0,
@@ -949,14 +960,36 @@ def build_priority_intent_response(
         response["structured_intent"] = "recent_notice"
         response["search_scope"] = ["notice"]
         return response
+    if intent == "schedule_list":
+        hits = retrieve_documents(index, question, "schedule_list")
+        items = normalize_results("schedule_list", hits, question)
+        if not items:
+            return build_schedule_unavailable_response(started, question)
+        response = build_structured_response(
+            "schedule_list",
+            items,
+            source_url=SCHEDULE_URL,
+            sources=[
+                {"title": item.get("title") or "학과 일정", "url": item.get("source_url") or SCHEDULE_URL, "score": 100}
+                for item in items[:3]
+            ],
+            score=hits[0].get("score", 100) if hits else 100,
+            keywords=keywords,
+            started=started,
+        )
+        response["answer"] = "컴퓨터과학과 학과 일정 안내입니다."
+        response["summary"] = "학과 일정 3개를 먼저 안내드립니다."
+        response["structured_intent"] = "schedule"
+        response["search_scope"] = ["schedule"]
+        return response
     raise ValueError(f"지원하지 않는 priority intent: {intent}")
 
 
 def build_schedule_unavailable_response(started: float, question: str = "") -> dict[str, Any]:
     return {
-        "answer": "학과 일정 공식 데이터를 충분히 찾지 못했습니다.",
+        "answer": "학과 일정 안내입니다.",
         "answer_type": "schedule_list",
-        "summary": "학과 일정 게시판에서 최신 일정을 확인해 주세요.",
+        "summary": "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다.\n학과 일정은 공식 홈페이지에서 확인할 수 있습니다.",
         "items": [],
         "display_limit": 3,
         "total_count": 0,
@@ -1673,13 +1706,13 @@ def build_curriculum_by_grade_response(
     return {
         "answer": "컴퓨터과학과 교육과정 안내입니다.",
         "answer_type": CompatibleAnswerType("curriculum_by_grade", "course_table"),
-        "summary": "학년별 대표 과목을 3개씩 먼저 정리했습니다. 학년별 교과목과 이수 흐름은 공식 학과 페이지의 교과과정 메뉴에서 확인할 수 있습니다.",
+        "summary": "컴퓨터과학과 교육과정 주요 과목을 학년별로 정리해드릴게요.",
         "groups": groups,
         "items": [item for group in groups for item in group["items"]],
         "display_limit": 3,
         "total_count": len(items),
         "source_urls": [curriculum_url],
-        "actions": [{"type": "link", "label": "교육과정 확인하기", "url": curriculum_url}],
+        "actions": [{"type": "link", "label": "교육과정 더보기", "url": curriculum_url}],
         "mode": "DB검색",
         "sources": sources,
         "score": score,
@@ -1708,10 +1741,10 @@ def _actions(answer_type: str, items: list[dict[str, Any]], source_url: str = ""
     if source_url:
         link_labels = {
             "faculty": "교수진 페이지 바로가기",
-            "course_table": "전체 교육과정 바로가기",
+            "course_table": "교육과정 더보기",
             "course_recommendation": "교육과정 바로가기",
             "course_detail": "교육과정 바로가기",
-            "notice_list": "전체 공지 바로가기",
+            "notice_list": "공지 더보기",
             "schedule_list": "학과 일정 바로가기",
             "faq_list": "FAQ 바로가기",
             "certification_list": "진로 정보 바로가기",
@@ -2865,6 +2898,7 @@ def answer_question(
     session_id: str = "",
     request_id: str = "",
     index: SearchIndex | None = None,
+    forced_intent: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     clean_question = sanitize_input(question)
@@ -2888,8 +2922,8 @@ def answer_question(
         casual["request_id"] = request_id
         return casual
     index = index or SearchIndex()
-    priority_intent = priority_button_intent(clean_question)
-    if priority_intent in {"notice_list", "course_table"}:
+    priority_intent = FORCED_QUICK_INTENTS.get(str(forced_intent or "").strip().lower()) or priority_button_intent(clean_question)
+    if priority_intent in {"notice_list", "course_table", "schedule_list"}:
         response = build_priority_intent_response(priority_intent, clean_question, index, started)
         response["session_id"] = session_id
         response["request_id"] = request_id

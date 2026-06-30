@@ -160,9 +160,6 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   overflow: hidden;
   box-shadow: 0 12px 35px rgba(16,42,67,.08);
 }
-.chat-intro { display: flex; gap: 14px; align-items: center; padding: 20px 22px; background: linear-gradient(90deg, #edf8ff, #f1fffc); border-bottom: 1px solid var(--line); }
-.chat-intro h2 { margin: 0 0 4px; font-size: 1.06rem; }
-.chat-intro p { margin: 0; color: var(--muted); font-size: .87rem; }
 .messages {
   display: flex;
   flex-direction: column;
@@ -184,10 +181,21 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   height: 40px;
   margin-top: 2px;
 }
+.message-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 .message.with-avatar .bubble {
   max-width: calc(82% - 52px);
 }
 .message.welcome-message { margin-top: 0; }
+.message-row.assistant .message-bubble,
+.welcome-message .assistant-bubble {
+  background: white;
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 14px rgba(16,42,67,.05);
+}
 .bubble { max-width: 82%; padding: 13px 16px; border-radius: 18px 18px 18px 5px; background: white; border: 1px solid var(--line); line-height: 1.6; white-space: pre-wrap; box-shadow: 0 4px 14px rgba(16,42,67,.05); }
 .messages .bubble { font-size: 15px; }
 .user .bubble { color: white; background: var(--blue); border: 0; border-radius: 18px 18px 5px 18px; }
@@ -408,8 +416,6 @@ th { color: var(--muted); font-size: .77rem; }
 .widget-window .panel { display: none !important; }
 .widget-window #panel-chat { display: block !important; padding: 12px; }
 .widget-window .chat-layout { max-width: none; border: 0; border-radius: 16px; box-shadow: none; }
-.widget-window .chat-intro { padding: 14px; }
-.widget-window .chat-intro p { font-size: .75rem; }
 .widget-window .messages {
   padding: 14px;
   min-height: 120px;
@@ -554,7 +560,6 @@ th { color: var(--muted); font-size: .77rem; }
 body.keyboard-open .app-shell.mobile-fullscreen { height: var(--app-height, 100dvh); }
 body.keyboard-open .app-shell.mobile-fullscreen .tabs,
 body.keyboard-open .app-shell.mobile-fullscreen .suggestions { display: none; }
-body.keyboard-open .app-shell.mobile-fullscreen .chat-intro { padding-block: 10px; }
 body.keyboard-open .app-shell.mobile-fullscreen .composer {
   padding-bottom: max(8px, var(--safe-bottom));
   background: white;
@@ -628,10 +633,6 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
 
 .app-shell.fullscreen .panel {
   padding: 16px 24px 24px;
-}
-
-.app-shell.fullscreen .chat-intro {
-  padding: 14px 20px;
 }
 
 .app-shell.fullscreen .messages {

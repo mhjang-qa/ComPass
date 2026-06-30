@@ -36,7 +36,7 @@ def test_notice_answer_is_summary_first_without_raw_metadata() -> None:
     assert len(result["items"][0]["description"]) <= 80
     assert "글번호" not in result["items"][0]["description"]
     assert "첨부파일" not in result["items"][0]["description"]
-    assert result["actions"][-1]["label"] == "전체 공지 바로가기"
+    assert result["actions"][-1]["label"] == "공지 더보기"
     assert result["items"][0]["source_url"].endswith("799004/artclView.do")
     assert result["items"][0]["link_label"] == "공지 바로가기"
 
@@ -95,6 +95,7 @@ def test_schedule_answer_rejects_non_official_schedule_sources() -> None:
 
     assert result["answer_type"] == "schedule_list"
     assert result["items"] == []
+    assert "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다." in result["summary"]
     assert result["actions"][-1]["url"] == "https://cs.knou.ac.kr/cs1/4812/subview.do"
 
 

@@ -209,3 +209,28 @@ def test_course_difficulty_llm_answer_separates_official_and_advice(tmp_path, mo
     assert "참고용" in result["items"][0]["difficulty_advice"]
     assert "공식 기준이 아닌 참고용" in result["items"][0]["disclaimer"]
     assert result["items"][0]["source_url"].endswith("course-34416")
+
+
+def test_backend_localizes_dynamic_action_labels_to_english() -> None:
+    from main import localize_response
+
+    response = {
+        "answer": "인공지능 학습 부담 안내입니다.",
+        "answer_type": "course_difficulty",
+        "summary": "요약",
+        "actions": [
+            {"type": "confirm_llm", "label": "LLM 보조 답변 사용"},
+            {"type": "link", "label": "인공지능 과목 바로가기", "url": "https://example.com/ai"},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": "https://example.com/course"},
+        ],
+        "items": [{"title": "인공지능", "link_label": "인공지능 과목 바로가기"}],
+    }
+
+    localized = localize_response(response, "en")
+
+    assert [action["label"] for action in localized["actions"]] == [
+        "Use AI Helper",
+        "View AI Course",
+        "View Course Information",
+    ]
+    assert localized["items"][0]["link_label"] == "View AI Course"

@@ -62,6 +62,24 @@ def test_chat_pending_state_disables_duplicate_inputs() -> None:
     assert ".composer textarea:disabled" in style
 
 
+def test_welcome_message_uses_bot_bubble_and_language_popup_is_disabled() -> None:
+    script = Path("static/app.js").read_text(encoding="utf-8")
+    style = Path("static/style.css").read_text(encoding="utf-8")
+    html = Path("templates/index.html").read_text(encoding="utf-8")
+
+    assert "languageGate" not in html
+    assert "Language Selection" not in html
+    assert "data-select-language" not in html + script
+    assert "chat-intro" not in html + script
+    assert 'const DEFAULT_LANG = "ko"' in script
+    assert 'setLanguage(localStorage.getItem(LANGUAGE_KEY) || DEFAULT_LANG)' in script
+    assert 'addMessage("bot", t("introMessage")' in script
+    assert 'row.classList.add("with-avatar", "welcome-message", "message-row", "assistant")' in script
+    assert 'bubble?.classList.add("message-bubble", "assistant-bubble")' in script
+    assert ".welcome-message .assistant-bubble" in style
+    assert ".message-avatar" in style
+
+
 def test_answer_type_renderers_and_per_item_links_are_present() -> None:
     script = Path("static/app.js").read_text(encoding="utf-8")
     style = Path("static/style.css").read_text(encoding="utf-8")
@@ -83,4 +101,20 @@ def test_answer_type_renderers_and_per_item_links_are_present() -> None:
     assert 'link.rel = "noopener noreferrer"' in script
     assert ".answer-link-button" in style
     assert "min-height: 40px" in style
-    assert 'confirmAction?.label || "LLM 보조 답변 사용"' in script
+    assert 'yes.dataset.buttonLabelKo = confirmAction?.label || I18N.ko.buttons.useAiHelper' in script
+
+
+def test_response_buttons_are_localized_on_language_change() -> None:
+    script = Path("static/app.js").read_text(encoding="utf-8")
+
+    assert "buttons: {" in script
+    assert 'courseInfo: "View Course Information"' in script
+    assert 'schedule: "View Schedule"' in script
+    assert 'useAiHelper: "Use AI Helper"' in script
+    assert 'endSearch: "End Search"' in script
+    assert '"인공지능": "AI"' in script
+    assert "function translateButtonLabel(label = \"\")" in script
+    assert "function updateRenderedButtonLabels()" in script
+    assert 'link.dataset.actionLabelKo = action.label || buttonLabel("link")' in script
+    assert 'link.textContent = actionText(link.dataset.actionLabelKo)' in script
+    assert "updateRenderedButtonLabels();" in script

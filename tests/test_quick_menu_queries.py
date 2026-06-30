@@ -203,6 +203,7 @@ def test_professor_name_input_returns_single_professor_card(tmp_path: Path) -> N
 
 def test_frontend_uses_required_quick_queries() -> None:
     html = Path("templates/index.html").read_text(encoding="utf-8")
+    script = Path("static/app.js").read_text(encoding="utf-8")
 
     for query in (
         "컴퓨터과학과 교수진 정보를 알려줘",
@@ -211,3 +212,23 @@ def test_frontend_uses_required_quick_queries() -> None:
         "컴퓨터과학과 학과 일정을 알려줘",
     ):
         assert f'data-question="{query}"' in html
+
+    assert 'intent: "curriculum"' in script
+    assert 'intent: "notice"' in script
+    assert 'intent: "schedule"' in script
+    assert 'quick_intent: button.dataset.intent || ""' in script
+    assert "function normalizeUrl(url)" in script
+    assert "https?:\\/\\/" in script
+
+
+def test_schedule_quick_intent_falls_back_to_official_external_url(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "empty-schedule.json")
+    index.rebuild([])
+
+    result = answer_question("컴퓨터과학과 학과 일정을 알려줘", index=index, forced_intent="schedule")
+
+    assert result["answer_type"] == "schedule_list"
+    assert result["items"] == []
+    assert "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다." in result["summary"]
+    assert result["actions"] == [{"type": "link", "label": "학과 일정 바로가기", "url": SCHEDULE_URL}]
+    assert result["actions"][0]["url"].startswith("https://cs.knou.ac.kr/")

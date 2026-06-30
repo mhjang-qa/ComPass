@@ -177,6 +177,17 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
 .messages > .message:first-child[data-i18n-key] { margin-top: 0; }
 .message { display: flex; margin: 0 0 16px; }
 .message.user { justify-content: flex-end; }
+.message.with-avatar { align-items: flex-start; gap: 12px; }
+.message.with-avatar .bot-mark {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  margin-top: 2px;
+}
+.message.with-avatar .bubble {
+  max-width: calc(82% - 52px);
+}
+.message.welcome-message { margin-top: 0; }
 .bubble { max-width: 82%; padding: 13px 16px; border-radius: 18px 18px 18px 5px; background: white; border: 1px solid var(--line); line-height: 1.6; white-space: pre-wrap; box-shadow: 0 4px 14px rgba(16,42,67,.05); }
 .messages .bubble { font-size: 15px; }
 .user .bubble { color: white; background: var(--blue); border: 0; border-radius: 18px 18px 5px 18px; }
@@ -495,6 +506,16 @@ th { color: var(--muted); font-size: .77rem; }
   .chat-layout { border-radius: 16px; grid-template-rows: auto minmax(0, 1fr) auto auto; }
   .bubble { max-width: 92%; }
   .message.bot .bubble { width: 100%; }
+  .message.with-avatar { gap: 10px; }
+  .message.with-avatar .bot-mark {
+    flex-basis: 36px;
+    width: 36px;
+    height: 36px;
+  }
+  .message.with-avatar .bubble {
+    width: auto;
+    max-width: calc(100% - 46px);
+  }
   .messages {
     padding: 12px;
     scroll-padding-bottom: 12px;

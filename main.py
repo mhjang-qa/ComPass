@@ -51,6 +51,7 @@ index = SearchIndex()
 crawl_lock = threading.Lock()
 index_job_lock = threading.Lock()
 index_load_lock = threading.Lock()
+index_ready_event = threading.Event()
 conversation_lock = threading.Lock()
 conversation_store: dict[str, deque[dict[str, str]]] = {}
 job_state: dict[str, Any] = {
@@ -76,6 +77,11 @@ job_state: dict[str, Any] = {
 }
 runtime_state: dict[str, Any] = {
     "loading": False,
+    "index_loading": False,
+    "index_ready": index.status()["documents"] > 0,
+    "index_state": "ready" if index.status()["documents"] > 0 else "stale",
+    "index_last_error": "",
+    "retry_after_ms": 1500,
     "notion_connected": False,
     "notion_document_count": 0,
     "index_document_count": index.status()["documents"],
@@ -84,6 +90,8 @@ runtime_state: dict[str, Any] = {
     "last_reason": "process_start",
     "last_error": "",
 }
+if runtime_state["index_ready"]:
+    index_ready_event.set()
 
 
 def now_iso() -> str:
@@ -244,17 +252,25 @@ def sync_index_runtime_state(reason: str = "index_status") -> dict[str, Any]:
     """현재 메모리 인덱스 상태를 runtime/job 상태와 관리자 화면 값에 반영한다."""
     status = index.status()
     documents = int(status.get("documents") or 0)
+    loading = bool(runtime_state.get("index_loading") or index_load_lock.locked())
+    state = "loading" if loading else ("ready" if documents > 0 else ("failed" if status.get("load_error") or runtime_state.get("last_error") else "stale"))
     runtime_state.update(
+        loading=loading,
+        index_loading=loading,
+        index_ready=documents > 0,
+        index_state=state,
         index_document_count=documents,
         last_sync_at=status.get("built_at") or runtime_state.get("last_sync_at"),
         last_reason=reason,
     )
     if documents > 0:
+        runtime_state["index_last_error"] = ""
+        index_ready_event.set()
         runtime_state["last_error"] = ""
         if not job_state.get("index", {}).get("running"):
             job_state["index"] = {
                 "running": False,
-                "message": "검색 인덱스 로드 완료",
+                "message": "검색 가능",
                 "result": status,
             }
         logger.info(
@@ -265,6 +281,7 @@ def sync_index_runtime_state(reason: str = "index_status") -> dict[str, Any]:
         )
     elif status.get("load_error"):
         runtime_state["last_error"] = f"검색 인덱스 파일 로드 실패: {status['load_error']}"
+        runtime_state["index_last_error"] = runtime_state["last_error"]
         if not job_state.get("index", {}).get("running"):
             job_state["index"] = {
                 "running": False,
@@ -274,35 +291,106 @@ def sync_index_runtime_state(reason: str = "index_status") -> dict[str, Any]:
     return status
 
 
+def mark_index_loading(reason: str) -> None:
+    has_documents = index.status()["documents"] > 0
+    runtime_state.update(
+        loading=True,
+        index_loading=True,
+        index_ready=has_documents,
+        index_state="loading",
+        index_last_error="",
+        last_attempt_at=datetime.now().astimezone().isoformat(),
+        last_reason=reason,
+        last_error="",
+    )
+    if not has_documents:
+        index_ready_event.clear()
+    job_state["index"] = {"running": True, "message": "검색 인덱스 준비 중", "result": index.status()}
+
+
+def mark_index_ready(result: dict[str, Any] | None, reason: str) -> None:
+    status = result or index.status()
+    documents = int(status.get("documents") or index.status().get("documents") or 0)
+    runtime_state.update(
+        loading=False,
+        index_loading=False,
+        index_ready=documents > 0,
+        index_state="ready" if documents > 0 else "stale",
+        index_document_count=documents,
+        last_sync_at=status.get("built_at") or runtime_state.get("last_sync_at"),
+        last_reason=reason,
+        last_error="",
+        index_last_error="",
+    )
+    if documents > 0:
+        index_ready_event.set()
+        logger.info(
+            "[INDEX] ready documents=%d indexed=%d",
+            runtime_state.get("notion_document_count", documents),
+            documents,
+        )
+
+
+def mark_index_failed(error_message: str, reason: str) -> None:
+    documents = index.status()["documents"]
+    runtime_state.update(
+        loading=False,
+        index_loading=False,
+        index_ready=documents > 0,
+        index_state="stale" if documents > 0 else "failed",
+        index_document_count=documents,
+        last_reason=reason,
+        last_error=error_message,
+        index_last_error=error_message,
+    )
+    if documents > 0:
+        index_ready_event.set()
+    else:
+        index_ready_event.clear()
+
+
+def rebuild_index_from_documents(documents: list[dict[str, Any]], reason: str) -> dict[str, Any] | None:
+    if not index_load_lock.acquire(blocking=False):
+        logger.info("[INDEX] rebuild skipped because load already running reason=%s", reason)
+        return None
+    mark_index_loading(reason)
+    try:
+        logger.info("[INDEX] rebuild started reason=%s", reason)
+        result = index.rebuild(documents)
+        mark_index_ready(result, reason)
+        return result
+    except Exception as exc:
+        mark_index_failed(notion_error_message(exc, "검색 인덱스"), reason)
+        raise
+    finally:
+        runtime_state["loading"] = False
+        runtime_state["index_loading"] = False
+        index_load_lock.release()
+
+
 def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bool:
     current_count = index.status()["documents"]
     if current_count > 0 and not force:
         sync_index_runtime_state(reason)
         return True
-    if not index_load_lock.acquire(timeout=45):
-        runtime_state["last_error"] = "검색 인덱스 로딩 대기 시간이 초과되었습니다."
-        logger.error("[INDEX] load lock timeout reason=%s", reason)
+    if not index_load_lock.acquire(blocking=False):
+        logger.info("[INDEX] waiting existing load reason=%s", reason)
+        logger.info("[INDEX] rebuild skipped because load already running reason=%s", reason)
         return index.status()["documents"] > 0
+
     if index.status()["documents"] > 0 and not force:
         sync_index_runtime_state(reason)
         index_load_lock.release()
         return True
-    if reason == "lazy_chat" and index.status()["documents"] > 0:
-        sync_index_runtime_state(reason)
-        index_load_lock.release()
-        return True
 
-    runtime_state.update(
-        loading=True,
-        last_attempt_at=datetime.now().astimezone().isoformat(),
-        last_reason=reason,
-        last_error="",
-    )
+    mark_index_loading(reason)
     try:
+        logger.info("[INDEX] rebuild started reason=%s", reason)
         if not config.NOTION_TOKEN:
             raise RuntimeError(
                 "NOTION_TOKEN이 설정되지 않았습니다. NOTION_API_KEY 별칭도 확인했으나 값이 없습니다."
             )
+        logger.info("[INDEX] notion sync started reason=%s", reason)
         client = NotionClient()
         schema_result = client.ensure_knowledge_schema()
         curated_result = client.upsert_curated_knowledge()
@@ -326,7 +414,7 @@ def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bo
             notion_document_count=len(documents),
         )
         if not documents:
-            runtime_state["last_error"] = "Notion 지식 DB가 비어 있습니다."
+            mark_index_failed("Notion 지식 DB가 비어 있습니다.", reason)
             logger.warning(
                 "[INDEX] Notion load succeeded but zero documents db=%s reason=%s",
                 mask_database_id(config.NOTION_KNOWLEDGE_DB_ID),
@@ -334,11 +422,7 @@ def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bo
             )
             return False
         result = index.rebuild(documents)
-        runtime_state.update(
-            index_document_count=result["documents"],
-            last_sync_at=result["built_at"],
-            last_error="",
-        )
+        mark_index_ready(result, reason)
         job_state["index"] = {
             "running": False,
             "message": "검색 인덱스 자동 로딩 완료",
@@ -364,15 +448,12 @@ def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bo
         )
         return result["documents"] > 0
     except Exception as exc:
-        runtime_state.update(
-            notion_connected=False,
-            notion_document_count=0,
-            index_document_count=index.status()["documents"],
-            last_error=notion_error_message(exc, "지식 DB"),
-        )
+        error_message = notion_error_message(exc, "지식 DB")
+        runtime_state.update(notion_connected=False, notion_document_count=0)
+        mark_index_failed(error_message, reason)
         job_state["notion"] = {
             "running": False,
-            "message": runtime_state["last_error"],
+            "message": error_message,
             "result": None,
         }
         logger.exception(
@@ -383,10 +464,14 @@ def ensure_search_index(*, force: bool = False, reason: str = "lazy_chat") -> bo
         return False
     finally:
         runtime_state["loading"] = False
+        runtime_state["index_loading"] = False
         index_load_lock.release()
 
 
 def initialize_search_index_on_startup() -> None:
+    logger.info("[INDEX] startup load started")
+    if index.path.exists():
+        index.load()
     status = sync_index_runtime_state("startup_file_load")
     if status.get("documents", 0) > 0:
         job_state["notion"] = {
@@ -394,6 +479,7 @@ def initialize_search_index_on_startup() -> None:
             "message": "검색 인덱스 파일을 메모리에 로드했습니다.",
             "result": {"documents": status["documents"], "path": status.get("path")},
         }
+        logger.info("[INDEX] local cache load success documents=%d path=%s", status["documents"], status.get("path"))
         return
     if not config.NOTION_TOKEN:
         job_state["notion"] = {
@@ -401,7 +487,7 @@ def initialize_search_index_on_startup() -> None:
             "message": "검색 인덱스가 비어 있고 NOTION_TOKEN이 없어 자동 재구성을 건너뛰었습니다.",
             "result": None,
         }
-        runtime_state["last_error"] = job_state["notion"]["message"]
+        mark_index_failed(job_state["notion"]["message"], "startup")
         logger.error("[STARTUP] %s", job_state["notion"]["message"])
         return
     job_state["notion"] = {"running": True, "message": "검색 인덱스가 비어 있어 Notion 기준으로 재구성 중", "result": None}
@@ -568,21 +654,30 @@ def run_crawl_job(max_depth: int) -> None:
                 current_title="검색 인덱스 갱신",
             )
             notion_documents = notion.knowledge_documents()
-            index_result = index.rebuild(notion_documents)
+            runtime_state.update(notion_connected=True, notion_document_count=len(notion_documents))
+            index_result = rebuild_index_from_documents(notion_documents, "crawl_complete")
+            if index_result is None:
+                index_result = index.status()
+                job_state["index"] = {
+                    "running": True,
+                    "message": "다른 인덱스 작업이 진행 중이라 크롤링 후 재생성을 건너뛰었습니다.",
+                    "result": index_result,
+                }
             runtime_state.update(
                 notion_connected=True,
                 notion_document_count=len(notion_documents),
-                index_document_count=index_result["documents"],
-                last_sync_at=index_result["built_at"],
+                index_document_count=index_result.get("documents", 0),
+                last_sync_at=index_result.get("built_at"),
                 last_attempt_at=datetime.now().astimezone().isoformat(),
                 last_reason="crawl_complete",
                 last_error="",
             )
-            job_state["index"] = {
-                "running": False,
-                "message": "크롤링 완료 후 검색 인덱스 자동 재생성 완료",
-                "result": index_result,
-            }
+            if not job_state["index"].get("running"):
+                job_state["index"] = {
+                    "running": False,
+                    "message": "크롤링 완료 후 검색 인덱스 자동 재생성 완료",
+                    "result": index_result,
+                }
             logger.info(
                 "[INDEX] rebuild completed after crawl documents=%d included=%d excluded=%d",
                 len(notion_documents),
@@ -738,7 +833,11 @@ def reclassify_data_tiers(x_admin_password: str | None = Header(default=None)):
         client = NotionClient()
         client.ensure_knowledge_schema()
         tier_result = client.reclassify_data_tiers()
-        index_result = index.rebuild(client.knowledge_documents())
+        notion_documents = client.knowledge_documents()
+        runtime_state.update(notion_connected=True, notion_document_count=len(notion_documents))
+        index_result = rebuild_index_from_documents(notion_documents, "data_tier_reclassify")
+        if index_result is None:
+            index_result = index.status()
         runtime_state.update(
             notion_connected=True,
             notion_document_count=tier_result.get("checked", 0),
@@ -765,11 +864,53 @@ def index_status(x_admin_password: str | None = Header(default=None)):
     status = sync_index_runtime_state("index_status")
     return {
         **status,
+        "state": runtime_state["index_state"],
+        "index_loading": runtime_state["index_loading"],
+        "index_ready": runtime_state["index_ready"],
+        "index_last_error": runtime_state["index_last_error"],
+        "retry_after_ms": runtime_state["retry_after_ms"],
         "job": job_state["index"],
         "runtime": runtime_state,
         "auto_load_on_start": config.AUTO_LOAD_INDEX_ON_START,
         "auto_rebuild_after_crawl": config.AUTO_REBUILD_INDEX_AFTER_CRAWL,
     }
+
+
+def start_index_load_background(reason: str) -> None:
+    if index.status()["documents"] > 0:
+        sync_index_runtime_state(reason)
+        return
+    if runtime_state.get("index_loading") or index_load_lock.locked():
+        logger.info("[INDEX] rebuild skipped because load already running reason=%s", reason)
+        return
+    mark_index_loading(reason)
+    threading.Thread(target=ensure_search_index, kwargs={"force": True, "reason": reason}, daemon=True).start()
+
+
+def index_loading_chat_response(req: ChatRequest, session_id: str, request_id: str) -> dict[str, Any]:
+    logger.info("[CHAT] index loading retryable session=%s", session_id[:8])
+    answer = (
+        "Preparing the official information search index. I will try again shortly."
+        if req.language == "en"
+        else "공식 정보 검색 인덱스를 준비 중입니다. 잠시 후 자동으로 다시 시도합니다."
+    )
+    result = {
+        "answer": answer,
+        "answer_type": "text",
+        "summary": answer,
+        "items": [],
+        "total_count": 0,
+        "source_urls": [],
+        "actions": [],
+        "mode": "INDEX_LOADING",
+        "status": "index_loading",
+        "retry_after_ms": runtime_state["retry_after_ms"],
+        "sources": [],
+        "score": 0,
+        "diagnostics": debug_index_payload(),
+    }
+    attach_request_metadata(result, session_id, request_id, req)
+    return result
 
 
 @app.post("/api/search/test")
@@ -810,42 +951,51 @@ def chat(req: ChatRequest):
             index=index,
         )
         return finalize_chat_response(req, result, session_id, request_id)
+    if index.status()["documents"] == 0 and index.path.exists():
+        index.load()
+        sync_index_runtime_state("chat_local_load")
     if index.status()["documents"] == 0:
         logger.warning(
-            "[CHAT] empty index detected; attempting lazy load session=%s question_prefix=%r notion_connected=%s",
+            "[CHAT] empty index detected session=%s question_prefix=%r notion_connected=%s state=%s",
             session_short,
             clean_question[:50],
             runtime_state["notion_connected"],
+            runtime_state.get("index_state"),
         )
-        loaded = ensure_search_index(force=True, reason="lazy_chat")
-        if not loaded:
-            mode = "DB_LOAD_ERROR" if runtime_state["last_error"] else "INDEX_EMPTY"
-            answer = (
-                "공식 지식 DB를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
-                if mode == "DB_LOAD_ERROR"
-                else "공식 지식 DB는 연결되었지만 검색할 문서가 없습니다. 관리자에게 크롤링을 요청해 주세요."
-            )
-            result = {
-                "answer": answer,
-                "answer_type": "text",
-                "summary": runtime_state["last_error"] or "검색 인덱스를 사용할 수 없습니다.",
-                "items": [],
-                "total_count": 0,
-                "source_urls": [],
-                "actions": [],
-                "mode": mode,
-                "sources": [],
-                "score": 0,
-                "failure_reason": runtime_state["last_error"] or "검색 인덱스 문서 0개",
-                "diagnostics": debug_index_payload(),
-            }
-            logger.error(
-                "[CHAT] search unavailable session=%s mode=%s error=%s",
-                session_short,
-                mode,
-                result["failure_reason"],
-            )
-            return finalize_chat_response(req, result, session_id, request_id)
+        if runtime_state.get("index_loading") or index_load_lock.locked():
+            logger.info("[INDEX] waiting existing load reason=lazy_chat")
+            return index_loading_chat_response(req, session_id, request_id)
+        if config.NOTION_TOKEN:
+            start_index_load_background("lazy_chat")
+            return index_loading_chat_response(req, session_id, request_id)
+        mode = "DB_LOAD_ERROR" if runtime_state["last_error"] else "INDEX_EMPTY"
+        answer = (
+            "공식 지식 DB를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+            if mode == "DB_LOAD_ERROR"
+            else "공식 지식 DB는 연결되었지만 검색할 문서가 없습니다. 관리자에게 크롤링을 요청해 주세요."
+        )
+        result = {
+            "answer": answer,
+            "answer_type": "text",
+            "summary": runtime_state["last_error"] or "검색 인덱스를 사용할 수 없습니다.",
+            "items": [],
+            "total_count": 0,
+            "source_urls": [],
+            "actions": [],
+            "mode": mode,
+            "sources": [],
+            "score": 0,
+            "failure_reason": runtime_state["last_error"] or "검색 인덱스 문서 0개",
+            "diagnostics": debug_index_payload(),
+        }
+        logger.error(
+            "[CHAT] search unavailable session=%s mode=%s error=%s",
+            session_short,
+            mode,
+            result["failure_reason"],
+        )
+        return finalize_chat_response(req, result, session_id, request_id)
+    logger.info("[CHAT] search start session=%s documents=%d", session_short, index.status()["documents"])
     result = answer_question(
         req.question,
         history=history,
@@ -875,6 +1025,9 @@ def debug_index_payload() -> dict[str, Any]:
     return {
         "notion_connected": runtime_state["notion_connected"],
         "notion_loading": runtime_state["loading"],
+        "index_state": runtime_state["index_state"],
+        "index_loading": runtime_state["index_loading"],
+        "index_ready": runtime_state["index_ready"],
         "notion_document_count": runtime_state["notion_document_count"],
         "index_document_count": status["documents"],
         "course_catalog_count": status.get("courses", 0),

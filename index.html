@@ -11,11 +11,11 @@
   <meta property="og:title" content="ComPass">
   <meta property="og:description" content="Computer Science X Compass · 학생들의 길잡이">
   <title>ComPass · Computer Science X Compass</title>
-  <link rel="icon" href="/ComPass/static/icons/favicon.ico">
-  <link rel="icon" type="image/png" sizes="16x16" href="/ComPass/static/icons/favicon-16x16.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="/ComPass/static/icons/favicon-32x32.png">
-  <link rel="apple-touch-icon" href="/ComPass/static/icons/apple-touch-icon.png">
-  <link rel="manifest" href="/ComPass/static/manifest.json">
+  <link rel="icon" href="./static/icons/favicon.ico">
+  <link rel="icon" type="image/png" sizes="16x16" href="./static/icons/favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="./static/icons/favicon-32x32.png">
+  <link rel="apple-touch-icon" href="./static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="./manifest.json">
   <style>
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; font-family: Arial, "Noto Sans KR", sans-serif; }
@@ -26,7 +26,7 @@
     .header img { width: min(369px, 90%); }
     .header nav { display: flex; gap: clamp(28px, 4vw, 78px); padding: 0 36px; font-size: 18px; font-weight: 750; white-space: nowrap; }
     .menu { display: grid; place-items: center; align-self: stretch; color: white; background: #234c9e; font-size: 28px; }
-    .hero { position: relative; height: calc(100vh - 132px); background: url("/ComPass/static/knou-home/hero.jpg") center/cover no-repeat; }
+    .hero { position: relative; height: calc(100vh - 132px); background: url("./static/knou-home/hero.jpg") center/cover no-repeat; }
     .hero::before { position: absolute; inset: 0; content: ""; background: rgba(0,0,0,.43); }
     .copy { position: absolute; left: clamp(40px, 13.5vw, 260px); top: 29%; color: white; text-shadow: 0 2px 5px rgba(0,0,0,.55); }
     .copy h1 { margin: 0; font-size: clamp(34px, 3.2vw, 64px); font-weight: 300; }
@@ -80,7 +80,7 @@
   <div class="home" aria-hidden="true">
     <div class="utility"><b>한국방송통신대학교</b></div>
     <header class="header">
-      <img src="/ComPass/static/knou-home/logo-header.png" alt="">
+      <img src="./static/knou-home/logo-header.png" alt="">
       <nav><span>학과소개</span><span>교과정보</span><span>학습정보</span><span>학생광장</span><span>학과광장</span></nav>
       <span class="menu">☰</span>
     </header>
@@ -95,7 +95,7 @@
 
   <div id="boot" class="boot" role="status" aria-live="polite">
     <div class="mark">
-      <img class="coldstart-logo" src="/ComPass/static/icons/icon.png" alt="ComPass 로고" onerror="this.style.display='none'; const fallback=document.querySelector('.coldstart-logo-fallback'); if (fallback) fallback.style.display='block';">
+      <img class="coldstart-logo" src="./static/icons/icon.png" alt="ComPass 로고" onerror="this.style.display='none'; const fallback=document.querySelector('.coldstart-logo-fallback'); if (fallback) fallback.style.display='block';">
       <div class="coldstart-logo-fallback">ComPass</div>
     </div>
     <h2 class="boot-title coldstart-title">ComPass를 준비하고 있습니다</h2>
@@ -106,7 +106,7 @@
 
   <iframe id="appFrame" title="ComPass 챗봇"></iframe>
 
-  <script src="/ComPass/static/config.js"></script>
+  <script src="./static/config.js"></script>
   <script>
     const APP_CONFIG = window.COMPASS_CONFIG;
     const RENDER_URL = "https://compass-knou-cs-ai-navigator.onrender.com";

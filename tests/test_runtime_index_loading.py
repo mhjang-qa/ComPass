@@ -78,7 +78,7 @@ def test_startup_uses_existing_index_file_without_notion(tmp_path: Path, monkeyp
     status = main.debug_index_payload()
 
     assert status["index_document_count"] == 1
-    assert main.job_state["index"]["message"] == "검색 인덱스 로드 완료"
+    assert main.job_state["index"]["message"] == "검색 가능"
     assert main.job_state["notion"]["message"] == "검색 인덱스 파일을 메모리에 로드했습니다."
 
 
@@ -102,3 +102,35 @@ def test_startup_rebuilds_from_notion_when_index_file_missing(tmp_path: Path, mo
     assert status["index_document_count"] == 1
     assert status["notion_connected"] is True
     assert main.job_state["index"]["message"] == "검색 인덱스 자동 로딩 완료"
+
+
+def test_chat_returns_retryable_loading_while_index_lock_is_busy(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "index", SearchIndex(tmp_path / "missing-index.json"))
+    main.runtime_state.update(
+        loading=True,
+        index_loading=True,
+        index_ready=False,
+        index_state="loading",
+        notion_connected=False,
+        notion_document_count=0,
+        index_document_count=0,
+        last_sync_at=None,
+        last_error="",
+    )
+
+    assert main.index_load_lock.acquire(blocking=False) is True
+    try:
+        response = main.chat(
+            main.ChatRequest(
+                question="공식 문서 검색 테스트",
+                session_id="test-session",
+                request_id="test-request",
+            )
+        )
+    finally:
+        main.index_load_lock.release()
+        main.runtime_state.update(loading=False, index_loading=False, index_ready=False, index_state="stale")
+
+    assert response["status"] == "index_loading"
+    assert response["mode"] == "INDEX_LOADING"
+    assert response["retry_after_ms"] == 1500

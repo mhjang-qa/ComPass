@@ -22,6 +22,8 @@ let DEFAULT_CHAT_PLACEHOLDER = "궁금한 컴퓨터과학과 정보를 질문해
 let PENDING_CHAT_PLACEHOLDER = "답변을 준비하고 있습니다...";
 const QUICK_QUESTIONS_KEY = "COMPASS_QUICK_QUESTIONS";
 const ICON_CONFIG_KEY = "COMPASS_ICON_CONFIG";
+const INDEX_LOADING_MAX_RETRIES = 3;
+const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
 const DEFAULT_QUICK_QUESTIONS = [
   { id: 1, label: "교육과정", message: "컴퓨터과학과 교육과정을 알려줘", intent: "curriculum", enabled: true, sortOrder: 1 },
   { id: 2, label: "교수진", message: "컴퓨터과학과 교수진을 알려줘", intent: "faculty", enabled: true, sortOrder: 2 },
@@ -117,6 +119,10 @@ function setChatPending(pending) {
 
 function t(key) {
   return (I18N[currentLanguage || "ko"] || I18N.ko)[key] || I18N.ko[key] || key;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function setLanguage(language) {
@@ -549,11 +555,14 @@ async function loadSystemDashboard() {
       jsonFetch("/api/crawl/status", { headers: adminHeaders() }).catch(() => ({})),
     ]);
     const tierCounts = indexStatus.tier_counts || {};
+    const indexState = indexStatus.state || indexStatus.runtime?.index_state || (Number(indexStatus.documents || 0) > 0 ? "ready" : "stale");
+    const indexStateLabel = indexState === "loading" ? "검색 인덱스 준비 중" : indexState === "ready" ? "검색 가능" : indexState === "failed" ? "검색 인덱스 로딩 실패" : "확인 필요";
     const intentCount = 10;
     const lastCrawl = crawlStatus.updated_at || crawlStatus.result?.timestamp || "";
     container.innerHTML = `
       <div class="metric"><span>등록된 인텐트 수</span><strong>${intentCount}</strong></div>
       <div class="metric"><span>등록된 추천 질문 수</span><strong>${quickCount}</strong></div>
+      <div class="metric"><span>검색 인덱스</span><strong>${escapeHtml(indexStateLabel)}</strong></div>
       <div class="metric"><span>크롤링 문서 수</span><strong>${Number(indexStatus.documents || health.index?.documents || 0).toLocaleString("ko-KR")}</strong></div>
       <div class="metric"><span>마지막 크롤링 시간</span><strong>${escapeHtml(lastCrawl ? formatKstDateTime(lastCrawl, true) : "기록 없음")}</strong></div>
       <div class="metric"><span>챗봇 버전</span><strong>ComPass v2.0</strong></div>
@@ -1178,6 +1187,41 @@ function addI18nSystemMessage(key) {
   return row;
 }
 
+function ensureIntroMessage() {
+  let row = messages.querySelector('[data-intro-message="true"]');
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "message bot with-avatar welcome-message";
+    row.dataset.introMessage = "true";
+    row.dataset.i18nKey = "introMessage";
+
+    const icon = document.createElement("div");
+    icon.className = "bot-mark";
+    const iconImage = document.createElement("img");
+    iconImage.src = loadIconConfig().internalIcon;
+    iconImage.alt = "";
+    iconImage.setAttribute("aria-hidden", "true");
+    iconImage.onerror = () => { iconImage.style.display = "none"; };
+    icon.appendChild(iconImage);
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    const paragraph = document.createElement("p");
+    paragraph.className = "message-content text-paragraph";
+    paragraph.dataset.i18nKey = "introMessage";
+    bubble.appendChild(paragraph);
+
+    row.append(icon, bubble);
+    messages.prepend(row);
+  }
+
+  const paragraph = row.querySelector(".message-content.text-paragraph");
+  if (paragraph) paragraph.textContent = t("introMessage");
+  const iconImage = row.querySelector(".bot-mark img");
+  if (iconImage) iconImage.src = loadIconConfig().internalIcon;
+  return row;
+}
+
 function createSearchLoading() {
   const requestId = arguments[0] || "";
   const row = document.createElement("div");
@@ -1247,20 +1291,27 @@ async function sendQuestion(raw, options = {}) {
   setChatPending(true);
   const waiting = createSearchLoading(requestId);
   try {
-    const result = await jsonFetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        question,
-        allow_llm: allowLlm,
-        llm_type: llmType,
-        session_id: SESSION_ID,
-        request_id: requestId,
-        language: currentLanguage || "ko",
-        context,
-      }),
-    });
+    let result;
+    let retryCount = 0;
+    do {
+      result = await jsonFetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          question,
+          allow_llm: allowLlm,
+          llm_type: llmType,
+          session_id: SESSION_ID,
+          request_id: requestId,
+          language: currentLanguage || "ko",
+          context,
+        }),
+      });
+      if (result.status !== "index_loading" || retryCount >= INDEX_LOADING_MAX_RETRIES) break;
+      retryCount += 1;
+      await delay(Number(result.retry_after_ms || INDEX_LOADING_DEFAULT_DELAY_MS));
+    } while (pendingRequests.has(requestId));
     if (!pendingRequests.has(requestId) || result.request_id !== requestId) {
       waiting.remove();
       return;
@@ -1569,12 +1620,18 @@ $("#loadKnowledge").addEventListener("click", loadKnowledge);
 
 async function loadIndexStatus() {
   const data = await jsonFetch("/api/index/status", { headers: adminHeaders() });
+  const state = data.state || data.runtime?.index_state || (Number(data.documents || 0) > 0 ? "ready" : "stale");
+  const statusLabel = state === "loading" ? "검색 인덱스 준비 중" : state === "ready" ? "검색 가능" : state === "failed" ? "검색 인덱스 로딩 실패" : "검색 인덱스 미생성";
+  const jobMessage = state === "ready"
+    ? `Indexed : ${Number(data.documents || 0).toLocaleString("ko-KR")} · Documents : ${Number(data.runtime?.notion_document_count || data.documents || 0).toLocaleString("ko-KR")}`
+    : data.job?.message || statusLabel;
   $("#indexStatus").innerHTML = `
+    <div class="metric"><span>상태</span><strong>${escapeHtml(statusLabel)}</strong></div>
     <div class="metric"><span>문서 수</span><strong>${data.documents}</strong></div>
     <div class="metric"><span>제외 문서</span><strong>${data.excluded || 0}</strong></div>
     <div class="metric"><span>교과목 수</span><strong>${data.courses || 0}</strong></div>
     <div class="metric"><span>생성 시각</span><strong>${escapeHtml(data.built_at ? formatKstDateTime(data.built_at, true) : "미생성")}</strong></div>
-    <div class="metric"><span>작업 상태</span><strong>${escapeHtml(data.job.message)}</strong></div>`;
+    <div class="metric"><span>작업 상태</span><strong>${escapeHtml(jobMessage)}</strong></div>`;
   renderTierRows(data);
 }
 
@@ -1649,11 +1706,7 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  if (messages.querySelector('[data-i18n-key="introMessage"]')) {
-    updateI18nKeyedText();
-    return;
-  }
-  addI18nSystemMessage("introMessage");
+  ensureIntroMessage();
 }
 initializeLanguage();
 wakeServer();

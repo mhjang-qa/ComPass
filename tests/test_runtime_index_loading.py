@@ -82,10 +82,36 @@ def test_startup_uses_existing_index_file_without_notion(tmp_path: Path, monkeyp
     assert main.job_state["notion"]["message"] == "검색 인덱스 파일을 메모리에 로드했습니다."
 
 
-def test_startup_rebuilds_from_notion_when_index_file_missing(tmp_path: Path, monkeypatch) -> None:
+def test_startup_bootstraps_from_bundled_documents_when_index_file_missing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "index", SearchIndex(tmp_path / "missing-index.json"))
+    monkeypatch.setattr(
+        main,
+        "bundled_bootstrap_documents",
+        lambda: FakeNotionClient().knowledge_documents(),
+    )
+    monkeypatch.setattr(main.config, "NOTION_TOKEN", "")
+    main.runtime_state.update(
+        loading=False,
+        notion_connected=False,
+        notion_document_count=0,
+        index_document_count=0,
+        last_sync_at=None,
+        last_error="",
+    )
+
+    main.initialize_search_index_on_startup()
+    status = main.debug_index_payload()
+
+    assert status["index_document_count"] == 1
+    assert main.job_state["index"]["message"] == "검색 가능"
+    assert main.job_state["notion"]["message"] == "번들된 공식 데이터로 검색 인덱스를 즉시 구성했습니다."
+
+
+def test_startup_rebuilds_from_notion_when_no_index_or_bundle(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(main, "index", SearchIndex(tmp_path / "missing-index.json"))
     monkeypatch.setattr(main, "NotionClient", FakeNotionClient)
     monkeypatch.setattr(main, "REQUIRED_DOCUMENT_URLS", ())
+    monkeypatch.setattr(main, "bundled_bootstrap_documents", lambda: [])
     monkeypatch.setattr(main.config, "NOTION_TOKEN", "test-token")
     main.runtime_state.update(
         loading=False,

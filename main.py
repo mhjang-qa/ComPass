@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import secrets
 import threading
 import uuid
 from collections import deque
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,7 +24,7 @@ from pydantic import BaseModel, Field
 import config
 from chatbot import answer_question, casual_response, classify_intent, sanitize_input
 from crawler import CommunityCrawler, REQUIRED_DOCUMENT_URLS, KnouCrawler
-from curated_knowledge import match_curated
+from curated_knowledge import curated_documents, match_curated
 from notion_client import NotionClient, notion_error_message
 from search_index import SearchIndex
 from stats import recent_stats, record_interaction_async
@@ -376,6 +378,11 @@ def mark_index_ready(result: dict[str, Any] | None, reason: str) -> None:
     )
     if documents > 0:
         index_ready_event.set()
+        job_state["index"] = {
+            "running": False,
+            "message": "검색 가능",
+            "result": status,
+        }
         logger.info(
             "[INDEX] ready documents=%d indexed=%d",
             runtime_state.get("notion_document_count", documents),
@@ -533,6 +540,18 @@ def initialize_search_index_on_startup() -> None:
         }
         logger.info("[INDEX] local cache load success documents=%d path=%s", status["documents"], status.get("path"))
         return
+    bootstrap_documents = bundled_bootstrap_documents()
+    if bootstrap_documents:
+        logger.info("[INDEX] bundled bootstrap started documents=%d", len(bootstrap_documents))
+        result = rebuild_index_from_documents(bootstrap_documents, "startup_bootstrap")
+        if result and int(result.get("documents") or 0) > 0:
+            job_state["notion"] = {
+                "running": False,
+                "message": "번들된 공식 데이터로 검색 인덱스를 즉시 구성했습니다.",
+                "result": {"documents": result["documents"], "path": str(index.path)},
+            }
+            logger.info("[INDEX] bundled bootstrap success documents=%d path=%s", result["documents"], index.path)
+            return
     if not config.NOTION_TOKEN:
         job_state["notion"] = {
             "running": False,
@@ -549,6 +568,30 @@ def initialize_search_index_on_startup() -> None:
         status.get("load_error") or "empty index",
     )
     ensure_search_index(force=True, reason="startup")
+
+
+def bundled_bootstrap_documents() -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    snapshot_path = config.CRAWL_SNAPSHOT_PATH
+    if snapshot_path.exists():
+        try:
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            documents.extend(
+                item
+                for item in payload.get("documents", [])
+                if isinstance(item, dict) and (item.get("title") or item.get("body"))
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("[INDEX] bundled snapshot load failed path=%s error=%s", snapshot_path, exc)
+    try:
+        documents.extend(asdict(document) for document in curated_documents())
+    except Exception as exc:
+        logger.warning("[INDEX] bundled curated knowledge load failed error=%s", exc)
+    deduped: dict[str, dict[str, Any]] = {}
+    for document in documents:
+        key = document.get("source_url") or document.get("title") or document.get("content_hash") or str(len(deduped))
+        deduped[key] = document
+    return list(deduped.values())
 
 
 @app.on_event("startup")

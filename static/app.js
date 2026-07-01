@@ -36,7 +36,7 @@ const ICON_CONFIG_KEY = "COMPASS_ICON_CONFIG";
 const INDEX_LOADING_MAX_RETRIES = 3;
 const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
 const SERVER_WAKE_TIMEOUT_MS = 10000;
-const SERVER_READY_MAX_ATTEMPTS = 40;
+const SERVER_DELAY_NOTICE_ATTEMPTS = 20;
 const SERVER_READY_INTERVAL_MS = 2000;
 const DEFAULT_QUICK_QUESTIONS = [
   { id: 1, label: "교육과정", message: "컴퓨터과학과 교육과정을 알려줘", intent: "curriculum", enabled: true, sortOrder: 1 },
@@ -73,7 +73,7 @@ const I18N = {
     serverPreparingLine2: "잠시만 기다려 주세요.",
     serverPreparingLine3: "준비가 완료되면 방금 질문을 자동으로 다시 전송합니다.",
     serverDelayedTitle: "ComPass 서버 준비가 지연되고 있습니다.",
-    serverDelayedLine1: "잠시 후 다시 시도해 주세요.",
+    serverDelayedLine1: "계속 확인 중입니다. 준비가 완료되면 자동으로 이동합니다.",
     close: "닫기",
     waiting: "공식 데이터를 검색하고 있습니다",
     waitingSub: "잠시만 기다려주세요.",
@@ -149,7 +149,7 @@ const I18N = {
     serverPreparingLine2: "Please wait a moment.",
     serverPreparingLine3: "Your last question will be sent again automatically.",
     serverDelayedTitle: "ComPass is taking longer than expected.",
-    serverDelayedLine1: "Please try again in a moment.",
+    serverDelayedLine1: "I am still checking. The chat will open automatically when ready.",
     close: "Close",
     waiting: "Searching official data",
     waitingSub: "Please wait a moment.",
@@ -601,8 +601,8 @@ function showPreparationOverlay(mode = "startup", failed = false) {
   overlay.querySelector("[data-coldstart-line1]").textContent = t(line1Key);
   overlay.querySelector("[data-coldstart-line2]").textContent = line2Key ? t(line2Key) : "";
   overlay.querySelector("[data-coldstart-line3]").textContent = line3Key ? t(line3Key) : "";
-  overlay.querySelector(".coldstart-spinner").hidden = failed;
-  overlay.querySelector(".coldstart-actions").hidden = !failed;
+  overlay.querySelector(".coldstart-spinner").hidden = false;
+  overlay.querySelector(".coldstart-actions").hidden = true;
   overlay.querySelector("[data-coldstart-retry]").textContent = t("retryServer");
   overlay.querySelector("[data-coldstart-close]").textContent = t("close");
   overlay.hidden = false;
@@ -625,8 +625,21 @@ async function fetchIndexStatus() {
 }
 
 async function waitForServerReady(mode = "startup") {
+  if (mode === "startup") {
+    try {
+      const initialStatus = await fetchIndexStatus();
+      if (isIndexReadyPayload(initialStatus)) {
+        indexReady = true;
+        hidePreparationOverlay();
+        return true;
+      }
+    } catch (error) {
+      // Fall through to the visible preparation overlay.
+    }
+  }
   showPreparationOverlay(mode);
-  for (let attempt = 0; attempt < SERVER_READY_MAX_ATTEMPTS; attempt += 1) {
+  let delayedNoticeShown = false;
+  for (let attempt = 0; ; attempt += 1) {
     try {
       await jsonFetch("/api/health", { cache: "no-store", timeoutMs: SERVER_WAKE_TIMEOUT_MS });
       const status = await fetchIndexStatus();
@@ -638,10 +651,12 @@ async function waitForServerReady(mode = "startup") {
     } catch (error) {
       // Keep the preparation overlay visible while Render wakes up.
     }
+    if (!delayedNoticeShown && attempt >= SERVER_DELAY_NOTICE_ATTEMPTS) {
+      delayedNoticeShown = true;
+      showPreparationOverlay(mode, true);
+    }
     await delay(SERVER_READY_INTERVAL_MS);
   }
-  showPreparationOverlay("server", true);
-  return false;
 }
 
 function rememberPendingChatRequest(question, options = {}) {

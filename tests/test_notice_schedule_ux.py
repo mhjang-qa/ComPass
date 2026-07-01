@@ -45,13 +45,13 @@ def test_schedule_parser_and_answer_hide_calendar_raw_text() -> None:
     raw = """
     월간 일정 2026년
     SUN | MON | TUE | WED | THU | FRI | SAT
-    06.23 ~ 06.29 | 2026. 1차 졸업논문계획서 신청
+    07.23 ~ 07.29 | 2026. 1차 졸업논문계획서 신청
     09.01 | 2026. 2학기 시작
     """
     parsed = extract_schedule_items(raw)
     assert parsed[0]["title"] == "1차 졸업논문계획서 신청"
-    assert parsed[0]["start_date"] == "2026-06-23"
-    assert parsed[0]["end_date"] == "2026-06-29"
+    assert parsed[0]["start_date"] == "2026-07-23"
+    assert parsed[0]["end_date"] == "2026-07-29"
 
     hits = [
         {

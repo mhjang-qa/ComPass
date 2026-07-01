@@ -58,6 +58,7 @@ def test_mobile_admin_scroll_and_two_line_subtitle_contract() -> None:
     assert "logout-short" in html
     assert "data-app-subtitle-line1" in html
     assert "data-app-subtitle-line2" in html
-    assert "Computer Science X Compass" in config
+    assert "Computer Science X Compass" in html + script
+    assert "APP_DEFAULTS" in script
     legacy_subtitle = "Computer Science + Compass" + " · 학생들의 길잡이"
     assert legacy_subtitle not in html + config + style + script

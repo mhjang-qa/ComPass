@@ -4,7 +4,11 @@ const messages = $("#messages");
 const appShell = $("#appShell");
 const chatLauncher = $("#chatLauncher");
 const ADMIN_TABS = new Set(["system", "crawl", "intents", "index", "stats", "quick", "icons"]);
-const APP_CONFIG = window.COMPASS_CONFIG;
+const APP_CONFIG = window.COMPASS_CONFIG || {};
+const APP_DEFAULTS = {
+  appName: "ComPass",
+  appSubtitleLine1: "Computer Science X Compass",
+};
 const STATIC_BASE = (() => {
   if (window.COMPASS_STATIC_BASE) return window.COMPASS_STATIC_BASE.replace(/\/$/, "");
   if (window.location.hostname.endsWith("github.io")) return "/ComPass/static";
@@ -42,6 +46,12 @@ const QUICK_QUESTIONS_BY_LANGUAGE = {
 };
 const I18N = {
   ko: {
+    brandName: "ComPass",
+    brandSubtitle: "Computer Science X Compass",
+    brandTagline: "· 학생들의 길잡이",
+    welcomeTitle: "안녕하세요, ComPass입니다.",
+    welcomeSubtitle: "공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
+    welcomeMessage: "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
     placeholder: "궁금한 컴퓨터과학과 정보를 질문해보세요",
     pending: "답변을 준비하고 있습니다...",
     waiting: "공식 데이터를 검색하고 있습니다",
@@ -99,6 +109,12 @@ const I18N = {
     },
   },
   en: {
+    brandName: "ComPass",
+    brandSubtitle: "Computer Science X Compass",
+    brandTagline: "A guide for students",
+    welcomeTitle: "How can I help you?",
+    welcomeSubtitle: "I can guide you through Computer Science department information.",
+    welcomeMessage: "Hello, this is ComPass.\nI summarize official information in a way students can easily understand.",
     placeholder: "Ask about CS department info",
     pending: "Preparing the answer...",
     waiting: "Searching official data",
@@ -253,6 +269,11 @@ function t(key) {
   return (I18N[currentLanguage || "ko"] || I18N.ko)[key] || I18N.ko[key] || key;
 }
 
+function safeText(key, fallback = "") {
+  const value = (I18N[currentLanguage || "ko"] || I18N.ko)[key] || I18N.ko[key];
+  return value || fallback || key;
+}
+
 function buttonLabel(key) {
   const language = currentLanguage || "ko";
   return (I18N[language]?.buttons || I18N.ko.buttons)[key] || I18N.ko.buttons[key] || key;
@@ -357,7 +378,7 @@ function setLanguage(language) {
   const select = $("#languageSelect");
   if (select) select.value = currentLanguage;
   $$("[data-i18n]").forEach((node) => {
-    node.textContent = t(node.dataset.i18n);
+    node.textContent = safeText(node.dataset.i18n, node.textContent);
   });
   applyAppConstants();
   updateI18nKeyedText();
@@ -388,14 +409,20 @@ function activateTab(tabName) {
 }
 
 function applyAppConstants() {
-  $$("[data-app-name]").forEach((node) => { node.textContent = APP_CONFIG.appName; });
-  $$("[data-app-subtitle-line1]").forEach((node) => { node.textContent = APP_CONFIG.appSubtitleLine1; });
-  $$("[data-app-subtitle-line2]").forEach((node) => { node.textContent = t("subtitleLine2"); });
+  $$("[data-app-name]").forEach((node) => {
+    node.textContent = APP_CONFIG.appName || safeText("brandName", node.textContent || APP_DEFAULTS.appName);
+  });
+  $$("[data-app-subtitle-line1]").forEach((node) => {
+    node.textContent = APP_CONFIG.appSubtitleLine1 || safeText("brandSubtitle", node.textContent || APP_DEFAULTS.appSubtitleLine1);
+  });
+  $$("[data-app-subtitle-line2]").forEach((node) => {
+    node.textContent = safeText("brandTagline", node.textContent);
+  });
 }
 
 function updateI18nKeyedText() {
   $$("[data-i18n-key]").forEach((node) => {
-    node.textContent = t(node.dataset.i18nKey);
+    node.textContent = safeText(node.dataset.i18nKey, node.textContent);
   });
 }
 
@@ -1410,17 +1437,17 @@ function addI18nSystemMessage(key) {
 function ensureIntroMessage() {
   let row = messages.querySelector('[data-intro-message="true"]');
   if (!row) {
-    row = addMessage("bot", t("introMessage"), [], false, { isWelcome: true });
+    row = addMessage("bot", safeText("welcomeMessage"), [], false, { isWelcome: true });
     row.className = "message bot with-avatar welcome-message message-row assistant";
     row.dataset.introMessage = "true";
-    row.dataset.i18nKey = "introMessage";
+    row.dataset.i18nKey = "welcomeMessage";
 
     messages.prepend(row);
   }
 
   row.className = "message bot with-avatar welcome-message message-row assistant";
   row.dataset.introMessage = "true";
-  row.dataset.i18nKey = "introMessage";
+  row.dataset.i18nKey = "welcomeMessage";
 
   let icon = row.querySelector(".bot-mark");
   if (!icon) {
@@ -1443,8 +1470,8 @@ function ensureIntroMessage() {
 
   const paragraph = row.querySelector(".message-content.text-paragraph");
   if (paragraph) {
-    paragraph.dataset.i18nKey = "introMessage";
-    paragraph.textContent = t("introMessage");
+    paragraph.dataset.i18nKey = "welcomeMessage";
+    paragraph.textContent = safeText("welcomeMessage", paragraph.textContent);
   }
   if (iconImage) iconImage.src = loadIconConfig().internalIcon;
   return row;
@@ -1930,7 +1957,7 @@ async function loadStats() {
 $("#loadStats").addEventListener("click", loadStats);
 
 async function wakeServer() {
-  // ensureIntroMessage();
+  ensureIntroMessage();
 }
 initializeLanguage();
 wakeServer();

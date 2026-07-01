@@ -50,10 +50,10 @@
   <button id="chatLauncher" class="chat-launcher" type="button" aria-label="ComPass 챗봇 열기" aria-expanded="false">
     <span class="launcher-compass" aria-hidden="true"><img src="/static/icons/icon.png" alt="" onerror="this.style.display='none'"></span>
     <span class="launcher-label">
-      <strong data-app-name>{{ app_name }}</strong>
+      <strong data-app-name data-i18n="brandName">ComPass</strong>
       <small class="app-subtitle">
-        <span data-app-subtitle-line1>Computer Science X Compass</span>
-        <span data-app-subtitle-line2>· 학생들의 길잡이</span>
+        <span data-app-subtitle-line1 data-i18n="brandSubtitle">Computer Science X Compass</span>
+        <span data-app-subtitle-line2 data-i18n="brandTagline">· 학생들의 길잡이</span>
       </small>
     </span>
   </button>
@@ -63,10 +63,10 @@
       <img class="topbar-logo" src="/static/icons/icon.png" alt="" aria-hidden="true" onerror="this.style.display='none'">
       <div class="brand-title">
         <p class="eyebrow">Korea National Open University</p>
-        <h1 data-app-name>{{ app_name }}</h1>
+        <h1 data-app-name data-i18n="brandName">ComPass</h1>
         <p class="brand-copy app-subtitle">
-          <span data-app-subtitle-line1>Computer Science X Compass</span>
-          <span data-app-subtitle-line2>· 학생들의 길잡이</span>
+          <span data-app-subtitle-line1 data-i18n="brandSubtitle">Computer Science X Compass</span>
+          <span data-app-subtitle-line2 data-i18n="brandTagline">· 학생들의 길잡이</span>
         </p>
       </div>
       <div class="window-actions">
@@ -99,6 +99,10 @@
     <main>
       <section id="panel-chat" class="panel active">
         <div class="chat-layout">
+          <section class="welcome-card" aria-label="ComPass 안내">
+            <strong data-i18n="welcomeTitle">안녕하세요, ComPass입니다.</strong>
+            <p data-i18n="welcomeSubtitle">공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.</p>
+          </section>
           <div id="messages" class="messages" aria-live="polite"></div>
           <div class="suggestions quick-actions">
             <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 교육과정을 알려줘" data-intent="curriculum">교육과정</button>

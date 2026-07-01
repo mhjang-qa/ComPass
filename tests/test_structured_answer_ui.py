@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -148,6 +149,8 @@ def test_english_mode_localizes_card_internal_labels() -> None:
         '"컴퓨터의이해": "Introduction to Computer Science"',
         '"파이썬프로그래밍기초": "Basic Python Programming"',
         '"자료구조": "Data Structures"',
+        '"컴퓨터통신망특론": "Advanced Computer Networks"',
+        '"고급정보과학특론": "Advanced Information Science"',
         '"인공지능": "AI"',
     ):
         assert expected in script
@@ -155,3 +158,34 @@ def test_english_mode_localizes_card_internal_labels() -> None:
     assert "function translateCardText(value)" in script
     assert 'appendField(card, cardText("date"), formatDateOnly(item.date))' in script
     assert 'appendField(card, cardText("period"), formatSchedulePeriod(item))' in script
+
+
+def test_github_pages_static_resources_exist_and_use_relative_paths() -> None:
+    html = Path("index.html").read_text(encoding="utf-8")
+    manifest = json.loads(Path("manifest.json").read_text(encoding="utf-8"))
+
+    for resource in (
+        Path("manifest.json"),
+        Path("static/config.js"),
+        Path("static/icons/icon.png"),
+        Path("static/icons/favicon-32x32.png"),
+        Path("static/icons/favicon-16x16.png"),
+    ):
+        assert resource.exists()
+        assert resource.stat().st_size > 0
+
+    assert 'href="./static/icons/favicon-32x32.png"' in html
+    assert 'href="./static/icons/favicon-16x16.png"' in html
+    assert 'href="./static/icons/icon.png"' in html
+    assert 'href="./manifest.json"' in html
+    assert 'src="./static/config.js"' in html
+    assert 'href="/static/' not in html
+    assert 'href="/manifest.json"' not in html
+
+    assert manifest["start_url"] == "./"
+    assert manifest["scope"] == "./"
+    assert {icon["src"] for icon in manifest["icons"]} == {
+        "./static/icons/icon.png",
+        "./static/icons/favicon-32x32.png",
+        "./static/icons/favicon-16x16.png",
+    }

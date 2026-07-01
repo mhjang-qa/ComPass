@@ -66,7 +66,7 @@ def test_schedule_parser_and_answer_hide_calendar_raw_text() -> None:
     result = answer_question("컴퓨터과학과 학과 일정을 알려줘", index=FakeIndex(hits))
 
     assert result["answer_type"] == "schedule_list"
-    assert result["items"][0]["title"] == "1차 졸업논문계획서 신청"
+    assert result["items"][0]["title"] == "2학기 시작"
     assert all("SUN" not in str(item) for item in result["items"])
     assert result["actions"][-1]["label"] == "학과 일정 바로가기"
     assert result["actions"][-1]["url"] == "https://cs.knou.ac.kr/cs1/4812/subview.do"

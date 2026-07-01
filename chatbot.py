@@ -939,6 +939,7 @@ def build_priority_intent_response(
         )
     if intent == "notice_list":
         hits = retrieve_documents(index, question, "notice_list")
+        hits = _supplement_notice_hits(index, hits)
         items = normalize_results("notice_list", hits, question)
         items.sort(key=lambda item: (item.get("date") or "", item.get("title") or ""), reverse=True)
         if not items:
@@ -962,6 +963,7 @@ def build_priority_intent_response(
         return response
     if intent == "schedule_list":
         hits = retrieve_documents(index, question, "schedule_list")
+        hits = _supplement_schedule_hits(index, hits)
         items = normalize_results("schedule_list", hits, question)
         if not items:
             return build_schedule_unavailable_response(started, question)
@@ -1354,6 +1356,56 @@ def _clean_notice_summary(hit: dict[str, Any], limit: int = 80) -> str:
     return summary if len(summary) <= limit else summary[: limit - 1].rstrip() + "…"
 
 
+def _document_date_value(item: dict[str, Any]) -> str:
+    return str(
+        item.get("event_date")
+        or item.get("start_date")
+        or item.get("published_at")
+        or item.get("date")
+        or item.get("created_at")
+        or item.get("updated_at")
+        or item.get("last_edited_time")
+        or item.get("notion_last_edited_time")
+        or item.get("collected_at")
+        or ""
+    )
+
+
+def _document_date_sort_key(item: dict[str, Any]) -> tuple[date, str]:
+    parsed = parse_schedule_date(_document_date_value(item).replace(".", "-"))
+    return parsed or date.min, item.get("title") or ""
+
+
+def _index_documents(index: SearchIndex) -> list[dict[str, Any]]:
+    if hasattr(index, "documents"):
+        return index.documents()
+    return list(getattr(index, "payload", {}).get("documents") or [])
+
+
+def _supplement_notice_hits(index: SearchIndex, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = {hit.get("source_url") or hit.get("title") for hit in hits}
+    extra = [
+        doc
+        for doc in _index_documents(index)
+        if (doc.get("source_url") or doc.get("title")) not in seen
+        and validate_notice_document(doc)
+    ]
+    extra.sort(key=_document_date_sort_key, reverse=True)
+    return [*hits, *extra]
+
+
+def _supplement_schedule_hits(index: SearchIndex, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = {hit.get("source_url") or hit.get("title") for hit in hits}
+    extra = [
+        doc
+        for doc in _index_documents(index)
+        if (doc.get("source_url") or doc.get("title")) not in seen
+        and validate_schedule_document_hit(doc)
+    ]
+    extra.sort(key=_document_date_sort_key, reverse=True)
+    return [*hits, *extra]
+
+
 def _notice_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen = set()
@@ -1420,8 +1472,8 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             title = re.sub(r"^\s*(?:글번호\s*[:：]?\s*)?\d{1,6}[.)]?\s*", "", hit.get("title") or "").strip()
             item = {
                 "title": title,
-                "start_date": hit.get("published_at") or "",
-                "end_date": hit.get("published_at") or "",
+                "start_date": _document_date_value(hit),
+                "end_date": _document_date_value(hit),
                 "description": _clean_notice_summary(hit) or "학과 일정 관련 공식 안내입니다.",
                 "category": "학과일정",
                 "source_url": hit.get("source_url") or SCHEDULE_URL,
@@ -1434,11 +1486,7 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     seen.add(key)
                     items.append(item)
 
-    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
-
-    # 정렬/필터링 기준: 종료일이 오늘보다 과거이면 지난 일정으로 제외하고,
-    # 진행 중이거나 미래 일정은 시작일이 가까운 순서로 노출한다.
-    upcoming: list[tuple[date, date, dict[str, Any]]] = []
+    ranked: list[tuple[date, date, dict[str, Any]]] = []
     for item in items:
         if not validate_schedule_item(item):
             continue
@@ -1446,15 +1494,12 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not start_date:
             continue
         effective_end = end_date or start_date
-        if effective_end < today - timedelta(days=1):
-            continue
         item["start_date"] = start_date.isoformat()
         item["end_date"] = effective_end.isoformat()
-        sort_start = start_date if start_date >= today else today
-        upcoming.append((sort_start, effective_end, item))
+        ranked.append((start_date, effective_end, item))
     return [
         item
-        for _, _, item in sorted(upcoming, key=lambda row: (row[0], row[1], row[2]["title"]))
+        for _, _, item in sorted(ranked, key=lambda row: (row[0], row[1], row[2]["title"]), reverse=True)
     ]
 
 
@@ -3224,7 +3269,11 @@ def answer_question(
     search_question = contextualize(clean_question, history)
     requested_answer_type = classify_intent(search_question, index)
     hits = retrieve_documents(index, search_question, requested_answer_type)
-    best_score = hits[0]["score"] if hits else 0
+    if requested_answer_type == "notice_list":
+        hits = _supplement_notice_hits(index, hits)
+    elif requested_answer_type == "schedule_list":
+        hits = _supplement_schedule_hits(index, hits)
+    best_score = hits[0].get("score", 100) if hits else 0
     if requested_answer_type == "schedule_list" and not normalize_results("schedule_list", hits, search_question):
         return build_schedule_unavailable_response(started, clean_question)
     if hits and best_score >= config.SEARCH_MIN_SCORE:

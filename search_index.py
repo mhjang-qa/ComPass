@@ -382,6 +382,10 @@ class SearchIndex:
         with self._lock:
             return list(self.payload.get("faculty_catalog") or [])
 
+    def documents(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self.payload.get("documents") or [])
+
     def detect_faculty(self, query: str) -> dict[str, Any] | None:
         compact = re.sub(r"\s+", "", query or "")
         compact_without_title = re.sub(r"(교수님|교수|선생님)", "", compact)

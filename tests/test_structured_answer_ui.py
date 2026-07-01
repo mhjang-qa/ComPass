@@ -80,6 +80,9 @@ def test_welcome_message_uses_bot_bubble_and_language_popup_is_disabled() -> Non
     assert 'bubble?.classList.add("message-bubble", "assistant-bubble")' in script
     assert ".welcome-message .assistant-bubble" in style
     assert ".welcome-card" in style
+    assert "display: flex;\n  flex-direction: column;" in style
+    assert "flex: 0 0 auto" in style
+    assert ".message.bot.with-avatar.welcome-message .bubble" in style
     assert 'data-i18n="brandName"' in html
     assert 'data-i18n="brandSubtitle"' in html
     assert 'data-i18n="brandTagline"' in html
@@ -151,13 +154,53 @@ def test_english_mode_localizes_card_internal_labels() -> None:
         '"자료구조": "Data Structures"',
         '"컴퓨터통신망특론": "Advanced Computer Networks"',
         '"고급정보과학특론": "Advanced Information Science"',
+        '"컴퓨터과학개론": "Introduction to Computer Science"',
+        '"머신러닝특론": "Advanced Machine Learning"',
+        '"알고리즘특론": "Advanced Algorithms"',
         '"인공지능": "AI"',
     ):
         assert expected in script
     assert "function cardText(key)" in script
     assert "function translateCardText(value)" in script
+    assert "const COURSE_TRANSLATIONS_EN = {" in script
+    assert 'description: "Foundational course for computer science majors"' in script
+    assert "function displayCourseDescription(item = {})" in script
+    assert 'return containsKorean(description) ? "" : description' in script
+    assert "function displayFacultyCourseName(name)" in script
+    assert 'console.warn("[i18n] Missing faculty course translation", text)' in script
+    assert 'View All Faculty (${totalCount})' in script
     assert 'appendField(card, cardText("date"), formatDateOnly(item.date))' in script
     assert 'appendField(card, cardText("period"), formatSchedulePeriod(item))' in script
+
+
+def test_cold_start_index_gate_and_retry_overlay_are_present() -> None:
+    script = Path("static/app.js").read_text(encoding="utf-8")
+    style = Path("static/style.css").read_text(encoding="utf-8")
+
+    for expected in (
+        "let startupGateActive = true",
+        "let pendingChatRequest = null",
+        "function fetchWithTimeout",
+        "function waitForServerReady",
+        "function startServerRecovery",
+        "function retryPendingChatRequest",
+        'jsonFetch("/api/index/status", { cache: "no-store", timeoutMs: SERVER_WAKE_TIMEOUT_MS })',
+        'status === "index_loading"',
+        'status === "server_waking"',
+        "skipUserBubble: true",
+        'indexPreparingTitle: "Preparing ComPass."',
+        'serverPreparingTitle: "Preparing ComPass again."',
+    ):
+        assert expected in script
+
+    for expected in (
+        ".app-blur",
+        ".coldstart-overlay",
+        ".coldstart-modal",
+        ".coldstart-logo-fallback",
+        "@keyframes compass-spin",
+    ):
+        assert expected in style
 
 
 def test_github_pages_static_resources_exist_and_use_relative_paths() -> None:

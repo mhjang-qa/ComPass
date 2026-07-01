@@ -20,6 +20,12 @@ const mobilePointer = window.matchMedia("(pointer: coarse)");
 const pendingRequests = new Map();
 const pendingByQuestion = new Map();
 let isChatPending = false;
+let indexReady = false;
+let startupGateActive = true;
+let coldStartActive = false;
+let coldStartFailed = false;
+let pendingChatRequest = null;
+let serverRecoveryPolling = false;
 const LANGUAGE_KEY = "compass_language";
 const DEFAULT_LANG = "ko";
 let currentLanguage = localStorage.getItem(LANGUAGE_KEY) || DEFAULT_LANG;
@@ -29,6 +35,9 @@ const QUICK_QUESTIONS_KEY = "COMPASS_QUICK_QUESTIONS";
 const ICON_CONFIG_KEY = "COMPASS_ICON_CONFIG";
 const INDEX_LOADING_MAX_RETRIES = 3;
 const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
+const SERVER_WAKE_TIMEOUT_MS = 10000;
+const SERVER_READY_MAX_ATTEMPTS = 40;
+const SERVER_READY_INTERVAL_MS = 2000;
 const DEFAULT_QUICK_QUESTIONS = [
   { id: 1, label: "교육과정", message: "컴퓨터과학과 교육과정을 알려줘", intent: "curriculum", enabled: true, sortOrder: 1 },
   { id: 2, label: "교수진", message: "컴퓨터과학과 교수진을 알려줘", intent: "faculty", enabled: true, sortOrder: 2 },
@@ -54,6 +63,18 @@ const I18N = {
     welcomeMessage: "안녕하세요, ComPass입니다.\n공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.",
     placeholder: "궁금한 컴퓨터과학과 정보를 질문해보세요",
     pending: "답변을 준비하고 있습니다...",
+    indexPreparingPlaceholder: "공식 정보 검색 인덱스를 준비 중입니다...",
+    serverPreparingPlaceholder: "ComPass 서버를 다시 준비 중입니다...",
+    indexPreparingTitle: "ComPass를 준비 중입니다.",
+    indexPreparingLine1: "공식 정보 검색 인덱스를 불러오는 중입니다.",
+    indexPreparingLine2: "잠시만 기다려 주세요.",
+    serverPreparingTitle: "ComPass를 다시 준비 중입니다.",
+    serverPreparingLine1: "서버가 절전 상태에서 깨어나는 중입니다.",
+    serverPreparingLine2: "잠시만 기다려 주세요.",
+    serverPreparingLine3: "준비가 완료되면 방금 질문을 자동으로 다시 전송합니다.",
+    serverDelayedTitle: "ComPass 서버 준비가 지연되고 있습니다.",
+    serverDelayedLine1: "잠시 후 다시 시도해 주세요.",
+    close: "닫기",
     waiting: "공식 데이터를 검색하고 있습니다",
     waitingSub: "잠시만 기다려주세요.",
     send: "전송",
@@ -64,6 +85,7 @@ const I18N = {
     tab_admin: "관리자 페이지",
     incomplete: "답변이 완전히 생성되지 않았습니다. 다시 시도해 주세요.",
     retry: "답변 다시 생성",
+    retryServer: "다시 시도",
     confirmNo: "검색 종료",
     buttons: {
       curriculumMore: "교육과정 더보기",
@@ -117,6 +139,18 @@ const I18N = {
     welcomeMessage: "Hello, this is ComPass.\nI summarize official information in a way students can easily understand.",
     placeholder: "Ask about CS department info",
     pending: "Preparing the answer...",
+    indexPreparingPlaceholder: "Preparing official search index...",
+    serverPreparingPlaceholder: "Preparing ComPass server again...",
+    indexPreparingTitle: "Preparing ComPass.",
+    indexPreparingLine1: "Loading the official search index.",
+    indexPreparingLine2: "Please wait a moment.",
+    serverPreparingTitle: "Preparing ComPass again.",
+    serverPreparingLine1: "The server is waking up from sleep mode.",
+    serverPreparingLine2: "Please wait a moment.",
+    serverPreparingLine3: "Your last question will be sent again automatically.",
+    serverDelayedTitle: "ComPass is taking longer than expected.",
+    serverDelayedLine1: "Please try again in a moment.",
+    close: "Close",
     waiting: "Searching official data",
     waitingSub: "Please wait a moment.",
     send: "Send",
@@ -127,6 +161,7 @@ const I18N = {
     tab_admin: "Admin",
     incomplete: "The answer was not completed. Please try again.",
     retry: "Regenerate answer",
+    retryServer: "Retry",
     confirmNo: "End search",
     buttons: {
       curriculumMore: "View Curriculum",
@@ -194,6 +229,56 @@ const COURSE_LABEL_TRANSLATIONS = {
     "클라우드컴퓨팅": "Cloud Computing",
   },
 };
+const COURSE_TRANSLATIONS_EN = {
+  "컴퓨터의이해": {
+    name: "Introduction to Computer Science",
+    description: "Introductory course in computer science",
+  },
+  "파이썬프로그래밍기초": {
+    name: "Basic Python Programming",
+    description: "Basic programming course",
+  },
+  "유비쿼터스컴퓨팅개론": {
+    name: "Introduction to Ubiquitous Computing",
+    description: "Foundational course for computer science majors",
+  },
+  "Java프로그래밍": {
+    name: "Java Programming",
+    description: "Object-oriented programming course",
+  },
+  "HTML5웹프로그래밍": {
+    name: "HTML5 Web Programming",
+    description: "Web application development course",
+  },
+  "이산수학": {
+    name: "Discrete Mathematics",
+    description: "Foundational mathematics for computer science",
+  },
+  "자료구조": {
+    name: "Data Structures",
+    description: "Data organization and processing",
+  },
+  "운영체제": {
+    name: "Operating Systems",
+    description: "Operating system principles and architecture",
+  },
+  "데이터베이스시스템": {
+    name: "Database Systems",
+    description: "Database design and management",
+  },
+  "알고리즘": {
+    name: "Algorithms",
+    description: "Algorithm design and analysis",
+  },
+  "인공지능": {
+    name: "Artificial Intelligence",
+    description: "AI theories and applications",
+  },
+  "컴퓨터그래픽스": {
+    name: "Computer Graphics",
+    description: "Computer graphics fundamentals",
+  },
+};
 const CARD_TEXT_TRANSLATIONS = {
   en: {
     "전공": "Major",
@@ -210,6 +295,9 @@ const CARD_TEXT_TRANSLATIONS = {
     "조교수": "Assistant Professor",
     "컴퓨터통신망특론": "Advanced Computer Networks",
     "고급정보과학특론": "Advanced Information Science",
+    "컴퓨터과학개론": "Introduction to Computer Science",
+    "머신러닝특론": "Advanced Machine Learning",
+    "알고리즘특론": "Advanced Algorithms",
     "정보통신망": "Information and Communication Networks",
     "컴퓨터의이해": "Introduction to Computer Science",
     "이산수학": "Discrete Mathematics",
@@ -261,23 +349,32 @@ function newRequestId() {
 
 function setChatPending(pending) {
   isChatPending = Boolean(pending);
-  appShell.classList.toggle("is-pending", isChatPending);
+  const blocked = isChatPending || !indexReady || startupGateActive || coldStartActive;
+  appShell.classList.toggle("is-pending", blocked);
   const input = $("#question");
   const sendButton = $("#sendButton");
   if (input) {
-    input.disabled = isChatPending;
-    input.placeholder = isChatPending ? PENDING_CHAT_PLACEHOLDER : DEFAULT_CHAT_PLACEHOLDER;
+    input.disabled = blocked;
+    input.placeholder = coldStartActive
+      ? t("serverPreparingPlaceholder")
+      : (!indexReady || startupGateActive)
+        ? t("indexPreparingPlaceholder")
+        : isChatPending
+          ? PENDING_CHAT_PLACEHOLDER
+          : DEFAULT_CHAT_PLACEHOLDER;
   }
   if (sendButton) {
-    sendButton.disabled = isChatPending;
+    sendButton.disabled = blocked;
     sendButton.textContent = isChatPending ? t("pendingButton") : t("send");
   }
   $$("[data-question]").forEach((button) => {
-    button.disabled = isChatPending;
+    button.disabled = blocked;
   });
   $$(".confirm-actions button").forEach((button) => {
-    button.disabled = isChatPending;
+    button.disabled = blocked;
   });
+  const languageSelect = $("#languageSelect");
+  if (languageSelect) languageSelect.disabled = coldStartActive;
 }
 
 function t(key) {
@@ -303,6 +400,40 @@ function translateCardText(value) {
   const text = String(value || "");
   if ((currentLanguage || "ko") !== "en" || !text) return text;
   return CARD_TEXT_TRANSLATIONS.en[text] || COURSE_LABEL_TRANSLATIONS.en[text] || text;
+}
+
+function containsKorean(value) {
+  return /[가-힣]/.test(String(value || ""));
+}
+
+function courseTranslation(item = {}) {
+  const name = String(item.course_name || item.title || item.name || "").trim();
+  return COURSE_TRANSLATIONS_EN[name] || null;
+}
+
+function displayCourseName(item = {}) {
+  const name = String(item.course_name || item.title || item.name || "").trim();
+  if ((currentLanguage || "ko") !== "en") return name;
+  return courseTranslation(item)?.name || COURSE_LABEL_TRANSLATIONS.en[name] || CARD_TEXT_TRANSLATIONS.en[name] || name;
+}
+
+function displayCourseDescription(item = {}) {
+  const description = item.feature_summary || item.feature || item.description || item.overview || "";
+  if ((currentLanguage || "ko") !== "en") return description;
+  const translated = courseTranslation(item)?.description;
+  if (translated) return translated;
+  return containsKorean(description) ? "" : description;
+}
+
+function displayFacultyCourseName(name) {
+  const text = String(name || "").trim();
+  if (!text) return "";
+  if ((currentLanguage || "ko") !== "en") return text;
+  const translated = CARD_TEXT_TRANSLATIONS.en[text] || COURSE_LABEL_TRANSLATIONS.en[text] || COURSE_TRANSLATIONS_EN[text]?.name || "";
+  if (!translated && containsKorean(text)) {
+    console.warn("[i18n] Missing faculty course translation", text);
+  }
+  return translated || (containsKorean(text) ? "" : text);
 }
 
 function translateButtonLabel(label = "") {
@@ -384,6 +515,168 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function fetchWithTimeout(url, options = {}, timeoutMs = SERVER_WAKE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const externalSignal = options.signal;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort(externalSignal.reason);
+    externalSignal.addEventListener("abort", () => controller.abort(externalSignal.reason), { once: true });
+  }
+  return fetch(url, { ...options, signal: controller.signal })
+    .catch((error) => {
+      if (controller.signal.aborted && !externalSignal?.aborted) {
+        const timeoutError = new Error("Request timed out while the server is preparing.");
+        timeoutError.kind = "FETCH_TIMEOUT";
+        throw timeoutError;
+      }
+      throw error;
+    })
+    .finally(() => window.clearTimeout(timeout));
+}
+
+function isIndexReadyPayload(data = {}) {
+  return data.ready === true && Number(data.indexed || data.documents || 0) > 0;
+}
+
+function isColdStartCondition(errorOrResult = {}) {
+  const status = errorOrResult.status;
+  return (
+    errorOrResult.kind === "FETCH_TIMEOUT"
+    || errorOrResult.kind === "BACKEND_CONNECTION"
+    || [502, 503, 504, 522, 523, 524].includes(Number(errorOrResult.statusCode || errorOrResult.status))
+    || status === "index_loading"
+    || status === "server_waking"
+  );
+}
+
+function ensurePreparationOverlay() {
+  let overlay = $("#coldstartOverlay");
+  if (overlay) return overlay;
+  overlay = document.createElement("div");
+  overlay.id = "coldstartOverlay";
+  overlay.className = "coldstart-overlay";
+  overlay.hidden = true;
+  overlay.innerHTML = `
+    <div class="coldstart-modal" role="status" aria-live="polite">
+      <div class="coldstart-logo-fallback">ComPass</div>
+      <h2 data-coldstart-title></h2>
+      <p data-coldstart-line1></p>
+      <p data-coldstart-line2></p>
+      <p data-coldstart-line3></p>
+      <div class="coldstart-spinner" aria-hidden="true"></div>
+      <div class="coldstart-actions" hidden>
+        <button type="button" data-coldstart-retry></button>
+        <button type="button" data-coldstart-close></button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector("[data-coldstart-retry]").addEventListener("click", () => {
+    coldStartFailed = false;
+    startServerRecovery();
+  });
+  overlay.querySelector("[data-coldstart-close]").addEventListener("click", () => {
+    overlay.hidden = true;
+    coldStartActive = false;
+    startupGateActive = !indexReady;
+    coldStartFailed = false;
+    appShell.classList.remove("app-blur");
+    setChatPending(false);
+  });
+  return overlay;
+}
+
+function showPreparationOverlay(mode = "startup", failed = false) {
+  const overlay = ensurePreparationOverlay();
+  const isServer = mode === "server";
+  startupGateActive = !isServer && !indexReady;
+  coldStartActive = isServer;
+  coldStartFailed = failed;
+  const titleKey = failed ? "serverDelayedTitle" : isServer ? "serverPreparingTitle" : "indexPreparingTitle";
+  const line1Key = failed ? "serverDelayedLine1" : isServer ? "serverPreparingLine1" : "indexPreparingLine1";
+  const line2Key = isServer && !failed ? "serverPreparingLine2" : !isServer && !failed ? "indexPreparingLine2" : "";
+  const line3Key = isServer && !failed ? "serverPreparingLine3" : "";
+  overlay.querySelector("[data-coldstart-title]").textContent = t(titleKey);
+  overlay.querySelector("[data-coldstart-line1]").textContent = t(line1Key);
+  overlay.querySelector("[data-coldstart-line2]").textContent = line2Key ? t(line2Key) : "";
+  overlay.querySelector("[data-coldstart-line3]").textContent = line3Key ? t(line3Key) : "";
+  overlay.querySelector(".coldstart-spinner").hidden = failed;
+  overlay.querySelector(".coldstart-actions").hidden = !failed;
+  overlay.querySelector("[data-coldstart-retry]").textContent = t("retryServer");
+  overlay.querySelector("[data-coldstart-close]").textContent = t("close");
+  overlay.hidden = false;
+  appShell.classList.add("app-blur");
+  setChatPending(isChatPending);
+}
+
+function hidePreparationOverlay() {
+  const overlay = ensurePreparationOverlay();
+  overlay.hidden = true;
+  startupGateActive = false;
+  coldStartActive = false;
+  coldStartFailed = false;
+  appShell.classList.remove("app-blur");
+  setChatPending(false);
+}
+
+async function fetchIndexStatus() {
+  return jsonFetch("/api/index/status", { cache: "no-store", timeoutMs: SERVER_WAKE_TIMEOUT_MS });
+}
+
+async function waitForServerReady(mode = "startup") {
+  showPreparationOverlay(mode);
+  for (let attempt = 0; attempt < SERVER_READY_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await jsonFetch("/api/health", { cache: "no-store", timeoutMs: SERVER_WAKE_TIMEOUT_MS });
+      const status = await fetchIndexStatus();
+      if (isIndexReadyPayload(status)) {
+        indexReady = true;
+        hidePreparationOverlay();
+        return true;
+      }
+    } catch (error) {
+      // Keep the preparation overlay visible while Render wakes up.
+    }
+    await delay(SERVER_READY_INTERVAL_MS);
+  }
+  showPreparationOverlay("server", true);
+  return false;
+}
+
+function rememberPendingChatRequest(question, options = {}) {
+  pendingChatRequest = {
+    question,
+    options: {
+      allowLlm: Boolean(options.allowLlm),
+      llmType: options.llmType || "",
+      context: options.context || undefined,
+      skipUserBubble: true,
+    },
+    lang: currentLanguage,
+    createdAt: Date.now(),
+  };
+}
+
+async function retryPendingChatRequest() {
+  if (!pendingChatRequest) return;
+  const request = pendingChatRequest;
+  pendingChatRequest = null;
+  if (request.lang && request.lang !== currentLanguage) setLanguage(request.lang);
+  await sendQuestion(request.question, request.options);
+}
+
+async function startServerRecovery() {
+  if (serverRecoveryPolling) return;
+  serverRecoveryPolling = true;
+  try {
+    const ready = await waitForServerReady("server");
+    if (ready) await retryPendingChatRequest();
+  } finally {
+    serverRecoveryPolling = false;
+  }
+}
+
 function setLanguage(language) {
   currentLanguage = language === "en" ? "en" : "ko";
   localStorage.setItem(LANGUAGE_KEY, currentLanguage);
@@ -399,7 +692,16 @@ function setLanguage(language) {
   updateI18nKeyedText();
   updateRenderedButtonLabels();
   const input = $("#question");
-  if (input) input.placeholder = isChatPending ? PENDING_CHAT_PLACEHOLDER : DEFAULT_CHAT_PLACEHOLDER;
+  if (input) input.placeholder = coldStartActive
+    ? t("serverPreparingPlaceholder")
+    : (!indexReady || startupGateActive)
+      ? t("indexPreparingPlaceholder")
+      : isChatPending
+        ? PENDING_CHAT_PLACEHOLDER
+        : DEFAULT_CHAT_PLACEHOLDER;
+  if (!ensurePreparationOverlay().hidden) {
+    showPreparationOverlay(coldStartActive ? "server" : "startup", coldStartFailed);
+  }
   renderQuickQuestions();
 }
 
@@ -550,10 +852,14 @@ async function enterAdminTab(tabName) {
 }
 
 async function jsonFetch(url, options = {}) {
+  const { timeoutMs, ...fetchOptions } = options;
   let response;
   try {
-    response = await fetch(url, options);
+    response = timeoutMs
+      ? await fetchWithTimeout(url, fetchOptions, timeoutMs)
+      : await fetch(url, fetchOptions);
   } catch (cause) {
+    if (cause?.kind === "FETCH_TIMEOUT") throw cause;
     if (cause?.name === "AbortError") throw cause;
     const error = new Error("백엔드 서버에 연결할 수 없습니다. Render가 부팅 중인지 확인해 주세요.");
     error.kind = "BACKEND_CONNECTION";
@@ -565,6 +871,7 @@ async function jsonFetch(url, options = {}) {
     const error = new Error(data.detail || `백엔드 요청 실패 (${response.status})`);
     error.kind = response.status >= 500 ? "BACKEND_SERVER" : "BACKEND_REQUEST";
     error.status = response.status;
+    error.statusCode = response.status;
     throw error;
   }
   return data;
@@ -852,10 +1159,12 @@ function appendSubjectList(container, item) {
   const list = document.createElement("ul");
   list.className = "subject-list";
   groups.forEach(([level, subjects]) => {
+    const visibleSubjects = subjects.slice(0, 3).map(displayFacultyCourseName).filter(Boolean);
+    if (!visibleSubjects.length) return;
     const li = document.createElement("li");
     const strong = document.createElement("strong");
     strong.textContent = level;
-    const summary = subjects.slice(0, 3).map(translateCardText).join(", ");
+    const summary = visibleSubjects.join(", ");
     const suffix = subjects.length > 3 ? (currentLanguage === "en" ? ", etc." : " 등") : "";
     li.append(strong, document.createTextNode(` ${summary}${suffix}`));
     list.appendChild(li);
@@ -864,13 +1173,16 @@ function appendSubjectList(container, item) {
 }
 
 function appendSimpleList(container, labelText, values = []) {
-  if (!values.length) return;
+  const displayValues = values
+    .map((value) => translateCardText(value))
+    .filter((value) => currentLanguage !== "en" || !containsKorean(value));
+  if (!displayValues.length) return;
   const label = document.createElement("strong");
   label.className = "subjects-label";
   label.textContent = labelText;
   const list = document.createElement("ul");
   list.className = "subject-list";
-  values.slice(0, 5).forEach((value) => {
+  displayValues.slice(0, 5).forEach((value) => {
     const item = document.createElement("li");
     item.textContent = value;
     list.appendChild(item);
@@ -929,9 +1241,9 @@ function appendCourseMiniTable(container, items = []) {
   const tbody = document.createElement("tbody");
   items.slice(0, 3).forEach((item) => {
     const tr = document.createElement("tr");
-    [item.course_name || item.title || "", item.category || "", item.feature_summary || item.feature || ""].forEach((value) => {
+    [displayCourseName(item), translateCardText(item.category || ""), displayCourseDescription(item)].forEach((value) => {
       const td = document.createElement("td");
-      td.textContent = translateCardText(value);
+      td.textContent = value;
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -952,7 +1264,9 @@ function appendExpandButton(container, cards, totalCount, answerType, messageRow
   button.className = "answer-expand";
   const action = (payload.actions || []).find((item) => item.type === "expand");
   const expandedLabel = action?.label
-    || (answerType === "faculty" ? `전체 교수진 보기 (${totalCount}명)` : `전체 보기 (${totalCount}개)`);
+    || (answerType === "faculty"
+      ? (currentLanguage === "en" ? `View All Faculty (${totalCount})` : `전체 교수진 보기 (${totalCount}명)`)
+      : (currentLanguage === "en" ? `View All (${totalCount})` : `전체 보기 (${totalCount}개)`));
   button.textContent = expandedLabel;
   button.setAttribute("aria-expanded", "false");
   button.addEventListener("click", () => {
@@ -1098,7 +1412,9 @@ function renderGenericItems(bubble, payload, messageRow) {
     const card = document.createElement("article");
     card.className = "answer-card";
     const heading = document.createElement("h3");
-    heading.textContent = item.title || item.label || "공식 정보";
+    heading.textContent = payload.answer_type === "course_table"
+      ? displayCourseName(item)
+      : translateCardText(item.title || item.label || "공식 정보");
     card.appendChild(heading);
     if (item.label && item.value) {
       const value = document.createElement("p");
@@ -1108,7 +1424,7 @@ function renderGenericItems(bubble, payload, messageRow) {
     } else if (payload.answer_type === "course_table") {
       appendField(card, cardText("gradeSemester"), [item.grade, item.semester].filter(Boolean).join(" "));
       appendField(card, cardText("category"), item.category);
-      appendField(card, cardText("description"), item.feature);
+      appendField(card, cardText("description"), displayCourseDescription(item));
     } else if (payload.answer_type === "course_recommendation") {
       appendField(card, "추천유형", item.group_name);
       appendField(card, "추천 이유", item.reason);
@@ -1544,9 +1860,15 @@ async function sendQuestion(raw, options = {}) {
   const allowLlm = Boolean(options.allowLlm);
   const llmType = options.llmType || "";
   const context = options.context || undefined;
+  const skipUserBubble = Boolean(options.skipUserBubble);
   const question = raw.trim();
   if (!question) return;
   if (isChatPending) return;
+  if (!indexReady && !coldStartActive) {
+    rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
+    startServerRecovery();
+    return;
+  }
   const requestId = newRequestId();
   const duplicateController = pendingByQuestion.get(question);
   if (duplicateController && !allowLlm) {
@@ -1555,7 +1877,7 @@ async function sendQuestion(raw, options = {}) {
   const controller = new AbortController();
   pendingByQuestion.set(question, controller);
   pendingRequests.set(requestId, { question, controller });
-  if (!allowLlm) {
+  if (!allowLlm && !skipUserBubble) {
     addMessage("user", question);
   }
   setChatPending(true);
@@ -1568,6 +1890,7 @@ async function sendQuestion(raw, options = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
+        timeoutMs: SERVER_WAKE_TIMEOUT_MS,
         body: JSON.stringify({
           question,
           allow_llm: allowLlm,
@@ -1578,6 +1901,12 @@ async function sendQuestion(raw, options = {}) {
           context,
         }),
       });
+      if (isColdStartCondition(result)) {
+        rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
+        waiting.remove();
+        startServerRecovery();
+        return;
+      }
       if (result.status !== "index_loading" || retryCount >= INDEX_LOADING_MAX_RETRIES) break;
       retryCount += 1;
       await delay(Number(result.retry_after_ms || INDEX_LOADING_DEFAULT_DELAY_MS));
@@ -1601,6 +1930,11 @@ async function sendQuestion(raw, options = {}) {
       return;
     }
     waiting.remove();
+    if (isColdStartCondition(error)) {
+      rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
+      startServerRecovery();
+      return;
+    }
     const prefix =
       error.kind === "BACKEND_CONNECTION"
         ? "백엔드 연결 실패"
@@ -1620,7 +1954,7 @@ async function sendQuestion(raw, options = {}) {
 
 $("#chatForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  if (isChatPending) return;
+  if (isChatPending || !indexReady || startupGateActive || coldStartActive) return;
   const value = $("#question").value;
   $("#question").value = "";
   sendQuestion(value);
@@ -1642,7 +1976,7 @@ $("#question").addEventListener("focus", () => {
 $(".quick-actions")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-question]");
   if (!button) return;
-  if (isChatPending) return;
+  if (isChatPending || !indexReady || startupGateActive || coldStartActive) return;
   sendQuestion(button.dataset.question, {
     context: { quick_intent: button.dataset.intent || "" },
   });
@@ -1974,11 +2308,18 @@ $("#loadStats").addEventListener("click", loadStats);
 async function wakeServer() {
   ensureIntroMessage();
 }
-initializeLanguage();
-wakeServer();
-applyAppConstants();
-updateI18nKeyedText();
-renderQuickQuestions();
-applyIconConfig();
-updateAdminUi();
-updateAppHeight();
+
+async function initializeApp() {
+  initializeLanguage();
+  ensureIntroMessage();
+  applyAppConstants();
+  updateI18nKeyedText();
+  renderQuickQuestions();
+  applyIconConfig();
+  updateAdminUi();
+  updateAppHeight();
+  setChatPending(false);
+  await waitForServerReady("startup");
+}
+
+initializeApp();

@@ -915,20 +915,28 @@ def reclassify_data_tiers(x_admin_password: str | None = Header(default=None)):
 
 @app.get("/api/index/status")
 def index_status(x_admin_password: str | None = Header(default=None)):
-    require_admin(x_admin_password)
     status = sync_index_runtime_state("index_status")
-    return {
+    indexed = int(status.get("documents") or 0)
+    public_status = {
         **status,
+        "ready": bool(runtime_state["index_ready"] and indexed > 0),
+        "indexed": indexed,
         "state": runtime_state["index_state"],
         "index_loading": runtime_state["index_loading"],
         "index_ready": runtime_state["index_ready"],
         "index_last_error": runtime_state["index_last_error"],
         "retry_after_ms": runtime_state["retry_after_ms"],
-        "job": job_state["index"],
-        "runtime": runtime_state,
         "auto_load_on_start": config.AUTO_LOAD_INDEX_ON_START,
         "auto_rebuild_after_crawl": config.AUTO_REBUILD_INDEX_AFTER_CRAWL,
     }
+    if x_admin_password:
+        require_admin(x_admin_password)
+        return {
+            **public_status,
+            "job": job_state["index"],
+            "runtime": runtime_state,
+        }
+    return public_status
 
 
 def start_index_load_background(reason: str) -> None:

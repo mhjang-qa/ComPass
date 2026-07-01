@@ -134,3 +134,26 @@ def test_chat_returns_retryable_loading_while_index_lock_is_busy(tmp_path: Path,
     assert response["status"] == "index_loading"
     assert response["mode"] == "INDEX_LOADING"
     assert response["retry_after_ms"] == 1500
+
+
+def test_public_index_status_exposes_ready_without_admin_details(tmp_path: Path, monkeypatch) -> None:
+    search_index = SearchIndex(tmp_path / "index.json")
+    search_index.rebuild(FakeNotionClient().knowledge_documents())
+    monkeypatch.setattr(main, "index", search_index)
+    main.runtime_state.update(
+        loading=False,
+        index_loading=False,
+        index_ready=True,
+        index_state="ready",
+        index_document_count=1,
+        index_last_error="",
+        retry_after_ms=1500,
+    )
+
+    response = main.index_status(None)
+
+    assert response["ready"] is True
+    assert response["indexed"] == 1
+    assert response["state"] == "ready"
+    assert "runtime" not in response
+    assert "job" not in response

@@ -23,6 +23,8 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("파이썬프로그래밍기초 수업 난이도는?") == "course_difficulty"
     assert classify_intent("운영체제는 어려워?") == "course_difficulty"
     assert classify_intent("컴퓨터구조는 뭐 배우는 과목이야?") == "course_detail"
+    assert classify_intent("데이터베이스 시험범위는?") == "exam_scope"
+    assert classify_intent("운영체제 기말 범위") == "exam_scope"
 
 
 def test_nlu_router_detects_professor_detail_before_search() -> None:
@@ -47,6 +49,7 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "학과에서 새로 올라온 공지 있어?": "recent_notice",
         "학과 일정": "schedule",
         "시험 일정": "schedule",
+        "인공지능 시험 어디까지": "exam_scope",
         "졸업하려면 몇 학점": "graduation",
         "편입 안내": "course_roadmap",
         "장학금 안내": "scholarship",

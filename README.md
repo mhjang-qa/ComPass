@@ -53,7 +53,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 - Intent별 Search Scope를 강제합니다. 예: `faculty_list/faculty_detail → faculty`, `course_detail/course_difficulty/course_grade_strategy/course_order → course_detail+curriculum`, `schedule → schedule`, `notice → notice`, `graduation → graduation+curated_knowledge`.
 - 교육과정 URL은 잘못된 고정 URL을 쓰지 않고 Notion/검색 인덱스의 원본 URL, 교육과정 유사 제목 문서 URL, 학과 홈 URL 순서로 결정합니다. 유효하지 않은 링크는 `https://cs.knou.ac.kr/sites/cs1/index.do`로 fallback합니다.
 - 검색 로그는 `[SEARCH_ROUTE] Intent=... Search Scope=... Candidate Count=... Selected=... Score=...` 형식으로 남깁니다. 예: `Intent=faculty`, `Search Scope=['https://cs.knou.ac.kr/cs1/4786/subview.do']`, `Selected=교수진 소개`, `Score=98`.
-- 졸업학점·추천 자격증·시험범위는 `의도/과목/시험종류/유효기준` 구조화 지식으로 정확 매칭
+- 졸업학점·추천 자격증은 구조화 지식으로 정확 매칭하고, 시험범위는 공식 공지·과목 상세·강의계획서/평가정보에 근거가 있을 때만 답변합니다.
 - 명시적 현재 질문을 이전 대화보다 우선하여 후속 질문 문맥 충돌 방지
 - 유사어 확장, 키워드 빈도, 제목·카테고리 가중치, 부분 일치 기반 로컬 검색
 - Notion 공식 데이터 검색 결과 우선 답변
@@ -116,7 +116,7 @@ ComPass v2.0은 단순 검색보다 Intent Engine을 먼저 실행합니다.
 1. Exact Match: 버튼/추천 질문과 고빈도 문장을 우선 매칭합니다.
 2. Intent Match: `data/intents.json`의 intent별 키워드를 검사합니다.
 3. Synonym Match: `synonyms.py`의 유사어를 공식 용어로 정규화합니다.
-4. Curated Knowledge: 졸업·시험범위 등 검증 지식을 확인합니다.
+4. Curated Knowledge: 졸업·추천 자격증 등 검증 지식을 확인합니다. 시험범위는 학기별 변동 가능성이 있어 근거 없는 단답 지식을 사용하지 않습니다.
 5. SearchIndex: intent별 Search Scope 안에서만 RAG 검색합니다.
 6. LLM Fallback: 공식 근거가 부족하고 사용자가 동의한 경우에만 제한적으로 사용합니다.
 
@@ -618,7 +618,7 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 - `allow_llm`
 - `requires_llm_confirmation`
 
-시험범위처럼 변경 가능한 정보는 학기마다 `answer`, `validity`, `updated_at`을 검토해야 합니다. 다른 과목 질문에는 데이터베이스 시험범위를 재사용하지 않습니다.
+시험범위처럼 변경 가능한 정보는 학기마다 공식 공지, 과목 상세 페이지, 강의계획서 또는 평가정보에 명확한 근거가 있을 때만 안내합니다. 근거가 없으면 장 번호나 범위를 추정하지 않고 최신 공지와 과목 상세 확인 경로를 제공합니다.
 
 > 죄송합니다. 해당 내용은 한국방송통신대학교 컴퓨터과학과 공식 데이터에서 확인되지 않습니다. 컴퓨터과학과 홈페이지에 등록된 공식 정보 기준으로만 안내할 수 있습니다.
 

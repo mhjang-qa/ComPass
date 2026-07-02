@@ -41,6 +41,10 @@ KNOWN_COURSE_DETAIL_URLS = {
     "인공지능": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=3&sbjtNo=34524&deptCd=34",
     "파이썬프로그래밍기초": "https://cs.knou.ac.kr/learningInformation/cs1/view.do?year=2026&seme=1&shgr=1&sbjtNo=34174&deptCd=34",
 }
+COURSE_NAME_ALIASES = {
+    "데이터베이스": "데이터베이스시스템",
+    "db": "데이터베이스시스템",
+}
 KNOWN_COURSE_NAMES_EXTRA = {"데이터정보처리입문"}
 FACULTY_HOMEPAGE_FALLBACKS = {
     "손진곤": "https://professor.knou.ac.kr/jgshon/index.do",
@@ -54,6 +58,9 @@ SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게�
 SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
 SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
+EXAM_SCOPE_RE = re.compile(r"시험\s*범위|시험범위|중간(?:고사)?\s*범위|기말(?:고사)?\s*범위|출석수업\s*시험\s*범위|과제\s*범위|시험\s*(어디까지|몇\s*장)", re.IGNORECASE)
+EXAM_SCOPE_EVIDENCE_RE = re.compile(r"시험\s*범위|시험범위|중간(?:고사)?\s*범위|기말(?:고사)?\s*범위|출석수업\s*시험\s*범위|과제\s*범위|강의계획서|평가정보", re.IGNORECASE)
+UNSUPPORTED_EXAM_SCOPE_RE = re.compile(r"13\s*~\s*15|13장|14장|15장|compass-database-exam-range", re.IGNORECASE)
 ROUTER_TO_INTERNAL_INTENT = {
     "recent_notice": "notice_list",
     "professor_list": "faculty",
@@ -71,7 +78,7 @@ ROUTER_TO_INTERNAL_INTENT = {
     "schedule": "schedule_list",
     "notice": "notice_list",
     "transfer": "course_roadmap",
-    "exam": "text",
+    "exam": "exam_scope",
     "scholarship": "text",
     "graduation": "text",
     "faq": "faq_list",
@@ -352,6 +359,9 @@ def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
         if detected:
             return detected.get("course_name") or ""
     compact = normalize_course_key(question or "")
+    for alias, canonical in COURSE_NAME_ALIASES.items():
+        if normalize_course_key(alias) in compact:
+            return canonical
     matches = [
         name
         for name in {*KNOWN_COURSE_NAMES, *KNOWN_COURSE_NAMES_EXTRA}
@@ -360,12 +370,33 @@ def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
     return max(matches, key=len) if matches else ""
 
 
+def detect_course_candidates(question: str, index: SearchIndex | None = None) -> list[str]:
+    compact = normalize_course_key(question or "")
+    candidates: list[str] = []
+    if index and hasattr(index, "course_catalog"):
+        for course in index.course_catalog():
+            name = course.get("course_name") or ""
+            aliases = [name, *(course.get("aliases") or [])]
+            if any(normalize_course_key(alias) in compact for alias in aliases if alias):
+                candidates.append(name)
+    for alias, canonical in COURSE_NAME_ALIASES.items():
+        if normalize_course_key(alias) in compact:
+            candidates.append(canonical)
+    for name in {*KNOWN_COURSE_NAMES, *KNOWN_COURSE_NAMES_EXTRA}:
+        if normalize_course_key(name) in compact:
+            candidates.append(name)
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
 def analyze_question_intent(question: str, index: SearchIndex | None = None) -> dict[str, Any]:
     catalogs = {
         "faculty": index.faculty_catalog() if index and hasattr(index, "faculty_catalog") else [],
         "courses": index.course_catalog() if index and hasattr(index, "course_catalog") else [],
     }
-    return route_intent(question, catalogs=catalogs)
+    routed = route_intent(question, catalogs=catalogs)
+    if routed.get("intent") == "exam" and EXAM_SCOPE_RE.search(question or ""):
+        routed = {**routed, "intent": "exam_scope"}
+    return routed
 
 
 def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
@@ -449,6 +480,8 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
         return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
         return "faculty"
+    if EXAM_SCOPE_RE.search(question):
+        return "exam_scope"
     if course_name and COURSE_GRADE_STRATEGY_RE.search(question):
         return "course_grade_strategy"
     if NOTICE_EXPLAIN_RE.search(question):
@@ -503,6 +536,8 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     if priority_intent:
         return priority_intent
     course_name = detect_course_name(question, index)
+    if EXAM_SCOPE_RE.search(question):
+        return "exam_scope"
     if course_name and COURSE_GRADE_STRATEGY_RE.search(question):
         return "course_grade_strategy"
     if course_name and COURSE_ORDER_RE.search(question):
@@ -535,6 +570,7 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         "faculty_detail",
         "faculty",
         "course_grade_strategy",
+        "exam_scope",
         "course_recommendation",
         "course_order",
         "course_roadmap",
@@ -1449,7 +1485,7 @@ def _list_answer_type(question: str) -> str:
         ("schedule_list", r"학과\s*일정|학사\s*일정"),
         ("faq_list", r"faq|자주\s*묻는\s*질문"),
         ("certification_list", r"추천\s*자격증|자격증\s*추천"),
-        ("exam_list", r"시험\s*범위|시험범위"),
+        ("exam_scope", r"시험\s*범위|시험범위|중간(?:고사)?\s*범위|기말(?:고사)?\s*범위|출석수업\s*시험\s*범위|과제\s*범위"),
     )
     for answer_type, pattern in patterns:
         if re.search(pattern, question, re.IGNORECASE):
@@ -1495,6 +1531,149 @@ def _document_resource_response(question: str, hits: list[dict[str, Any]], start
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
         "structured_intent": "document_search",
         "search_scope": ["pdf", "synap", "exam"],
+    }
+
+
+def _is_unsupported_exam_scope_hit(hit: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(hit.get(field) or "")
+        for field in ("title", "summary", "body", "search_text", "source_url")
+    )
+    return bool(UNSUPPORTED_EXAM_SCOPE_RE.search(text))
+
+
+def _has_exam_scope_evidence(hit: dict[str, Any], course_name: str) -> bool:
+    if _is_unsupported_exam_scope_hit(hit):
+        return False
+    text = " ".join(
+        str(hit.get(field) or "")
+        for field in ("title", "summary", "body", "content_text", "search_text")
+    )
+    compact_text = normalize_course_key(text)
+    compact_course = normalize_course_key(course_name)
+    if compact_course and compact_course not in compact_text:
+        aliases = [
+            alias
+            for alias, canonical in COURSE_NAME_ALIASES.items()
+            if canonical == course_name
+        ]
+        if not any(normalize_course_key(alias) in compact_text for alias in aliases):
+            return False
+    return bool(EXAM_SCOPE_EVIDENCE_RE.search(text))
+
+
+def _course_detail_url_for_exam_scope(course_name: str, index: SearchIndex) -> str:
+    if course_name in KNOWN_COURSE_DETAIL_URLS:
+        return KNOWN_COURSE_DETAIL_URLS[course_name]
+    detected = index.detect_course(course_name) if hasattr(index, "detect_course") else None
+    if detected:
+        url = _course_link(detected, course_name)
+        if "learningInformation/cs1/view.do" in url:
+            return url
+    for item in _fallback_curriculum_items(index):
+        if item.get("course_name") == course_name:
+            url = _course_link(item, course_name)
+            if "learningInformation/cs1/view.do" in url:
+                return url
+    return ""
+
+
+def _exam_scope_response(question: str, index: SearchIndex, started: float) -> dict[str, Any]:
+    candidates = detect_course_candidates(question, index)
+    if len(candidates) > 1:
+        return {
+            "answer": "시험범위를 확인할 과목을 하나로 특정해 주세요.",
+            "answer_type": "exam_scope",
+            "summary": "여러 과목 후보가 감지되어 임의로 선택하지 않았습니다.",
+            "items": [{"title": candidate, "course_name": candidate} for candidate in candidates],
+            "display_limit": 3,
+            "total_count": len(candidates),
+            "actions": [{"type": "link", "label": "학과 최근 공지 바로가기", "url": NOTICE_URL}],
+            "source_urls": [NOTICE_URL],
+            "sources": [],
+            "mode": "DB검색",
+            "score": 0,
+            "keywords": tokenize(question),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "structured_intent": "exam_scope",
+            "search_scope": ["notice", "course_detail"],
+        }
+    course_name = candidates[0] if candidates else detect_course_name(question, index)
+    search_query = f"{course_name or question} 시험범위 중간고사 기말고사 출석수업 과제 범위"
+    notice_hits = index.search(
+        search_query,
+        top_k=10,
+        filters={
+            "source_types": ["official"],
+            "exclude_document_types": ["교수진", "교육과정표", "학과일정"],
+            "exclude_categories": ["교수진", "교육과정", "학과일정", "학생광장", "벼룩시장", "중고장터"],
+        },
+    )
+    evidence_hits = [
+        hit for hit in notice_hits
+        if course_name and _has_exam_scope_evidence(hit, course_name)
+    ]
+    if evidence_hits:
+        hit = evidence_hits[0]
+        summary = _clean_notice_summary(hit, 180) or summarize(hit.get("body") or hit.get("summary") or "", 180)
+        url = hit.get("source_url") or NOTICE_URL
+        return {
+            "answer": f"공식 데이터에서 확인된 {course_name} 시험범위 안내입니다.",
+            "answer_type": "exam_scope",
+            "summary": summary,
+            "items": [{
+                "title": hit.get("title") or f"{course_name} 시험범위",
+                "summary": summary,
+                "source_url": url,
+                "link_label": "원문 보기",
+            }],
+            "display_limit": 1,
+            "total_count": len(evidence_hits),
+            "actions": [{"type": "link", "label": "원문 보기", "url": url}],
+            "source_urls": [url],
+            "sources": [{"title": hit.get("title"), "url": url, "score": hit.get("score", 0)}],
+            "mode": "DB검색",
+            "score": hit.get("score", 0),
+            "keywords": tokenize(question),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "structured_intent": "exam_scope",
+            "search_scope": ["notice", "course_detail"],
+        }
+
+    detail_url = _course_detail_url_for_exam_scope(course_name, index) if course_name else ""
+    actions = [{"type": "link", "label": "학과 최근 공지 바로가기", "url": NOTICE_URL}]
+    if detail_url:
+        actions.append({"type": "link", "label": f"{course_name} 상세 페이지 바로가기", "url": detail_url})
+    target_name = course_name or "해당 과목"
+    return {
+        "answer": (
+            f"현재 수집된 공식 데이터에서는 {target_name} 시험범위를 확인할 수 없습니다.\n"
+            "시험범위는 학기마다 달라질 수 있어 임의로 안내하지 않습니다.\n"
+            "아래에서 최신 정보를 확인해 주세요.\n"
+            "- 학과 최근 공지\n"
+            f"- {target_name} 상세 페이지\n"
+            "- 강의계획서/평가정보"
+        ),
+        "answer_type": "exam_scope",
+        "summary": "공식 근거가 없어 시험범위를 추정하지 않았습니다.",
+        "items": [{
+            "title": f"{target_name} 시험범위 확인 안내",
+            "summary": "학기별 공지, 과목 상세 페이지, 강의계획서 또는 평가정보에서 최신 기준을 확인해 주세요.",
+            "source_url": detail_url or NOTICE_URL,
+            "fallback_url": NOTICE_URL,
+            "link_label": f"{course_name} 상세 페이지 바로가기" if detail_url and course_name else "학과 최근 공지 바로가기",
+        }],
+        "display_limit": 1,
+        "total_count": 0,
+        "actions": actions,
+        "source_urls": [url for url in (NOTICE_URL, detail_url) if url],
+        "sources": [{"title": "컴퓨터과학과 최근 공지", "url": NOTICE_URL, "score": 0}],
+        "mode": "DB검색",
+        "score": 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "structured_intent": "exam_scope",
+        "search_scope": ["notice", "course_detail"],
     }
 
 
@@ -3264,6 +3443,11 @@ def answer_question(
         response["session_id"] = session_id
         response["request_id"] = request_id
         response["quick_intent"] = initial_intent
+        return response
+    if initial_intent == "exam_scope":
+        response = _exam_scope_response(clean_question, index, started)
+        response["session_id"] = session_id
+        response["request_id"] = request_id
         return response
     if initial_intent == "course_grade_strategy":
         course_name = detect_course_name(clean_question, index)

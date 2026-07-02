@@ -35,6 +35,36 @@ def test_database_exam_scope_is_subject_specific(tmp_path) -> None:
     result = answer_question("데이터베이스 시험 범위는?", index=empty_index(tmp_path))
     other = answer_question("운영체제 시험 범위는?", index=empty_index(tmp_path))
 
-    assert result["answer"] == "데이터베이스 시험 범위는 13~15장입니다."
+    assert "현재 수집된 공식 데이터에서는 데이터베이스시스템 시험범위를 확인할 수 없습니다." in result["answer"]
+    assert "임의로 안내하지 않습니다" in result["answer"]
+    assert "13~15장" not in result["answer"]
     assert result["structured_intent"] == "exam_scope"
-    assert other.get("structured_intent") is None
+    assert result["actions"][0]["label"] == "학과 최근 공지 바로가기"
+    assert other.get("structured_intent") == "exam_scope"
+    assert "운영체제 시험범위를 확인할 수 없습니다" in other["answer"]
+
+
+def test_exam_scope_uses_official_notice_evidence_when_available(tmp_path) -> None:
+    index = SearchIndex(tmp_path / "exam-scope.json")
+    index.rebuild(
+        [
+            {
+                "title": "데이터베이스시스템 기말고사 시험범위 안내",
+                "category": "공지사항",
+                "document_type": "게시물",
+                "body": "데이터베이스시스템 기말고사 시험범위는 공식 강의계획서 평가정보를 확인해 주세요.",
+                "summary": "데이터베이스시스템 기말고사 시험범위 안내",
+                "source_url": "https://cs.knou.ac.kr/bbs/cs1/2119/artclView.do",
+                "source_type": "official",
+                "collected_at": "2026-07-02T00:00:00+09:00",
+                "published_at": "2026.07.02",
+            }
+        ]
+    )
+
+    result = answer_question("데이터베이스 시험범위는?", index=index)
+
+    assert result["structured_intent"] == "exam_scope"
+    assert result["answer"].startswith("공식 데이터에서 확인된 데이터베이스시스템 시험범위 안내입니다.")
+    assert result["actions"][0]["label"] == "원문 보기"
+    assert result["source_urls"][0].endswith("/artclView.do")

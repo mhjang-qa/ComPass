@@ -84,7 +84,7 @@
     },
     {
       "id": "database_exam_range",
-      "enabled": true,
+      "enabled": false,
       "title": "데이터베이스 시험 범위",
       "category": "교과 > 시험범위",
       "intent": "exam_scope",
@@ -92,10 +92,10 @@
       "assessment": "시험",
       "match_all": ["데이터베이스", "시험"],
       "match_any": ["범위", "몇장", "어디까지"],
-      "answer": "데이터베이스 시험 범위는 13~15장입니다.",
-      "note": "학기별 공지에 따라 변경될 수 있으므로 시험 전 최신 공지를 확인해야 합니다.",
-      "keywords": ["데이터베이스", "시험범위", "13장", "14장", "15장"],
-      "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#compass-database-exam-range",
+      "answer": "현재 수집된 공식 데이터에서는 데이터베이스시스템 시험범위를 확인할 수 없습니다.",
+      "note": "시험범위는 학기별 공지와 강의계획서 기준으로 달라질 수 있으므로 근거 없는 장 번호 안내를 비활성화했습니다.",
+      "keywords": ["데이터베이스", "데이터베이스시스템", "시험범위"],
+      "source_url": "https://cs.knou.ac.kr/cs1/4812/subview.do",
       "validity": "현재 관리자 등록 기준",
       "updated_at": "2026-06-22T00:00:00+09:00"
     },

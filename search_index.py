@@ -313,7 +313,9 @@ class SearchIndex:
                         "course_code": item.get("course_code") or "",
                         "grade": item.get("grade") or "",
                         "semester": item.get("semester") or "",
+                        "year": item.get("year") or "",
                         "category": item.get("category") or "",
+                        "class_type": item.get("class_type") or [],
                         "overview": item.get("overview") or "",
                         "topics": item.get("topics") or item.get("detail_topics") or [],
                         "detail_url": item.get("detail_url") or item.get("source_url") or "",
@@ -324,9 +326,11 @@ class SearchIndex:
                         "document_types": [],
                     },
                 )
-                for field in ("course_code", "grade", "semester", "category", "overview", "detail_url", "fallback_url"):
+                for field in ("course_code", "grade", "semester", "year", "category", "overview", "detail_url", "fallback_url"):
                     if not entry.get(field) and item.get(field):
                         entry[field] = item.get(field)
+                if not entry.get("class_type") and item.get("class_type"):
+                    entry["class_type"] = item.get("class_type")
                 if not entry.get("topics") and (item.get("topics") or item.get("detail_topics")):
                     entry["topics"] = item.get("topics") or item.get("detail_topics")
                 entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *aliases]))

@@ -804,13 +804,27 @@ function updateAppHeight() {
 }
 
 function setWindowMode(fullscreen) {
-  appShell.classList.toggle("fullscreen", fullscreen);
-  appShell.classList.toggle("widget-window", !fullscreen);
-  appShell.classList.toggle("mobile-fullscreen", fullscreen && isMobileDevice());
-  $("#toggleFullscreen").hidden = fullscreen && isMobileDevice();
-  $("#toggleFullscreen").textContent = fullscreen ? "↙" : "⛶";
-  $("#toggleFullscreen").setAttribute("aria-label", fullscreen ? "창 모드로 보기" : "전체 화면으로 보기");
-  $("#toggleFullscreen").setAttribute("title", fullscreen ? "창 모드" : "전체 화면");
+  const mobile = isMobileDevice();
+  const useFullscreen = fullscreen || mobile;
+  appShell.classList.toggle("fullscreen", useFullscreen);
+  appShell.classList.toggle("widget-window", !useFullscreen);
+  appShell.classList.toggle("mobile-fullscreen", useFullscreen && mobile);
+  document.body.classList.toggle("chat-mobile-open", useFullscreen && mobile && !appShell.classList.contains("is-hidden"));
+  $("#toggleFullscreen").hidden = useFullscreen && mobile;
+  $("#toggleFullscreen").textContent = useFullscreen ? "↙" : "⛶";
+  $("#toggleFullscreen").setAttribute("aria-label", useFullscreen ? "창 모드로 보기" : "전체 화면으로 보기");
+  $("#toggleFullscreen").setAttribute("title", useFullscreen ? "창 모드" : "전체 화면");
+}
+
+function enforceResponsiveWindowMode() {
+  updateAppHeight();
+  if (appShell.classList.contains("is-hidden")) {
+    document.body.classList.remove("chat-mobile-open");
+    return;
+  }
+  if (isMobileDevice()) {
+    setWindowMode(true);
+  }
 }
 
 function openChatWindow() {
@@ -827,6 +841,7 @@ function openChatWindow() {
 
 function minimizeChat() {
   appShell.classList.add("is-hidden");
+  document.body.classList.remove("chat-mobile-open");
   chatLauncher.classList.remove("is-hidden");
   chatLauncher.setAttribute("aria-expanded", "false");
   chatLauncher.focus();
@@ -844,8 +859,8 @@ function toggleFullscreen() {
 chatLauncher.addEventListener("click", openChatWindow);
 $("#minimizeChat").addEventListener("click", minimizeChat);
 $("#toggleFullscreen").addEventListener("click", toggleFullscreen);
-window.addEventListener("resize", updateAppHeight);
-window.addEventListener("orientationchange", updateAppHeight);
+window.addEventListener("resize", enforceResponsiveWindowMode);
+window.addEventListener("orientationchange", enforceResponsiveWindowMode);
 window.visualViewport?.addEventListener("resize", updateAppHeight);
 window.visualViewport?.addEventListener("scroll", updateAppHeight);
 

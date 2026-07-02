@@ -1301,6 +1301,7 @@ class KnouCrawler:
         best_headers: list[str] = []
         best_rows: list[list[str]] = []
         best_items: list[dict[str, Any]] = []
+        curriculum_tables: list[tuple[list[str], list[list[str]], list[dict[str, Any]]]] = []
         for table in content.select("table"):
             matrix, header_flags = cls._table_matrix(table)
             if not matrix:
@@ -1329,8 +1330,36 @@ class KnouCrawler:
                 if any(cell.strip() for cell in row)
             ]
             items = [item for row in rows if (item := cls._normalize_course_row(headers, row))]
+            if items:
+                curriculum_tables.append((headers, rows, items))
             if len(items) > len(best_items) or (not best_rows and len(rows) > len(best_rows)):
                 best_headers, best_rows, best_items = headers, rows, items
+        if curriculum_tables:
+            best_headers = max((headers for headers, _, _ in curriculum_tables), key=len)
+            width = len(best_headers)
+            merged_rows: list[list[str]] = []
+            merged_items: list[dict[str, Any]] = []
+            seen_courses: set[tuple[str, str, str, str]] = set()
+            for _, rows, items in curriculum_tables:
+                merged_rows.extend(row + [""] * (width - len(row)) for row in rows)
+                for item in items:
+                    key = (
+                        item.get("course_name") or "",
+                        item.get("grade") or "",
+                        item.get("semester") or "",
+                        item.get("course_code") or "",
+                    )
+                    if key in seen_courses:
+                        continue
+                    seen_courses.add(key)
+                    merged_items.append(item)
+            counts: dict[tuple[str, str], int] = {}
+            for item in merged_items:
+                key = (item.get("grade") or "학년미상", item.get("semester") or "학기미상")
+                counts[key] = counts.get(key, 0) + 1
+            for (grade, semester), count in sorted(counts.items()):
+                logger.info("[CURRICULUM] %s %s parsed=%s", grade, semester, count)
+            return best_headers, merged_rows, merged_items
         return best_headers, best_rows, best_items
 
     @staticmethod
@@ -1394,11 +1423,18 @@ class KnouCrawler:
             grade_match = re.search(r"([1-4])\s*학년", grade_semester)
         if not semester_match:
             semester_match = re.search(r"([12])\s*학기", grade_semester)
+        year_match = re.search(r"(20\d{2})", grade_semester)
         media = [
             header.split("/")[-1].strip()
             for header, value in pairs
             if value.upper() in {"O", "○", "Y"}
-            and any(group in header for group in ("강의매체", "수업유형"))
+            and "강의매체" in header
+        ]
+        class_types = [
+            header.split("/")[-1].strip()
+            for header, value in pairs
+            if value.upper() in {"O", "○", "Y"}
+            and "수업유형" in header
         ]
         evaluations = [
             header.split("/")[-1].strip()
@@ -1409,10 +1445,12 @@ class KnouCrawler:
             "course_name": course_name,
             "grade": f"{grade_match.group(1)}학년" if grade_match else "",
             "semester": f"{semester_match.group(1)}학기" if semester_match else "",
+            "year": year_match.group(1) if year_match else "",
             "category": value_for("교과구분", "교과 구분", "구분"),
             "course_code": value_for("교과목코드", "교과목 코드", "과목코드"),
             "credit": value_for("학점"),
             "media": list(dict.fromkeys(media)),
+            "class_type": list(dict.fromkeys(class_types)),
             "evaluation": list(dict.fromkeys(evaluations)),
         }
 

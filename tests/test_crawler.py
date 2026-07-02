@@ -300,10 +300,47 @@ def test_curriculum_table_is_normalized() -> None:
             "course_name": "컴퓨터의이해",
             "grade": "1학년",
             "semester": "1학기",
+            "year": "2026",
             "category": "전공",
             "course_code": "34172",
             "credit": "",
             "media": ["TV", "웹강의"],
+            "class_type": [],
             "evaluation": ["중간평가", "기말평가"],
         }
+    ]
+
+
+def test_curriculum_tables_are_merged_without_dropping_grade_rows() -> None:
+    soup = BeautifulSoup(
+        """
+        <table>
+          <tr><th>학년 학기</th><th>교과 구분</th><th>교과목명</th><th>교과목 코드</th><th>강의매체 TV</th></tr>
+          <tr><td>1-1 (2026)</td><td>전공</td><td>컴퓨터의이해</td><td>34172</td><td>O</td></tr>
+        </table>
+        <table>
+          <tr><th>학년 학기</th><th>교과 구분</th><th>교과목명</th><th>교과목 코드</th><th>수업유형 온라인강좌</th></tr>
+          <tr><td>4-1 (2026)</td><td>전공</td><td>정보통신망</td><td>34523</td><td>O</td></tr>
+          <tr><td>4-1 (2026)</td><td>전공</td><td>컴퓨터보안</td><td>34476</td><td>O</td></tr>
+          <tr><td>4-1 (2026)</td><td>전공</td><td>컴퓨터그래픽스</td><td>34471</td><td>O</td></tr>
+          <tr><td>4-1 (2026)</td><td>전공</td><td>모바일앱프로그래밍</td><td>34475</td><td>O</td></tr>
+          <tr><td>4-1 (2026)</td><td>교양</td><td>생활과건강</td><td>37351</td><td>O</td></tr>
+          <tr><td>4-1 (2026)</td><td>전공</td><td>소프트웨어공학</td><td>34519</td><td>O</td></tr>
+        </table>
+        """,
+        "lxml",
+    )
+
+    _, _, items = KnouCrawler._extract_tables(soup)
+
+    grade4 = [item for item in items if item["grade"] == "4학년"]
+    assert len(items) == 7
+    assert len(grade4) == 6
+    assert [item["course_name"] for item in grade4] == [
+        "정보통신망",
+        "컴퓨터보안",
+        "컴퓨터그래픽스",
+        "모바일앱프로그래밍",
+        "생활과건강",
+        "소프트웨어공학",
     ]

@@ -117,7 +117,7 @@ def test_all_quick_menu_queries_find_db_documents(tmp_path: Path) -> None:
     assert results[1]["answer_type"] == "course_table"
     assert results[1]["items"][0]["course_name"] == "컴퓨터의이해"
     assert [group["grade"] for group in results[1]["groups"]] == ["1학년", "2학년", "3학년", "4학년"]
-    assert all(len(group["items"]) == 3 for group in results[1]["groups"])
+    assert all(len(group["items"]) == 6 for group in results[1]["groups"])
     assert "학년 | 학기" not in results[1]["answer"]
     assert results[2]["answer_type"] == "notice_list"
     assert results[3]["answer_type"] == "schedule_list"
@@ -247,8 +247,8 @@ def test_empty_quick_intents_still_return_card_items(tmp_path: Path) -> None:
 
     assert curriculum["answer_type"] == "course_table"
     assert [group["grade"] for group in curriculum["groups"]] == ["1학년", "2학년", "3학년", "4학년"]
-    assert all(len(group["items"]) == 3 for group in curriculum["groups"])
-    assert len(curriculum["items"]) == 12
+    assert all(len(group["items"]) == 6 for group in curriculum["groups"])
+    assert len(curriculum["items"]) == 24
     assert curriculum["actions"][-1]["label"] == "교육과정 더보기"
     assert notice["answer_type"] == "notice_list"
     assert len(notice["items"]) == 3
@@ -256,3 +256,23 @@ def test_empty_quick_intents_still_return_card_items(tmp_path: Path) -> None:
     assert schedule["answer_type"] == "schedule_list"
     assert len(schedule["items"]) == 3
     assert schedule["actions"][-1]["url"] == SCHEDULE_URL
+
+
+def test_grade_specific_curriculum_returns_grade_courses(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "grade-curriculum.json")
+    index.rebuild([])
+
+    result = answer_question("4학년 과목 알려줘", index=index)
+
+    assert result["answer_type"] == "course_table"
+    assert [group["grade"] for group in result["groups"]] == ["4학년"]
+    names = [item["course_name"] for item in result["items"]]
+    assert len(names) >= 6
+    assert names[:6] == [
+        "정보통신망",
+        "컴퓨터보안",
+        "컴퓨터그래픽스",
+        "모바일앱프로그래밍",
+        "생활과건강",
+        "소프트웨어공학",
+    ]

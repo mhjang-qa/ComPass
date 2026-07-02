@@ -758,7 +758,7 @@ def summarize_for_student(intent: str, items: list[dict[str, Any]]) -> str:
     count = len(items)
     summaries = {
         "faculty": f"총 {count}명의 교수진 중 주요 정보 3명을 먼저 안내드립니다.",
-        "course_table": "학년·학기별 주요 과목 3개를 먼저 안내드립니다.",
+        "course_table": "학년·학기별 주요 과목 6개를 먼저 안내드립니다.",
         "notice_list": "최근 공지 중 학생이 먼저 확인할 내용 3개를 안내드립니다.",
         "schedule_list": "다가오는 주요 일정 3개를 먼저 안내드립니다.",
         "faq_list": "자주 확인하는 질문 3개를 먼저 안내드립니다.",
@@ -786,6 +786,7 @@ def build_structured_response(
     score: float,
     keywords: list[str],
     started: float,
+    requested_grade: str = "",
 ) -> dict[str, Any]:
     if answer_type == "course_table":
         return build_curriculum_by_grade_response(
@@ -795,6 +796,7 @@ def build_structured_response(
             score=score,
             keywords=keywords,
             started=started,
+            requested_grade=requested_grade,
         )
     if answer_type == "schedule_list" and not items:
         return build_no_upcoming_schedule_response(
@@ -872,7 +874,7 @@ def build_curriculum_link_response(
         "summary": "저장된 교육과정 데이터가 부족해 대표 과목 예시를 먼저 안내드립니다.",
         "groups": groups,
         "items": [item for group in groups for item in group["items"]],
-        "display_limit": 3,
+        "display_limit": GRADE_PREVIEW_LIMIT,
         "total_count": len(items),
         "source_urls": [curriculum_url],
         "actions": [{"type": "link", "label": "교육과정 더보기", "url": curriculum_url}],
@@ -905,16 +907,32 @@ def _fallback_curriculum_items(index: SearchIndex | None = None) -> list[dict[st
         if item.get("course_name") or item.get("title")
     ]
     fallback_rows = [
-        ("컴퓨터의이해", "1학년", "1학기", "전공기초", "컴퓨터과학 전공의 기본 개념과 활용 흐름을 익히는 입문 과목입니다."),
-        ("파이썬프로그래밍기초", "1학년", "1학기", "전공기초", "프로그래밍 문법과 문제 해결 과정을 실습 중심으로 익히는 과목입니다."),
-        ("이산수학", "1학년", "2학기", "전공기초", "논리, 집합, 관계 등 컴퓨터과학에 필요한 수학 기초를 다지는 과목입니다."),
+        ("컴퓨터의이해", "1학년", "1학기", "교양", "컴퓨터과학 전공의 기본 개념과 활용 흐름을 익히는 입문 과목입니다."),
+        ("세계의정치와경제", "1학년", "1학기", "교양", "사회와 경제의 기본 흐름을 이해하는 교양 과목입니다."),
+        ("파이썬프로그래밍기초", "1학년", "1학기", "전공", "프로그래밍 문법과 문제 해결 과정을 실습 중심으로 익히는 과목입니다."),
+        ("사진의이해", "1학년", "1학기", "일반선택", "사진 표현과 시각 자료의 이해를 다루는 과목입니다."),
+        ("유비쿼터스컴퓨팅개론", "1학년", "1학기", "전공", "컴퓨팅 환경과 전공 기초 흐름을 익히는 과목입니다."),
+        ("데이터정보처리입문", "1학년", "1학기", "일반선택", "데이터와 정보 처리의 기본 개념을 배우는 입문 과목입니다."),
+        ("대중영화의이해", "1학년", "2학기", "일반선택", "대중영화의 표현과 문화적 의미를 이해하는 교양 과목입니다."),
         ("자료구조", "2학년", "1학기", "전공", "데이터 저장 구조와 처리 방법을 체계적으로 배우는 핵심 과목입니다."),
         ("컴퓨터구조", "2학년", "1학기", "전공", "컴퓨터 하드웨어 구성과 명령 실행 구조를 이해하는 과목입니다."),
         ("Java프로그래밍", "2학년", "2학기", "전공", "객체지향 프로그래밍의 기본 구조와 구현 방법을 학습하는 과목입니다."),
+        ("HTML5웹프로그래밍", "2학년", "1학기", "전공", "웹 표준 기반 화면 구성과 프로그래밍을 학습하는 과목입니다."),
+        ("테마가있는음악여행", "2학년", "1학기", "교양", "음악 문화를 주제별로 이해하는 교양 과목입니다."),
+        ("환경과건강", "2학년", "1학기", "교양", "환경과 건강의 관계를 다루는 교양 과목입니다."),
+        ("이산수학", "2학년", "1학기", "전공", "논리, 집합, 관계 등 컴퓨터과학에 필요한 수학 기초를 다지는 과목입니다."),
+        ("한국사의이해", "2학년", "1학기", "교양", "한국사의 주요 흐름을 이해하는 교양 과목입니다."),
+        ("알고리즘", "3학년", "1학기", "전공", "문제 해결 절차와 알고리즘 설계 기법을 학습하는 과목입니다."),
         ("운영체제", "3학년", "1학기", "전공", "프로세스, 메모리, 파일 시스템 등 운영체제 원리를 배우는 과목입니다."),
+        ("디지털논리회로", "3학년", "1학기", "전공", "디지털 회로와 논리 설계의 기본 원리를 배우는 과목입니다."),
         ("데이터베이스시스템", "3학년", "2학기", "전공", "데이터 모델링과 데이터베이스 관리의 핵심 개념을 다루는 과목입니다."),
+        ("그래픽커뮤니케이션", "3학년", "1학기", "일반선택", "그래픽 표현과 커뮤니케이션 방식을 이해하는 과목입니다."),
         ("인공지능", "3학년", "1학기", "전공", "인공지능의 기본 이론과 응용 분야를 학습하는 과목입니다."),
+        ("정보통신망", "4학년", "1학기", "전공", "네트워크 구조와 통신 원리를 학습하는 과목입니다."),
+        ("컴퓨터보안", "4학년", "1학기", "전공", "컴퓨터 시스템과 네트워크 보안의 기본 원리를 다루는 과목입니다."),
         ("컴퓨터그래픽스", "4학년", "1학기", "전공", "그래픽 표현과 처리 원리를 다루는 심화 과목입니다."),
+        ("모바일앱프로그래밍", "4학년", "1학기", "전공", "모바일 앱 개발과 프로그래밍 방법을 학습하는 과목입니다."),
+        ("생활과건강", "4학년", "1학기", "교양", "생활 속 건강 관리와 관련 지식을 배우는 교양 과목입니다."),
         ("소프트웨어공학", "4학년", "1학기", "전공", "소프트웨어 개발 과정과 품질 관리를 다루는 심화 과목입니다."),
         ("정보보호", "4학년", "2학기", "전공", "정보 보호 원리와 보안 관리의 기본 개념을 학습하는 과목입니다."),
     ]
@@ -953,6 +971,11 @@ def _dedupe_course_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _curriculum_preview_items(items: list[dict[str, Any]], index: SearchIndex | None = None) -> list[dict[str, Any]]:
     """검색 hit 일부가 아니라 전체 교육과정 카탈로그를 보강해 학년별 preview를 만든다."""
     return _dedupe_course_items([*items, *_fallback_curriculum_items(index)])
+
+
+def _requested_curriculum_grade(question: str) -> str:
+    match = re.search(r"([1-4])\s*학년", question or "")
+    return f"{match.group(1)}학년" if match else ""
 
 
 def _fallback_notice_items() -> list[dict[str, Any]]:
@@ -1073,6 +1096,7 @@ def build_priority_intent_response(
             score=hits[0].get("score", 100) if hits else 100,
             keywords=keywords,
             started=started,
+            requested_grade=_requested_curriculum_grade(question),
         )
     if intent == "notice_list":
         hits = retrieve_documents(index, question, "notice_list")
@@ -1834,16 +1858,16 @@ def _grade_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
     )
 
 
-GRADE_PREVIEW_LIMIT = 3
+GRADE_PREVIEW_LIMIT = 6
+CURRICULUM_PREFERRED_BY_GRADE = {
+    "1학년": ["컴퓨터의이해", "세계의정치와경제", "파이썬프로그래밍기초", "사진의이해", "유비쿼터스컴퓨팅개론", "데이터정보처리입문"],
+    "2학년": ["Java프로그래밍", "HTML5웹프로그래밍", "테마가있는음악여행", "환경과건강", "이산수학", "한국사의이해"],
+    "3학년": ["알고리즘", "운영체제", "디지털논리회로", "데이터베이스시스템", "그래픽커뮤니케이션", "인공지능"],
+    "4학년": ["정보통신망", "컴퓨터보안", "컴퓨터그래픽스", "모바일앱프로그래밍", "생활과건강", "소프트웨어공학"],
+}
 
 
 def _representative_courses_by_grade(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    preferred = {
-        "1학년": ["컴퓨터의이해", "파이썬프로그래밍기초", "이산수학"],
-        "2학년": ["자료구조", "컴퓨터구조", "Java프로그래밍"],
-        "3학년": ["데이터베이스시스템", "운영체제", "인공지능"],
-        "4학년": ["소프트웨어공학", "정보보호", "컴퓨터보안", "클라우드컴퓨팅"],
-    }
     unique: dict[str, dict[str, Any]] = {}
     for item in sorted(items, key=_grade_sort_key):
         name = item.get("course_name") or item.get("title")
@@ -1857,7 +1881,7 @@ def _representative_courses_by_grade(items: list[dict[str, Any]]) -> list[dict[s
             if (item.get("grade") or "").startswith(grade[0])
         ]
         selected: list[dict[str, Any]] = []
-        for name in preferred[grade]:
+        for name in CURRICULUM_PREFERRED_BY_GRADE[grade]:
             found = next((item for item in grade_items if item.get("course_name") == name or item.get("title") == name), None)
             if found and found not in selected:
                 selected.append(found)
@@ -1902,21 +1926,63 @@ def build_curriculum_by_grade_response(
     score: float,
     keywords: list[str],
     started: float,
+    requested_grade: str = "",
 ) -> dict[str, Any]:
     if not items:
         items = _fallback_curriculum_items()
-    groups = _representative_courses_by_grade(items)
+    source_items = items
+    if requested_grade:
+        grade_items = [
+            item for item in sorted(_dedupe_course_items(source_items), key=_grade_sort_key)
+            if (item.get("grade") or "").startswith(requested_grade[0])
+        ]
+        if len(grade_items) < 5:
+            logger.warning(
+                "[CURRICULUM] requested grade=%s item_count=%s reason=insufficient_grade_items",
+                requested_grade,
+                len(grade_items),
+            )
+        selected_items: list[dict[str, Any]] = []
+        for name in CURRICULUM_PREFERRED_BY_GRADE.get(requested_grade, []):
+            found = next((item for item in grade_items if item.get("course_name") == name or item.get("title") == name), None)
+            if found and found not in selected_items:
+                selected_items.append(found)
+        for item in grade_items:
+            if item not in selected_items:
+                selected_items.append(item)
+            if len(selected_items) >= GRADE_PREVIEW_LIMIT:
+                break
+        groups = [
+            {
+                "grade": requested_grade,
+                "items": [
+                    {
+                        "course_name": item.get("course_name") or item.get("title") or "",
+                        "category": item.get("category") or "전공",
+                        "feature_summary": item.get("feature_summary") or _short_course_feature(item),
+                        "detail_url": _course_link(item),
+                        "source_url": _course_link(item),
+                        "fallback_url": COURSE_FULL_GUIDE_URL,
+                        "link_label": f"{item.get('course_name') or item.get('title') or '과목'} 과목 바로가기",
+                    }
+                    for item in selected_items[:GRADE_PREVIEW_LIMIT]
+                ],
+            }
+        ]
+        items = selected_items
+    else:
+        groups = _representative_courses_by_grade(items)
     if not any(group.get("items") for group in groups):
         items = _fallback_curriculum_items()
         groups = _representative_courses_by_grade(items)
     curriculum_url = safe_official_url(source_url or CURRICULUM_URL)
     return {
-        "answer": "컴퓨터과학과 교육과정 안내입니다.",
+        "answer": f"{requested_grade} 교육과정 안내입니다." if requested_grade else "컴퓨터과학과 교육과정 안내입니다.",
         "answer_type": CompatibleAnswerType("curriculum_by_grade", "course_table"),
-        "summary": "컴퓨터과학과 교육과정 주요 과목을 학년별로 정리해드릴게요.",
+        "summary": f"{requested_grade} 주요 과목입니다. 공식 교육과정 기준으로 정리했습니다." if requested_grade else "컴퓨터과학과 교육과정 주요 과목을 학년별로 정리해드릴게요.",
         "groups": groups,
         "items": [item for group in groups for item in group["items"]],
-        "display_limit": 3,
+        "display_limit": GRADE_PREVIEW_LIMIT,
         "total_count": len(items),
         "source_urls": [curriculum_url],
         "actions": [{"type": "link", "label": "교육과정 더보기", "url": curriculum_url}],
@@ -3498,6 +3564,7 @@ def answer_question(
                         score=best_score,
                         keywords=tokenize(clean_question),
                         started=started,
+                        requested_grade=_requested_curriculum_grade(clean_question) if answer_type == "course_table" else "",
                     )
                 )
         if response.get("answer_type") == "text" and should_auto_llm(search_question, hits, response.get("answer", "")):

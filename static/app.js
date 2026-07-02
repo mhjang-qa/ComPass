@@ -38,6 +38,8 @@ const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
 const SERVER_WAKE_TIMEOUT_MS = 10000;
 const SERVER_DELAY_NOTICE_ATTEMPTS = 20;
 const SERVER_READY_INTERVAL_MS = 2000;
+const TYPING_SPEED_MS = 12;
+const MAX_TYPING_MS = 2500;
 const DEFAULT_QUICK_QUESTIONS = [
   { id: 1, label: "교육과정", message: "컴퓨터과학과 교육과정을 알려줘", intent: "curriculum", enabled: true, sortOrder: 1 },
   { id: 2, label: "교수진", message: "컴퓨터과학과 교수진을 알려줘", intent: "faculty", enabled: true, sortOrder: 2 },
@@ -1435,11 +1437,13 @@ function renderFacultyDetail(bubble, payload, messageRow) {
 }
 
 function renderGenericItems(bubble, payload, messageRow) {
-  const content = document.createElement("div");
-  content.className = "message-content answer-summary";
-  content.textContent = payload.answer || "";
-  bubble.appendChild(content);
-  if (payload.summary) {
+  if (!payload.skip_answer_heading) {
+    const content = document.createElement("div");
+    content.className = "message-content answer-summary";
+    content.textContent = payload.answer || "";
+    bubble.appendChild(content);
+  }
+  if (payload.summary && !payload.skip_answer_heading) {
     const summary = document.createElement("p");
     summary.className = "answer-lead";
     summary.textContent = payload.summary;
@@ -1522,14 +1526,16 @@ function renderCourseTable(bubble, payload, messageRow) {
 }
 
 function renderCurriculumByGrade(bubble, payload) {
-  const header = document.createElement("div");
-  header.className = "answer-heading";
-  const title = document.createElement("strong");
-  title.textContent = currentLanguage === "en" ? cardText("curriculumTitle") : (payload.answer || cardText("curriculumTitle"));
-  const summary = document.createElement("span");
-  summary.textContent = currentLanguage === "en" ? cardText("curriculumDesc") : (payload.summary || cardText("curriculumDesc"));
-  header.append(title, summary);
-  bubble.appendChild(header);
+  if (!payload.skip_answer_heading) {
+    const header = document.createElement("div");
+    header.className = "answer-heading";
+    const title = document.createElement("strong");
+    title.textContent = currentLanguage === "en" ? cardText("curriculumTitle") : (payload.answer || cardText("curriculumTitle"));
+    const summary = document.createElement("span");
+    summary.textContent = currentLanguage === "en" ? cardText("curriculumDesc") : (payload.summary || cardText("curriculumDesc"));
+    header.append(title, summary);
+    bubble.appendChild(header);
+  }
 
   const list = document.createElement("div");
   list.className = "answer-card-list curriculum-grade-list";
@@ -1729,12 +1735,8 @@ function isIncompleteAnswerText(text) {
   return false;
 }
 
-function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
-  const row = document.createElement("div");
-  row.className = `message ${role}`;
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  const renderers = {
+function answerRenderers() {
+  return {
     faculty: renderFacultyList,
     faculty_detail: renderFacultyDetail,
     notice_list: renderNoticeList,
@@ -1750,6 +1752,14 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     schedule_explain: renderStructuredAdvice,
     general_explain: renderStructuredAdvice,
   };
+}
+
+function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
+  const row = document.createElement("div");
+  row.className = `message ${role}`;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  const renderers = answerRenderers();
   if (role === "bot" && Array.isArray(payload.items) && payload.items.length) {
     (renderers[payload.answer_type] || renderGenericCards)(bubble, payload, row);
   } else if (role === "bot" && isIncompleteAnswerText(text)) {
@@ -1797,6 +1807,58 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
   }
   row.appendChild(bubble);
   messages.appendChild(row);
+  scrollMessageIntoView(row);
+  return row;
+}
+
+function shouldAnimateRagAnswer(payload = {}) {
+  return payload.mode === "DB검색" && payload.answer_type !== "llm_confirmation_required";
+}
+
+function typingIntervalFor(text) {
+  const length = Math.max(String(text || "").length, 1);
+  return Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_TYPING_MS / length) || 1));
+}
+
+function typeIntoElement(node, text) {
+  const value = String(text || "");
+  if (!value) return Promise.resolve();
+  const interval = typingIntervalFor(value);
+  return new Promise((resolve) => {
+    let index = 0;
+    const timer = window.setInterval(() => {
+      index += 1;
+      node.textContent = value.slice(0, index);
+      if (index >= value.length) {
+        window.clearInterval(timer);
+        resolve();
+      }
+    }, interval);
+  });
+}
+
+async function addTypedRagMessage(text, sources = [], payload = {}) {
+  const row = document.createElement("div");
+  row.className = "message bot";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  const lead = document.createElement("div");
+  lead.className = "message-content answer-summary typing-answer";
+  bubble.appendChild(lead);
+  row.appendChild(bubble);
+  messages.appendChild(row);
+  scrollMessageIntoView(row);
+
+  await typeIntoElement(lead, text);
+
+  const renderers = answerRenderers();
+  const typedPayload = { ...payload, skip_answer_heading: true };
+  if (Array.isArray(payload.items) && payload.items.length) {
+    (renderers[payload.answer_type] || renderGenericCards)(bubble, typedPayload, row);
+  }
+  const hasLinkAction = (payload.actions || []).some((action) => action.type === "link" && action.url);
+  if (!hasLinkAction) appendSourceLinks(bubble, sources);
+  appendActionLinks(bubble, payload);
   scrollMessageIntoView(row);
   return row;
 }
@@ -1974,7 +2036,11 @@ async function sendQuestion(raw, options = {}) {
     } else if (result.mode === "INDEX_EMPTY") {
       answer = "백엔드 연결은 정상이지만 검색 인덱스가 비어 있습니다. 관리자 메뉴에서 크롤링 또는 인덱스 재생성을 실행해 주세요.";
     }
-    addMessage("bot", answer, result.sources || [], result.requires_llm_confirmation, result);
+    if (shouldAnimateRagAnswer(result)) {
+      await addTypedRagMessage(answer, result.sources || [], result);
+    } else {
+      addMessage("bot", answer, result.sources || [], result.requires_llm_confirmation, result);
+    }
   } catch (error) {
     if (error.name === "AbortError") {
       waiting.remove();

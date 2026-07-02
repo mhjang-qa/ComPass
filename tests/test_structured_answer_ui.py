@@ -61,6 +61,12 @@ def test_chat_pending_state_disables_duplicate_inputs() -> None:
     assert "$$(\"[data-question]\").forEach((button) => {" in script
     assert ".app-shell.is-pending .quick-actions button" in style
     assert ".composer textarea:disabled" in style
+    assert "const TYPING_SPEED_MS = 12" in script
+    assert "const MAX_TYPING_MS = 2500" in script
+    assert "function shouldAnimateRagAnswer(payload = {})" in script
+    assert 'payload.mode === "DB검색"' in script
+    assert "async function addTypedRagMessage" in script
+    assert "await typeIntoElement(lead, text)" in script
 
 
 def test_welcome_message_uses_bot_bubble_and_language_popup_is_disabled() -> None:

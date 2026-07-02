@@ -889,7 +889,7 @@ def build_curriculum_link_response(
 def _fallback_curriculum_items(index: SearchIndex | None = None) -> list[dict[str, Any]]:
     """검색 결과가 비어도 초기 교육과정 버튼은 카드형 대표 과목을 유지한다."""
     catalog = index.course_catalog() if index and hasattr(index, "course_catalog") else []
-    normalized = [
+    normalized: list[dict[str, Any]] = [
         {
             "title": item.get("course_name") or item.get("title") or "",
             "course_name": item.get("course_name") or item.get("title") or "",
@@ -904,20 +904,21 @@ def _fallback_curriculum_items(index: SearchIndex | None = None) -> list[dict[st
         for item in catalog
         if item.get("course_name") or item.get("title")
     ]
-    if normalized:
-        return normalized
     fallback_rows = [
         ("컴퓨터의이해", "1학년", "1학기", "전공기초", "컴퓨터과학 전공의 기본 개념과 활용 흐름을 익히는 입문 과목입니다."),
         ("파이썬프로그래밍기초", "1학년", "1학기", "전공기초", "프로그래밍 문법과 문제 해결 과정을 실습 중심으로 익히는 과목입니다."),
         ("이산수학", "1학년", "2학기", "전공기초", "논리, 집합, 관계 등 컴퓨터과학에 필요한 수학 기초를 다지는 과목입니다."),
         ("자료구조", "2학년", "1학기", "전공", "데이터 저장 구조와 처리 방법을 체계적으로 배우는 핵심 과목입니다."),
+        ("컴퓨터구조", "2학년", "1학기", "전공", "컴퓨터 하드웨어 구성과 명령 실행 구조를 이해하는 과목입니다."),
         ("Java프로그래밍", "2학년", "2학기", "전공", "객체지향 프로그래밍의 기본 구조와 구현 방법을 학습하는 과목입니다."),
         ("운영체제", "3학년", "1학기", "전공", "프로세스, 메모리, 파일 시스템 등 운영체제 원리를 배우는 과목입니다."),
         ("데이터베이스시스템", "3학년", "2학기", "전공", "데이터 모델링과 데이터베이스 관리의 핵심 개념을 다루는 과목입니다."),
         ("인공지능", "3학년", "1학기", "전공", "인공지능의 기본 이론과 응용 분야를 학습하는 과목입니다."),
         ("컴퓨터그래픽스", "4학년", "1학기", "전공", "그래픽 표현과 처리 원리를 다루는 심화 과목입니다."),
+        ("소프트웨어공학", "4학년", "1학기", "전공", "소프트웨어 개발 과정과 품질 관리를 다루는 심화 과목입니다."),
+        ("정보보호", "4학년", "2학기", "전공", "정보 보호 원리와 보안 관리의 기본 개념을 학습하는 과목입니다."),
     ]
-    return [
+    fallback_items = [
         {
             "title": name,
             "course_name": name,
@@ -931,6 +932,27 @@ def _fallback_curriculum_items(index: SearchIndex | None = None) -> list[dict[st
         }
         for name, grade, semester, category, summary in fallback_rows
     ]
+    return _dedupe_course_items([*normalized, *fallback_items])
+
+
+def _dedupe_course_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for item in items:
+        name = item.get("course_name") or item.get("title") or ""
+        if not name:
+            continue
+        current = unique.get(name)
+        if not current:
+            unique[name] = item
+            continue
+        merged = {**item, **{key: value for key, value in current.items() if value}}
+        unique[name] = merged
+    return list(unique.values())
+
+
+def _curriculum_preview_items(items: list[dict[str, Any]], index: SearchIndex | None = None) -> list[dict[str, Any]]:
+    """검색 hit 일부가 아니라 전체 교육과정 카탈로그를 보강해 학년별 preview를 만든다."""
+    return _dedupe_course_items([*items, *_fallback_curriculum_items(index)])
 
 
 def _fallback_notice_items() -> list[dict[str, Any]]:
@@ -1034,6 +1056,7 @@ def build_priority_intent_response(
     if intent == "course_table":
         hits = retrieve_documents(index, question, "course_table")
         items = normalize_results("course_table", hits, question)
+        items = _curriculum_preview_items(items, index)
         curriculum_url = resolve_curriculum_url(index, hits)
         if not items:
             return build_curriculum_link_response(
@@ -1811,6 +1834,9 @@ def _grade_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
     )
 
 
+GRADE_PREVIEW_LIMIT = 3
+
+
 def _representative_courses_by_grade(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     preferred = {
         "1학년": ["컴퓨터의이해", "파이썬프로그래밍기초", "이산수학"],
@@ -1838,8 +1864,16 @@ def _representative_courses_by_grade(items: list[dict[str, Any]]) -> list[dict[s
         for item in sorted(grade_items, key=_grade_sort_key):
             if item not in selected:
                 selected.append(item)
-            if len(selected) >= 3:
+            if len(selected) >= GRADE_PREVIEW_LIMIT:
                 break
+        if len(selected) < GRADE_PREVIEW_LIMIT:
+            logger.warning(
+                "[CURRICULUM] grade=%s preview count=%s expected=%s candidates=%s reason=insufficient_grade_items",
+                grade,
+                len(selected),
+                GRADE_PREVIEW_LIMIT,
+                len(grade_items),
+            )
         groups.append(
             {
                 "grade": grade,
@@ -1853,7 +1887,7 @@ def _representative_courses_by_grade(items: list[dict[str, Any]]) -> list[dict[s
                         "fallback_url": COURSE_FULL_GUIDE_URL,
                         "link_label": f"{item.get('course_name') or item.get('title') or '과목'} 과목 바로가기",
                     }
-                    for item in selected[:3]
+                    for item in selected[:GRADE_PREVIEW_LIMIT]
                 ],
             }
         )
@@ -3453,6 +3487,8 @@ def answer_question(
                     "faq_list": sources[0]["url"] if sources else DEPARTMENT_HOME_URL,
                 }
                 items = normalize_results(answer_type, hits, search_question)
+                if answer_type == "course_table":
+                    items = _curriculum_preview_items(items, index)
                 response.update(
                     build_structured_response(
                         answer_type,

@@ -104,16 +104,18 @@
             <p data-i18n="welcomeSubtitle">공식 정보를 학생이 이해하기 쉽게 정리해 안내합니다.</p>
           </section>
           <div id="messages" class="messages" aria-live="polite"></div>
-          <div class="suggestions quick-actions">
-            <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 교육과정을 알려줘" data-intent="curriculum">교육과정</button>
-            <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 교수진 정보를 알려줘" data-intent="faculty">교수진</button>
-            <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 최근 공지를 알려줘" data-intent="notice">최근 공지</button>
-            <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 학과 일정을 알려줘" data-intent="schedule">학과 일정</button>
+          <div class="chat-bottom">
+            <div class="suggestions quick-actions">
+              <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 교육과정을 알려줘" data-intent="curriculum">교육과정</button>
+              <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 교수진 정보를 알려줘" data-intent="faculty">교수진</button>
+              <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 최근 공지를 알려줘" data-intent="notice">최근 공지</button>
+              <button class="quick-action-btn" type="button" data-question="컴퓨터과학과 학과 일정을 알려줘" data-intent="schedule">학과 일정</button>
+            </div>
+            <form id="chatForm" class="composer chat-input-area">
+              <textarea id="question" class="chat-input" rows="1" maxlength="1000" placeholder="궁금한 컴퓨터과학과 정보를 질문해보세요"></textarea>
+              <button id="sendButton" class="send-button" type="submit" data-i18n="send">전송</button>
+            </form>
           </div>
-          <form id="chatForm" class="composer">
-            <textarea id="question" rows="1" maxlength="1000" placeholder="궁금한 컴퓨터과학과 정보를 질문해보세요"></textarea>
-            <button id="sendButton" type="submit" data-i18n="send">전송</button>
-          </form>
         </div>
       </section>
 

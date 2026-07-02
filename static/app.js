@@ -922,7 +922,7 @@ const chatChromeObserver = new ResizeObserver(() => {
     scrollMessageIntoView(lastMessage, "auto");
   }
 });
-[".suggestions", ".composer"].forEach((selector) => {
+[".chat-bottom"].forEach((selector) => {
   const node = $(selector);
   if (node) chatChromeObserver.observe(node);
 });

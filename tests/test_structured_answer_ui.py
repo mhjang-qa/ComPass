@@ -83,6 +83,10 @@ def test_welcome_message_uses_bot_bubble_and_language_popup_is_disabled() -> Non
     assert "display: flex;\n  flex-direction: column;" in style
     assert "flex: 0 0 auto" in style
     assert ".message.bot.with-avatar.welcome-message .bubble" in style
+    assert 'class="chat-bottom"' in html
+    assert ".chat-bottom" in style
+    assert "border-top: 1px solid var(--line)" in style
+    assert "[\".chat-bottom\"].forEach" in script
     assert 'data-i18n="brandName"' in html
     assert 'data-i18n="brandSubtitle"' in html
     assert 'data-i18n="brandTagline"' in html

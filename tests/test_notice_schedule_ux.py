@@ -94,8 +94,8 @@ def test_schedule_answer_rejects_non_official_schedule_sources() -> None:
     result = answer_question("학과 일정 알려줘", index=FakeIndex(hits))
 
     assert result["answer_type"] == "schedule_list"
-    assert result["items"] == []
-    assert "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다." in result["summary"]
+    assert len(result["items"]) == 3
+    assert "공식 일정 확인 항목" in result["summary"]
     assert result["actions"][-1]["url"] == "https://cs.knou.ac.kr/cs1/4812/subview.do"
 
 

@@ -864,14 +864,16 @@ def build_curriculum_link_response(
 ) -> dict[str, Any]:
     """교육과정 데이터가 부족해도 공식 교육과정 페이지로 즉시 안내한다."""
     curriculum_url = resolve_curriculum_url(hits=sources or [])
+    items = _fallback_curriculum_items()
+    groups = _representative_courses_by_grade(items)
     return {
         "answer": "컴퓨터과학과 교육과정 안내입니다.",
         "answer_type": CompatibleAnswerType("curriculum_by_grade", "course_table"),
-        "summary": "학년별 교과목과 이수 흐름은 공식 학과 페이지의 교과과정 메뉴에서 확인할 수 있습니다.",
-        "groups": [],
-        "items": [],
+        "summary": "저장된 교육과정 데이터가 부족해 대표 과목 예시를 먼저 안내드립니다.",
+        "groups": groups,
+        "items": [item for group in groups for item in group["items"]],
         "display_limit": 3,
-        "total_count": 0,
+        "total_count": len(items),
         "source_urls": [curriculum_url],
         "actions": [{"type": "link", "label": "교육과정 더보기", "url": curriculum_url}],
         "mode": "DB검색",
@@ -884,19 +886,131 @@ def build_curriculum_link_response(
     }
 
 
+def _fallback_curriculum_items(index: SearchIndex | None = None) -> list[dict[str, Any]]:
+    """검색 결과가 비어도 초기 교육과정 버튼은 카드형 대표 과목을 유지한다."""
+    catalog = index.course_catalog() if index and hasattr(index, "course_catalog") else []
+    normalized = [
+        {
+            "title": item.get("course_name") or item.get("title") or "",
+            "course_name": item.get("course_name") or item.get("title") or "",
+            "grade": item.get("grade") or "",
+            "semester": item.get("semester") or "",
+            "category": item.get("category") or "전공",
+            "feature_summary": item.get("feature_summary") or _short_course_feature(item),
+            "detail_url": item.get("detail_url") or item.get("source_url") or "",
+            "source_url": item.get("source_url") or item.get("detail_url") or CURRICULUM_URL,
+            "fallback_url": CURRICULUM_URL,
+        }
+        for item in catalog
+        if item.get("course_name") or item.get("title")
+    ]
+    if normalized:
+        return normalized
+    fallback_rows = [
+        ("컴퓨터의이해", "1학년", "1학기", "전공기초", "컴퓨터과학 전공의 기본 개념과 활용 흐름을 익히는 입문 과목입니다."),
+        ("파이썬프로그래밍기초", "1학년", "1학기", "전공기초", "프로그래밍 문법과 문제 해결 과정을 실습 중심으로 익히는 과목입니다."),
+        ("이산수학", "1학년", "2학기", "전공기초", "논리, 집합, 관계 등 컴퓨터과학에 필요한 수학 기초를 다지는 과목입니다."),
+        ("자료구조", "2학년", "1학기", "전공", "데이터 저장 구조와 처리 방법을 체계적으로 배우는 핵심 과목입니다."),
+        ("Java프로그래밍", "2학년", "2학기", "전공", "객체지향 프로그래밍의 기본 구조와 구현 방법을 학습하는 과목입니다."),
+        ("운영체제", "3학년", "1학기", "전공", "프로세스, 메모리, 파일 시스템 등 운영체제 원리를 배우는 과목입니다."),
+        ("데이터베이스시스템", "3학년", "2학기", "전공", "데이터 모델링과 데이터베이스 관리의 핵심 개념을 다루는 과목입니다."),
+        ("인공지능", "3학년", "1학기", "전공", "인공지능의 기본 이론과 응용 분야를 학습하는 과목입니다."),
+        ("컴퓨터그래픽스", "4학년", "1학기", "전공", "그래픽 표현과 처리 원리를 다루는 심화 과목입니다."),
+    ]
+    return [
+        {
+            "title": name,
+            "course_name": name,
+            "grade": grade,
+            "semester": semester,
+            "category": category,
+            "feature_summary": summary,
+            "detail_url": KNOWN_COURSE_DETAIL_URLS.get(name, ""),
+            "source_url": KNOWN_COURSE_DETAIL_URLS.get(name, CURRICULUM_URL),
+            "fallback_url": CURRICULUM_URL,
+        }
+        for name, grade, semester, category, summary in fallback_rows
+    ]
+
+
+def _fallback_notice_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "title": "컴퓨터과학과 공지사항",
+            "date": "",
+            "description": "저장된 최신 공지 데이터가 부족합니다. 공식 공지사항 페이지에서 최신 공지를 확인해 주세요.",
+            "source_url": NOTICE_URL,
+            "fallback_url": NOTICE_URL,
+            "link_label": "공지 바로가기",
+        },
+        {
+            "title": "학사 및 수강 관련 공지",
+            "date": "",
+            "description": "수강신청, 시험, 과제 등 학사 공지는 공식 공지사항에서 확인할 수 있습니다.",
+            "source_url": NOTICE_URL,
+            "fallback_url": NOTICE_URL,
+            "link_label": "공지 바로가기",
+        },
+        {
+            "title": "학과 행사 및 안내 공지",
+            "date": "",
+            "description": "학과 행사와 주요 안내도 공식 공지사항 페이지에 함께 게시됩니다.",
+            "source_url": NOTICE_URL,
+            "fallback_url": NOTICE_URL,
+            "link_label": "공지 바로가기",
+        },
+    ]
+
+
+def _fallback_schedule_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "title": "학과 일정 공식 페이지",
+            "start_date": "",
+            "end_date": "",
+            "description": "저장된 일정 데이터가 부족합니다. 공식 학과 일정 페이지에서 최신 일정을 확인해 주세요.",
+            "category": "학과일정",
+            "source_url": SCHEDULE_URL,
+            "fallback_url": SCHEDULE_URL,
+            "link_label": "학과 일정 바로가기",
+        },
+        {
+            "title": "수강 및 평가 일정 확인",
+            "start_date": "",
+            "end_date": "",
+            "description": "수강신청, 시험, 평가 등 주요 일정은 공식 학과 일정 페이지를 기준으로 확인해 주세요.",
+            "category": "학과일정",
+            "source_url": SCHEDULE_URL,
+            "fallback_url": SCHEDULE_URL,
+            "link_label": "학과 일정 바로가기",
+        },
+        {
+            "title": "학과 주요 안내 일정",
+            "start_date": "",
+            "end_date": "",
+            "description": "졸업논문, 등록, 학사 안내 등 학과 주요 일정은 공식 페이지에서 최신 상태로 제공됩니다.",
+            "category": "학과일정",
+            "source_url": SCHEDULE_URL,
+            "fallback_url": SCHEDULE_URL,
+            "link_label": "학과 일정 바로가기",
+        },
+    ]
+
+
 def build_notice_empty_response(
     *,
     started: float,
     keywords: list[str] | None = None,
 ) -> dict[str, Any]:
     """공지 데이터가 없을 때 LLM 확인 대신 공식 공지 링크로 안내한다."""
+    items = _fallback_notice_items()
     return {
         "answer": "컴퓨터과학과 최근 공지 안내입니다.",
         "answer_type": "notice_list",
-        "summary": "현재 저장된 공식 데이터에서 최근 공지를 찾지 못했습니다.\n공식 공지사항 페이지에서 확인할 수 있습니다.",
-        "items": [],
+        "summary": "저장된 최신 공지 데이터가 부족해 공식 공지 확인 항목을 안내드립니다.",
+        "items": items,
         "display_limit": 3,
-        "total_count": 0,
+        "total_count": len(items),
         "source_urls": [NOTICE_URL],
         "actions": [{"type": "link", "label": "공지 더보기", "url": NOTICE_URL}],
         "mode": "DB검색",
@@ -988,13 +1102,14 @@ def build_priority_intent_response(
 
 
 def build_schedule_unavailable_response(started: float, question: str = "") -> dict[str, Any]:
+    items = _fallback_schedule_items()
     return {
         "answer": "학과 일정 안내입니다.",
         "answer_type": "schedule_list",
-        "summary": "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다.\n학과 일정은 공식 홈페이지에서 확인할 수 있습니다.",
-        "items": [],
+        "summary": "저장된 최신 일정 데이터가 부족해 공식 일정 확인 항목을 안내드립니다.",
+        "items": items,
         "display_limit": 3,
-        "total_count": 0,
+        "total_count": len(items),
         "actions": [{"type": "link", "label": "학과 일정 바로가기", "url": SCHEDULE_URL}],
         "source_urls": [SCHEDULE_URL],
         "sources": [{"title": "컴퓨터과학과 학과 일정", "url": SCHEDULE_URL, "score": 0}],
@@ -1754,7 +1869,12 @@ def build_curriculum_by_grade_response(
     keywords: list[str],
     started: float,
 ) -> dict[str, Any]:
+    if not items:
+        items = _fallback_curriculum_items()
     groups = _representative_courses_by_grade(items)
+    if not any(group.get("items") for group in groups):
+        items = _fallback_curriculum_items()
+        groups = _representative_courses_by_grade(items)
     curriculum_url = safe_official_url(source_url or CURRICULUM_URL)
     return {
         "answer": "컴퓨터과학과 교육과정 안내입니다.",

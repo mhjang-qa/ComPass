@@ -463,6 +463,10 @@ function translateButtonLabel(label = "") {
   };
   if (!raw) return buttonLabel("link");
   if (currentLanguage !== "en") return englishToKo[raw] || raw;
+  const facultyExpandMatch = raw.match(/^전체\s*교수진\s*보기\s*\((\d+)\s*명\)$/);
+  if (facultyExpandMatch) return `View All Faculty (${facultyExpandMatch[1]})`;
+  const genericExpandMatch = raw.match(/^전체\s*(?:보기|일정 보기|공지 보기|교육과정 보기)\s*\((\d+)\s*개\)$/);
+  if (genericExpandMatch) return `View All (${genericExpandMatch[1]})`;
   const exact = {
     [I18N.ko.buttons.curriculumMore]: buttonLabel("curriculumMore"),
     "전체 교육과정 바로가기": buttonLabel("curriculumMore"),
@@ -502,12 +506,35 @@ function actionText(label) {
   return `${translateButtonLabel(label)} ↗`;
 }
 
+function expandButtonLabel(answerType, totalCount, fallbackLabel = "") {
+  const raw = String(fallbackLabel || "").trim();
+  if (currentLanguage === "en") {
+    if (answerType === "faculty") return `View All Faculty (${totalCount})`;
+    if (raw) return translateButtonLabel(raw);
+    return `View All (${totalCount})`;
+  }
+  if (answerType === "faculty") return `전체 교수진 보기 (${totalCount}명)`;
+  if (raw && !/^View\s+/i.test(raw)) return raw;
+  return `전체 보기 (${totalCount}개)`;
+}
+
 function updateRenderedButtonLabels() {
   $$("[data-action-label-ko]").forEach((node) => {
     node.textContent = actionText(node.dataset.actionLabelKo);
   });
   $$("[data-button-label-ko]").forEach((node) => {
     node.textContent = translateButtonLabel(node.dataset.buttonLabelKo);
+  });
+  $$("[data-expand-button='true']").forEach((node) => {
+    if (node.dataset.expanded === "true") {
+      node.textContent = cardText("compactView");
+      return;
+    }
+    node.textContent = expandButtonLabel(
+      node.dataset.answerType || "",
+      Number(node.dataset.totalCount || 0),
+      node.dataset.expandLabelKo || "",
+    );
   });
 }
 
@@ -1278,16 +1305,19 @@ function appendExpandButton(container, cards, totalCount, answerType, messageRow
   button.type = "button";
   button.className = "answer-expand";
   const action = (payload.actions || []).find((item) => item.type === "expand");
-  const expandedLabel = action?.label
-    || (answerType === "faculty"
-      ? (currentLanguage === "en" ? `View All Faculty (${totalCount})` : `전체 교수진 보기 (${totalCount}명)`)
-      : (currentLanguage === "en" ? `View All (${totalCount})` : `전체 보기 (${totalCount}개)`));
+  button.dataset.expandButton = "true";
+  button.dataset.answerType = answerType;
+  button.dataset.totalCount = String(totalCount);
+  button.dataset.expandLabelKo = action?.label || "";
+  button.dataset.expanded = "false";
+  const expandedLabel = expandButtonLabel(answerType, totalCount, action?.label);
   button.textContent = expandedLabel;
   button.setAttribute("aria-expanded", "false");
   button.addEventListener("click", () => {
     expanded = !expanded;
+    button.dataset.expanded = String(expanded);
     cards.slice(limit).forEach((card) => card.classList.toggle("is-collapsed-item", !expanded));
-    button.textContent = expanded ? cardText("compactView") : expandedLabel;
+    button.textContent = expanded ? cardText("compactView") : expandButtonLabel(answerType, totalCount, action?.label);
     button.setAttribute("aria-expanded", String(expanded));
     scrollMessageIntoView(expanded ? cards[limit] : messageRow);
   });
@@ -1781,6 +1811,12 @@ function addI18nSystemMessage(key) {
 }
 
 function ensureIntroMessage() {
+  const rows = messages.querySelectorAll('[data-intro-message="true"]');
+  rows.forEach((node) => node.remove());
+  if (document.querySelector(".welcome-card")) {
+    return null;
+  }
+
   let row = messages.querySelector('[data-intro-message="true"]');
   if (!row) {
     row = addMessage("bot", safeText("welcomeMessage"), [], false, { isWelcome: true });

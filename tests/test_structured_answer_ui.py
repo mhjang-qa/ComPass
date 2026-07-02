@@ -74,9 +74,10 @@ def test_welcome_message_uses_bot_bubble_and_language_popup_is_disabled() -> Non
     assert "chat-intro" not in html + script
     assert 'const DEFAULT_LANG = "ko"' in script
     assert 'setLanguage(localStorage.getItem(LANGUAGE_KEY) || DEFAULT_LANG)' in script
-    assert 'addMessage("bot", safeText("welcomeMessage")' in script
     assert "ensureIntroMessage();" in script
-    assert 'row.className = "message bot with-avatar welcome-message message-row assistant"' in script
+    assert 'messages.querySelectorAll(\'[data-intro-message="true"]\')' in script
+    assert 'document.querySelector(".welcome-card")' in script
+    assert "return null;" in script
     assert 'bubble?.classList.add("message-bubble", "assistant-bubble")' in script
     assert ".welcome-message .assistant-bubble" in style
     assert ".welcome-card" in style
@@ -135,7 +136,11 @@ def test_response_buttons_are_localized_on_language_change() -> None:
     assert 'endSearch: "End Search"' in script
     assert '"인공지능": "AI"' in script
     assert "function translateButtonLabel(label = \"\")" in script
+    assert "function expandButtonLabel(answerType, totalCount, fallbackLabel = \"\")" in script
     assert "function updateRenderedButtonLabels()" in script
+    assert "View All Faculty (${facultyExpandMatch[1]})" in script
+    assert "button.dataset.expandButton" in script
+    assert "node.dataset.expanded" in script
     assert 'link.dataset.actionLabelKo = action.label || buttonLabel("link")' in script
     assert 'link.textContent = actionText(link.dataset.actionLabelKo)' in script
     assert "updateRenderedButtonLabels();" in script

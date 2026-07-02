@@ -228,7 +228,27 @@ def test_schedule_quick_intent_falls_back_to_official_external_url(tmp_path: Pat
     result = answer_question("컴퓨터과학과 학과 일정을 알려줘", index=index, forced_intent="schedule")
 
     assert result["answer_type"] == "schedule_list"
-    assert result["items"] == []
-    assert "현재 저장된 공식 데이터에서 학과 일정을 찾지 못했습니다." in result["summary"]
+    assert len(result["items"]) == 3
+    assert "공식 일정 확인 항목" in result["summary"]
+    assert all(item["source_url"] == SCHEDULE_URL for item in result["items"])
     assert result["actions"] == [{"type": "link", "label": "학과 일정 바로가기", "url": SCHEDULE_URL}]
     assert result["actions"][0]["url"].startswith("https://cs.knou.ac.kr/")
+
+
+def test_empty_quick_intents_still_return_card_items(tmp_path: Path) -> None:
+    index = SearchIndex(tmp_path / "empty-quick.json")
+    index.rebuild([])
+
+    curriculum = answer_question("컴퓨터과학과 교육과정을 알려줘", index=index, forced_intent="curriculum")
+    notice = answer_question("컴퓨터과학과 최근 공지를 알려줘", index=index, forced_intent="notice")
+    schedule = answer_question("컴퓨터과학과 학과 일정을 알려줘", index=index, forced_intent="schedule")
+
+    assert curriculum["answer_type"] == "course_table"
+    assert len(curriculum["items"]) >= 3
+    assert curriculum["actions"][-1]["label"] == "교육과정 더보기"
+    assert notice["answer_type"] == "notice_list"
+    assert len(notice["items"]) == 3
+    assert notice["actions"][-1]["label"] == "공지 더보기"
+    assert schedule["answer_type"] == "schedule_list"
+    assert len(schedule["items"]) == 3
+    assert schedule["actions"][-1]["url"] == SCHEDULE_URL

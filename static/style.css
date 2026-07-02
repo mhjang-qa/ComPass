@@ -636,7 +636,7 @@ th { color: var(--muted); font-size: .77rem; }
   .app-shell.widget-window {
     right: 8px;
     bottom: max(8px, env(safe-area-inset-bottom));
-    width: calc(100vw - 16px);
+    width: calc(100% - 16px);
     height: min(680px, calc(100dvh - 16px));
     min-height: 480px;
     border-radius: 20px;
@@ -646,8 +646,8 @@ th { color: var(--muted); font-size: .77rem; }
     inset: 0 !important;
     right: auto !important;
     bottom: auto !important;
-    width: 100vw !important;
-    max-width: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
     height: var(--app-height, 100dvh) !important;
     max-height: none !important;
     min-height: 0 !important;
@@ -656,11 +656,18 @@ th { color: var(--muted); font-size: .77rem; }
     transform: none !important;
   }
   .app-shell.fullscreen, .app-shell.mobile-fullscreen { height: var(--app-height, 100dvh); min-height: 0; }
-  .mobile-fullscreen .topbar { min-height: 72px; padding: max(14px, env(safe-area-inset-top)) 16px 14px; }
+  .mobile-fullscreen .topbar {
+    width: 100%;
+    min-width: 0;
+    min-height: 72px;
+    padding: max(14px, env(safe-area-inset-top)) 12px 14px;
+    overflow: hidden;
+  }
   .mobile-fullscreen .topbar-logo { flex-basis: 40px; width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
   .mobile-fullscreen .topbar .eyebrow { display: none; }
+  .mobile-fullscreen .brand-title { min-width: 0; }
   .mobile-fullscreen .topbar h1 { margin: 0; font-size: 22px; }
-  .mobile-fullscreen .brand-copy { font-size: 12px; line-height: 1.18; }
+  .mobile-fullscreen .brand-copy { font-size: 12px; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mobile-fullscreen .app-subtitle span:last-child { font-size: 11px; }
   .mobile-fullscreen > main { overflow: hidden; }
   .mobile-fullscreen.admin-mode > main { min-height: 0; overflow: hidden; }
@@ -673,14 +680,29 @@ th { color: var(--muted); font-size: .77rem; }
     padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
   }
   .mobile-fullscreen #panel-chat { height: 100%; padding: 0; overflow: hidden; }
-  .mobile-fullscreen .chat-layout { width: 100%; max-width: none; height: 100%; border: 0; border-radius: 0; }
+  .mobile-fullscreen .chat-layout { width: 100%; max-width: 100%; height: 100%; border: 0; border-radius: 0; }
   .mobile-fullscreen .bot-mark { flex-basis: 40px; width: 40px; height: 40px; }
+  .mobile-fullscreen .window-actions { min-width: 0; gap: 6px; }
+  .mobile-fullscreen .language-menu { min-width: 0; }
+  .mobile-fullscreen .language-menu select { width: 88px; min-width: 72px; max-width: 88px; }
+  .mobile-fullscreen .window-actions button { width: 34px; height: 34px; }
   .mobile-fullscreen .chat-bottom {
     flex: 0 0 auto;
     padding-bottom: var(--safe-bottom);
   }
   .mobile-fullscreen .composer {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 0 12px max(10px, var(--safe-bottom));
+  }
+  .mobile-fullscreen .composer textarea {
+    min-width: 0;
+  }
+  .mobile-fullscreen .send-button {
+    width: 64px;
+    min-width: 64px;
+    max-width: 64px;
   }
   .topbar { padding: 22px 18px; }
   .tabs { padding: 0 8px; }
@@ -726,7 +748,7 @@ th { color: var(--muted); font-size: .77rem; }
 }
 
 @media (max-width: 480px) {
-  .app-shell.widget-window { width: calc(100vw - 16px); }
+  .app-shell.widget-window { width: calc(100% - 16px); }
   .mobile-fullscreen .topbar { padding-inline: 12px; }
   .mobile-fullscreen .topbar h1 { font-size: 22px; }
   .mobile-fullscreen .brand-copy { font-size: 12px; }

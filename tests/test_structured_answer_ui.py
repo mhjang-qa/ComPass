@@ -39,7 +39,8 @@ def test_mobile_opens_fullscreen_and_handles_keyboard() -> None:
     assert 'document.body.classList.toggle("chat-mobile-open"' in script
     assert ".app-shell.mobile-fullscreen" in style
     assert "body.chat-mobile-open" in style
-    assert "width: 100vw !important" in style
+    assert "width: 100% !important" in style
+    assert "max-width: 100% !important" in style
     assert "height: var(--app-height, 100dvh)" in style
     assert "body.keyboard-open" in style
     assert "궁금한 컴퓨터과학과 정보를 질문해보세요" in html

@@ -244,10 +244,10 @@ def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]]
         return _result("faculty_detail", 0.99, entities, normalized, "교수명 직접 포함")
 
     course_name = entities.get("course_name")
-    if course_name and re.search(r"무슨\s*과목|어떤\s*과목|뭐야|뭐\s*배우|설명|소개|어떤\s*과목|어떤\s*수업", normalized):
-        return _result("course_detail", 0.94, entities, normalized, "과목 설명 질문")
     if course_name and re.search(r"난이도|어렵|힘든|공부량|들을만|수업\s*부담|학습\s*부담", normalized):
         return _result("course_difficulty", 0.92, entities, normalized, "과목 난이도 질문")
+    if course_name and re.search(r"무슨\s*과목|어떤\s*과목|뭐야|뭐\s*배우|설명|소개|어떤\s*과목|어떤\s*수업", normalized):
+        return _result("course_detail", 0.94, entities, normalized, "과목 설명 질문")
     if course_name and re.search(r"학점\s*잘|점수\s*잘|공부\s*어떻게|시험\s*준비|기말\s*준비|중간\s*준비|과제\s*준비|어떻게\s*(?:공부|준비)|잘하는\s*방법|A\+?\s*받|성적\s*잘", normalized, re.IGNORECASE):
         return _result("course_study_tip", 0.93, entities, normalized, "과목 공부법/성적 전략 질문")
     if course_name and re.search(r"[ABC]\s*(?:이상|받|맞)|성적\s*잘|점수\s*잘|잘하려면|맞으려면|받으려면|공부법|시험\s*대비|학습\s*전략|어떻게\s*(?:공부|준비)", normalized, re.IGNORECASE):

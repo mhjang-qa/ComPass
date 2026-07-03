@@ -534,6 +534,16 @@ def analyze_question_intent(question: str, index: SearchIndex | None = None) -> 
     routed = route_intent(question, catalogs=catalogs)
     if routed.get("intent") == "exam" and EXAM_SCOPE_RE.search(question or ""):
         routed = {**routed, "intent": "exam_scope"}
+    raw_intent = routed.get("intent")
+    course_name = detect_course_name(question, index)
+    if course_name and COURSE_DIFFICULTY_RE.search(question or "") and raw_intent != "course_difficulty":
+        routed = {
+            **routed,
+            "raw_intent": raw_intent,
+            "intent": "course_difficulty",
+            "confidence": max(float(routed.get("confidence") or 0), 0.91),
+            "reason": "keyword:difficulty",
+        }
     return routed
 
 
@@ -2106,11 +2116,19 @@ def _short_course_feature(course: dict[str, Any]) -> str:
 def _course_detail_items(question: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # 과목 매칭
     compact_question = re.sub(r"\s+", "", question).lower()
+    target_course = detect_course_name(question)
+    compact_target = re.sub(r"\s+", "", target_course or "").lower()
     candidates = _course_items(hits)
     exact = [
         item
         for item in candidates
-        if re.sub(r"\s+", "", item.get("course_name") or "").lower() in compact_question
+        if (
+            re.sub(r"\s+", "", item.get("course_name") or "").lower() in compact_question
+            or (
+                compact_target
+                and re.sub(r"\s+", "", item.get("course_name") or "").lower() == compact_target
+            )
+        )
     ]
     selected = exact[:1] or candidates[:1]
     return [
@@ -2836,7 +2854,11 @@ def is_incomplete_llm_answer(text: str, raw_meta: dict[str, Any] | None = None) 
         return True, "TOO_SHORT"
     meta = raw_meta or {}
     finish_reason = str(meta.get("finish_reason") or "").upper()
-    if finish_reason in {"MAX_TOKENS", "SAFETY", "RECITATION", "OTHER"}:
+    if finish_reason == "MAX_TOKENS":
+        if len(clean) >= 50:
+            return False, "PARTIAL_MAX_TOKENS"
+        return True, "MAX_TOKENS"
+    if finish_reason in {"SAFETY", "RECITATION", "OTHER"}:
         return True, finish_reason
     if raw_meta is not None:
         if int(meta.get("candidates_len") or 0) <= 0:
@@ -3069,6 +3091,7 @@ def _course_difficulty_response(
             session_id=session_id,
             request_id=request_id,
         )
+    partial_success = bool(getattr(LLM_CALL_STATE, "partial_success", False))
     advice_text = remove_duplicate_overview(advice_text, official_overview)
     difficulty_advice = _difficulty_advice_object(course_name, item, advice_text)
     response_item = {
@@ -3086,7 +3109,8 @@ def _course_difficulty_response(
     }
     return {
         "answer": f"{course_name} 과목의 학습 부담 안내입니다.",
-        "answer_type": "course_difficulty",
+        "answer_type": "llm_partial_success" if partial_success else "course_difficulty",
+        "structured_intent": "course_difficulty",
         "summary": official_overview,
         "official_overview": official_overview,
         "difficulty_advice": difficulty_advice,
@@ -3100,7 +3124,8 @@ def _course_difficulty_response(
         ],
         "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
-        "mode": "LLM",
+        "mode": "LLM_PARTIAL" if partial_success else "LLM",
+        "llm_finish_reason": "MAX_TOKENS" if partial_success else "STOP",
         "llm_type": "course_difficulty",
         "course_name": course_name,
         "score": 100 if items else 0,
@@ -3567,19 +3592,32 @@ def _openai(prompt: str) -> str:
 
 
 def _gemini_request(prompt: str, model: str, api_key: str, key_label: str = "") -> str:
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.8,
-                "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS,
+    generation_config: dict[str, Any] = {
+        "temperature": 0.2,
+        "topP": 0.8,
+        "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS,
+    }
+    if "2.5" in model and getattr(config, "GEMINI_THINKING_BUDGET", 0) >= 0:
+        generation_config["thinkingConfig"] = {
+            "thinkingBudget": config.GEMINI_THINKING_BUDGET,
+        }
+
+    def post_with_config(current_config: dict[str, Any]) -> requests.Response:
+        return requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            params={"key": api_key},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": current_config,
             },
-        },
-        timeout=config.LLM_TIMEOUT_SEC,
-    )
+            timeout=config.LLM_TIMEOUT_SEC,
+        )
+
+    response = post_with_config(generation_config)
+    if response.status_code == 400 and "thinkingConfig" in generation_config:
+        fallback_config = {key: value for key, value in generation_config.items() if key != "thinkingConfig"}
+        logger.warning("[LLM][RETRY] provider=gemini model=%s reason=thinking_config_rejected", model)
+        response = post_with_config(fallback_config)
     response.raise_for_status()
     raw = response.json()
     text = extract_gemini_text(raw)
@@ -3799,6 +3837,7 @@ def call_llm_helper(
     try:
         LLM_CALL_STATE.request_id = request_short
         LLM_CALL_STATE.raw_meta = None
+        LLM_CALL_STATE.partial_success = False
         raw_answer = call_llm_raw(prompt)
         raw_meta = getattr(LLM_CALL_STATE, "raw_meta", None)
         incomplete, reason = is_incomplete_llm_answer(raw_answer, raw_meta)
@@ -3810,6 +3849,7 @@ def call_llm_helper(
             len(raw_answer or ""),
         )
         if not incomplete:
+            LLM_CALL_STATE.partial_success = reason == "PARTIAL_MAX_TOKENS"
             answer = sanitize_llm_response(raw_answer, question)
             LLM_LAST_ERROR.update({"code": "", "message": "", "provider": provider, "model": model})
             return answer
@@ -3843,6 +3883,7 @@ def call_llm_helper(
                 len(retry_raw or ""),
             )
             if not retry_incomplete:
+                LLM_CALL_STATE.partial_success = retry_reason == "PARTIAL_MAX_TOKENS"
                 retry_answer = sanitize_llm_response(retry_raw, question)
                 LLM_LAST_ERROR.update({"code": "", "message": "", "provider": provider, "model": model})
                 return retry_answer
@@ -3943,11 +3984,17 @@ def answer_question(
     if followup_meta.get("is_followup") and followup_meta.get("expanded_query"):
         clean_question = sanitize_input(str(followup_meta["expanded_query"]))
     routed_for_log = analyze_question_intent(clean_question, index)
+    raw_intent_for_log = routed_for_log.get("raw_intent") or routed_for_log.get("intent")
+    final_intent_for_log = (
+        followup_meta.get("intent") if followup_meta.get("is_followup") else routed_for_log.get("intent")
+    )
     logger.info(
-        "[INTENT] query=%r intent=%s confidence=%.2f",
+        "[INTENT] query=%r raw_intent=%s final_intent=%s confidence=%.2f reason=%s",
         original_question,
-        followup_meta.get("intent") if followup_meta.get("is_followup") else routed_for_log.get("intent"),
+        raw_intent_for_log,
+        final_intent_for_log,
         float(routed_for_log.get("confidence") or 0),
+        routed_for_log.get("reason") or "",
     )
 
     def finish(response: dict[str, Any]) -> dict[str, Any]:

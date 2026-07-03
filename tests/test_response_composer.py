@@ -43,6 +43,7 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "손진곤 교수 이메일": "faculty_detail",
         "인공지능이 뭐야": "course_detail",
         "인공지능 어렵나요": "course_difficulty",
+        "데이터베이스 과목 어려워?": "course_difficulty",
         "인공지능 C이상 맞으려면": "course_grade_strategy",
         "컴퓨터그래픽스 학점 잘 받으려면": "course_study_tip",
         "데이터베이스시스템 듣기 전에 뭐 알아야 해": "course_order",
@@ -435,6 +436,110 @@ def test_gemini_incomplete_detection_uses_finish_reason() -> None:
 
     assert incomplete is True
     assert reason == "MAX_TOKENS"
+
+
+def test_gemini_max_tokens_with_usable_text_is_partial_success() -> None:
+    from chatbot import is_incomplete_llm_answer
+
+    text = (
+        "데이터베이스시스템은 데이터 모델링과 SQL 개념을 함께 다루므로 처음에는 용어가 낯설 수 있습니다. "
+        "공식 난이도 정보는 제공되지 않아 참고용 안내입니다."
+    )
+    incomplete, reason = is_incomplete_llm_answer(
+        text,
+        {"finish_reason": "MAX_TOKENS", "candidates_len": 1, "parts_len": 1},
+    )
+
+    assert incomplete is False
+    assert reason == "PARTIAL_MAX_TOKENS"
+
+
+def test_database_difficulty_prefers_specific_course(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild(
+        [
+            {
+                "title": "3학년 편입생 및 입문자 과목 추천",
+                "category": "검증지식",
+                "document_type": "검증지식",
+                "body": "3학년 편입생에게 추천하는 과목 안내입니다.",
+                "summary": "추천 과목",
+                "source_url": "https://cs.knou.ac.kr/sites/cs1/index.do",
+            },
+            {
+                "title": "데이터베이스시스템 과목 안내",
+                "category": "교과정보 > 교과목안내 > 과목상세",
+                "document_type": "과목상세",
+                "body": "데이터베이스시스템은 데이터 모델링과 데이터베이스 관리 개념을 학습한다.",
+                "summary": "데이터베이스시스템 공식 과목 정보",
+                "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-db",
+                "normalized_items": [
+                    {
+                        "course_name": "데이터베이스시스템",
+                        "overview": "데이터 모델링과 데이터베이스 관리 개념을 학습하는 과목입니다.",
+                        "topics": ["데이터 모델링", "SQL", "트랜잭션"],
+                    }
+                ],
+            },
+        ]
+    )
+
+    result = answer_question("데이터베이스 과목 어려워?", index=index)
+
+    assert result["answer_type"] == "llm_confirmation_required"
+    assert result["course_name"] == "데이터베이스시스템"
+    assert result["score"] == 100
+    assert result["sources"][0]["title"] == "데이터베이스시스템 공식 과목 정보"
+    assert result["source_urls"][0].endswith("#course-db")
+
+
+def test_course_difficulty_partial_llm_response_is_returned(tmp_path, monkeypatch) -> None:
+    import chatbot
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild(
+        [
+            {
+                "title": "데이터베이스시스템 과목 안내",
+                "category": "교과정보 > 교과목안내 > 과목상세",
+                "document_type": "과목상세",
+                "body": "데이터베이스시스템은 데이터 모델링과 데이터베이스 관리 개념을 학습한다.",
+                "summary": "데이터베이스시스템 공식 과목 정보",
+                "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-db",
+                "normalized_items": [
+                    {
+                        "course_name": "데이터베이스시스템",
+                        "overview": "데이터 모델링과 데이터베이스 관리 개념을 학습하는 과목입니다.",
+                        "topics": ["데이터 모델링", "SQL", "트랜잭션"],
+                    }
+                ],
+            }
+        ]
+    )
+
+    def fake_call_llm_raw(prompt: str) -> str:
+        chatbot.LLM_CALL_STATE.raw_meta = {"finish_reason": "MAX_TOKENS", "candidates_len": 1, "parts_len": 1}
+        return (
+            "체감 난이도: 참고용으로는 보통 수준입니다.\n"
+            "어렵게 느껴질 수 있는 부분: 데이터 모델링과 SQL 용어입니다.\n"
+            "필요한 준비: 기본 데이터 개념을 먼저 정리하세요.\n"
+            "학습 팁: 예시 데이터로 SQL을 직접 확인하세요."
+        )
+
+    monkeypatch.setattr("chatbot.call_llm_raw", fake_call_llm_raw)
+
+    result = answer_question("데이터베이스시스템 어려워?", allow_llm=True, index=index)
+
+    assert result["answer_type"] == "llm_partial_success"
+    assert result["structured_intent"] == "course_difficulty"
+    assert result["mode"] == "LLM_PARTIAL"
+    assert result["llm_finish_reason"] == "MAX_TOKENS"
+    assert result["course_name"] == "데이터베이스시스템"
 
 
 def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:

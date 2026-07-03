@@ -61,6 +61,16 @@ LLM_PROVIDER = env("LLM_PROVIDER", "openai").lower()
 OPENAI_API_KEY = env("OPENAI_API_KEY")
 OPENAI_MODEL = env("OPENAI_MODEL", "gpt-4.1-mini")
 GEMINI_API_KEY = env("GEMINI_API_KEY")
+GEMINI_API_KEYS = [
+    key
+    for key in [
+        env("GEMINI_API_KEY"),
+        env("GEMINI_API_KEY_2"),
+        env("GEMINI_API_KEY_3"),
+        env("GEMINI_API_KEY_4"),
+    ]
+    if key
+]
 GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_FALLBACK_MODELS = [
     model.strip()

@@ -226,6 +226,7 @@ def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, 
 
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(config, "GEMINI_API_KEYS", [])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
     index = SearchIndex(tmp_path / "course-index.json")
     index.rebuild(
@@ -268,6 +269,7 @@ def test_course_difficulty_llm_timeout_returns_structured_failure(tmp_path, monk
 
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["test-key"])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
     monkeypatch.setattr("chatbot.requests.post", timeout_post)
     index = SearchIndex(tmp_path / "course-index.json")
@@ -326,6 +328,7 @@ def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:
 
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["test-key"])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.5-flash")
     monkeypatch.setattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-2.0-flash"])
     monkeypatch.setattr("chatbot.requests.post", fake_post)
@@ -333,6 +336,48 @@ def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:
 
     assert chatbot.call_llm_raw("hello") == "fallback model answer"
     assert calls == ["gemini-2.5-flash", "gemini-2.0-flash"]
+    chatbot.LLM_COOLDOWN_UNTIL.clear()
+
+
+def test_gemini_quota_failover_uses_secondary_api_key(monkeypatch) -> None:
+    import config
+    import requests
+    import chatbot
+
+    keys_used: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, text: str = "") -> None:
+            self.status_code = status_code
+            self.text = text
+            self._text = text
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                error = requests.HTTPError(f"HTTP {self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self) -> dict:
+            return {"candidates": [{"content": {"parts": [{"text": self._text}]}}]}
+
+    def fake_post(url, **kwargs):
+        api_key = kwargs["params"]["key"]
+        keys_used.append(api_key)
+        if api_key == "primary-key":
+            return FakeResponse(429, "RESOURCE_EXHAUSTED quota exceeded")
+        return FakeResponse(200, "secondary key answer")
+
+    monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "primary-key")
+    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["primary-key", "secondary-key"])
+    monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
+    monkeypatch.setattr(config, "GEMINI_FALLBACK_MODELS", [])
+    monkeypatch.setattr("chatbot.requests.post", fake_post)
+    chatbot.LLM_COOLDOWN_UNTIL.clear()
+
+    assert chatbot.call_llm_raw("hello") == "secondary key answer"
+    assert keys_used == ["primary-key", "secondary-key"]
     chatbot.LLM_COOLDOWN_UNTIL.clear()
 
 

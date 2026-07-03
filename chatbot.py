@@ -3336,10 +3336,10 @@ def _openai(prompt: str) -> str:
     return "".join(parts).strip()
 
 
-def _gemini_request(prompt: str, model: str) -> str:
+def _gemini_request(prompt: str, model: str, api_key: str) -> str:
     response = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": config.GEMINI_API_KEY},
+        params={"key": api_key},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
@@ -3363,8 +3363,26 @@ def _gemini_models_to_try() -> list[str]:
     return list(dict.fromkeys(model for model in models if model))
 
 
+def _gemini_api_keys_to_try() -> list[str]:
+    keys = getattr(config, "GEMINI_API_KEYS", []) or [config.GEMINI_API_KEY]
+    return list(dict.fromkeys(key for key in keys if key))
+
+
+def _is_quota_error(error: LLMCallError) -> bool:
+    text = f"{error.code} {error.detail}".lower()
+    return (
+        error.code == "LLM_RATE_LIMIT"
+        or "resource_exhausted" in text
+        or "quota exceeded" in text
+        or "rate limit exceeded" in text
+        or "too many requests" in text
+        or "http 429" in text
+    )
+
+
 def _gemini(prompt: str) -> str:
-    if not config.GEMINI_API_KEY:
+    api_keys = _gemini_api_keys_to_try()
+    if not api_keys:
         raise LLMCallError("LLM_API_KEY_MISSING", detail="GEMINI_API_KEY is not configured")
     if not config.GEMINI_MODEL:
         raise LLMCallError("LLM_MODEL_MISSING", detail="GEMINI_MODEL is not configured")
@@ -3374,26 +3392,53 @@ def _gemini(prompt: str) -> str:
             logger.info("[LLM][SKIP] provider=gemini model=%s reason=cooldown", model)
             last_error = LLMCallError("LLM_RATE_LIMIT", detail=f"Gemini model in cooldown: {model}")
             continue
-        try:
-            return _gemini_request(prompt, model)
-        except requests.Timeout as exc:
-            last_error = LLMCallError("LLM_TIMEOUT", detail=f"Gemini request timed out model={model}")
-            break
-        except requests.HTTPError as exc:
-            last_error = _llm_http_error(exc, model=model)
-            _set_llm_cooldown("gemini", model, last_error.code)
-            if last_error.code not in {"LLM_RATE_LIMIT", "LLM_PROVIDER_ERROR"}:
+        for key_index, api_key in enumerate(api_keys, start=1):
+            try:
+                result = _gemini_request(prompt, model, api_key)
+                if key_index > 1:
+                    logger.info("[Gemini Failover Success] Using GEMINI_API_KEY_%d", key_index)
+                return result
+            except requests.Timeout as exc:
+                last_error = LLMCallError("LLM_TIMEOUT", detail=f"Gemini request timed out model={model} key_index={key_index}")
                 break
-            logger.warning("[LLM][RETRY] provider=gemini model=%s code=%s trying_fallback=true", model, last_error.code)
-            continue
-        except requests.RequestException as exc:
-            last_error = LLMCallError("LLM_PROVIDER_ERROR", detail=f"{type(exc).__name__} model={model}")
-            _set_llm_cooldown("gemini", model, last_error.code)
-            continue
-        except LLMCallError as exc:
-            last_error = exc
-            _set_llm_cooldown("gemini", model, exc.code)
-            if exc.code not in {"LLM_PROVIDER_ERROR"}:
+            except requests.HTTPError as exc:
+                last_error = _llm_http_error(exc, model=model)
+                if _is_quota_error(last_error) and key_index < len(api_keys):
+                    exhausted_label = "Primary Key" if key_index == 1 else f"GEMINI_API_KEY_{key_index}"
+                    logger.warning(
+                        "[Gemini Failover] %s Quota Exceeded",
+                        exhausted_label,
+                    )
+                    logger.warning(
+                        "[Gemini Failover] Switching to GEMINI_API_KEY_%d",
+                        key_index + 1,
+                    )
+                    continue
+                _set_llm_cooldown("gemini", model, last_error.code)
+                if last_error.code not in {"LLM_RATE_LIMIT", "LLM_PROVIDER_ERROR"}:
+                    break
+                logger.warning("[LLM][RETRY] provider=gemini model=%s code=%s trying_fallback_model=true", model, last_error.code)
+                break
+            except requests.RequestException as exc:
+                last_error = LLMCallError("LLM_PROVIDER_ERROR", detail=f"{type(exc).__name__} model={model} key_index={key_index}")
+                _set_llm_cooldown("gemini", model, last_error.code)
+                break
+            except LLMCallError as exc:
+                last_error = exc
+                if _is_quota_error(exc) and key_index < len(api_keys):
+                    exhausted_label = "Primary Key" if key_index == 1 else f"GEMINI_API_KEY_{key_index}"
+                    logger.warning(
+                        "[Gemini Failover] %s Quota Exceeded",
+                        exhausted_label,
+                    )
+                    logger.warning(
+                        "[Gemini Failover] Switching to GEMINI_API_KEY_%d",
+                        key_index + 1,
+                    )
+                    continue
+                _set_llm_cooldown("gemini", model, exc.code)
+                if exc.code not in {"LLM_PROVIDER_ERROR"}:
+                    break
                 break
     if last_error:
         _set_llm_cooldown("gemini", "*", last_error.code)
@@ -3403,11 +3448,13 @@ def _gemini(prompt: str) -> str:
 
 def _llm_http_error(exc: requests.HTTPError, *, model: str = "") -> LLMCallError:
     status_code = getattr(exc.response, "status_code", 0) or 0
+    response_text = sanitize_input(str(getattr(exc.response, "text", "") or ""), 160)
+    suffix = f"{f' model={model}' if model else ''}{f' body={response_text}' if response_text else ''}"
     if status_code == 429:
-        return LLMCallError("LLM_RATE_LIMIT", detail=f"provider returned HTTP {status_code}{f' model={model}' if model else ''}")
+        return LLMCallError("LLM_RATE_LIMIT", detail=f"provider returned HTTP {status_code}{suffix}")
     if status_code == 400:
-        return LLMCallError("LLM_BAD_REQUEST", detail=f"provider returned HTTP {status_code}{f' model={model}' if model else ''}")
-    return LLMCallError("LLM_PROVIDER_ERROR", detail=f"provider returned HTTP {status_code}{f' model={model}' if model else ''}")
+        return LLMCallError("LLM_BAD_REQUEST", detail=f"provider returned HTTP {status_code}{suffix}")
+    return LLMCallError("LLM_PROVIDER_ERROR", detail=f"provider returned HTTP {status_code}{suffix}")
 
 
 def _record_llm_error(provider: str, model: str, exc: LLMCallError) -> None:
@@ -3422,23 +3469,27 @@ def _record_llm_error(provider: str, model: str, exc: LLMCallError) -> None:
 def get_llm_health_status() -> dict[str, Any]:
     provider = (config.LLM_PROVIDER or "").strip().lower()
     if provider == "gemini":
-        configured = bool(config.GEMINI_API_KEY)
+        configured = bool(_gemini_api_keys_to_try())
         model = config.GEMINI_MODEL or "gemini-2.0-flash"
         fallback_models = getattr(config, "GEMINI_FALLBACK_MODELS", [])
+        key_count = len(_gemini_api_keys_to_try())
     elif provider == "openai":
         configured = bool(config.OPENAI_API_KEY)
         model = config.OPENAI_MODEL
         fallback_models = []
+        key_count = 1 if config.OPENAI_API_KEY else 0
     else:
         configured = False
         model = ""
         fallback_models = []
+        key_count = 0
     cooldown_remaining = max(0, round(LLM_COOLDOWN_UNTIL.get(_llm_cooldown_key(provider, "*"), 0) - time.time()))
     return {
         "provider": provider,
         "configured": configured,
         "model": model,
         "fallback_models": fallback_models,
+        "key_count": key_count,
         "intent_classifier_enabled": bool(config.ENABLE_LLM_INTENT_CLASSIFIER),
         "last_error": LLM_LAST_ERROR.get("code") or "",
         "cooldown_remaining_sec": cooldown_remaining,

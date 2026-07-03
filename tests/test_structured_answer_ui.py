@@ -55,6 +55,13 @@ def test_actions_support_expand_link_and_confirm_llm() -> None:
     assert "confirm-actions" in script
     assert "inlineTarget" in script
     assert "llm-inline-status" in script
+    assert "friendlyLlmErrorMessage" in script
+    assert "[CHAT_REQUEST]" in script
+    assert "[CHAT_RESPONSE]" in script
+    assert "[REQUEST]" in script
+    assert "window.chatSubmitting" in script
+    assert "row.dataset.llmPending" in script
+    assert "markResponseRendered" in script
 
 
 def test_chat_pending_state_disables_duplicate_inputs() -> None:
@@ -63,7 +70,7 @@ def test_chat_pending_state_disables_duplicate_inputs() -> None:
 
     assert "let isChatPending = false" in script
     assert "function setChatPending(pending)" in script
-    assert "if (isChatPending) return;" in script
+    assert "window.chatSubmitting || isChatPending" in script
     assert "답변을 준비하고 있습니다..." in script
     assert "$$(\"[data-question]\").forEach((button) => {" in script
     assert ".app-shell.is-pending .quick-actions button" in style

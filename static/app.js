@@ -19,7 +19,9 @@ let adminPassword = "";
 const mobilePointer = window.matchMedia("(pointer: coarse)");
 const pendingRequests = new Map();
 const pendingByQuestion = new Map();
+const renderedRequestIds = new Set();
 let isChatPending = false;
+window.chatSubmitting = window.chatSubmitting || false;
 let indexReady = false;
 let startupGateActive = true;
 let coldStartActive = false;
@@ -1773,16 +1775,29 @@ function llmStatusText(key) {
   const messages = {
     ko: {
       loading: "LLM 보조 답변을 생성 중입니다...",
-      failed: "현재 LLM 보조 답변을 불러오지 못했습니다. 공식 데이터 기준으로 다시 확인해 주세요.",
-      network: "네트워크 또는 LLM 응답 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+      timeout: "답변 생성 시간이 길어지고 있습니다.\n잠시 후 다시 시도해주세요.",
+      quota: "현재 AI 응답 요청이 많습니다.\n잠시 후 다시 시도해주세요.",
+      failed: "AI 답변 생성 중 문제가 발생했습니다.\n잠시 후 다시 시도해주세요.",
+      network: "AI 답변 생성 중 문제가 발생했습니다.\n잠시 후 다시 시도해주세요.",
     },
     en: {
       loading: "Generating the AI helper answer...",
-      failed: "The AI helper answer could not be loaded. Please check the official data instead.",
-      network: "A network or AI helper response error occurred. Please try again later.",
+      timeout: "The answer is taking longer than expected.\nPlease try again shortly.",
+      quota: "AI answer requests are high right now.\nPlease try again shortly.",
+      failed: "A problem occurred while generating the AI answer.\nPlease try again shortly.",
+      network: "A problem occurred while generating the AI answer.\nPlease try again shortly.",
     },
   };
   return messages[currentLanguage]?.[key] || messages.ko[key] || "";
+}
+
+function friendlyLlmErrorMessage(errorOrPayload) {
+  const code = String(errorOrPayload?.error_code || errorOrPayload?.code || errorOrPayload?.kind || "");
+  const text = String(errorOrPayload?.message || errorOrPayload?.user_message || errorOrPayload?.answer || errorOrPayload?.detail || errorOrPayload?.messageText || "");
+  const combined = `${code} ${text}`.toLowerCase();
+  if (/timeout|abort|시간/.test(combined)) return llmStatusText("timeout");
+  if (/quota|rate.limit|resource_exhausted|429|too many requests/.test(combined)) return llmStatusText("quota");
+  return llmStatusText("failed");
 }
 
 function ensureInlineLlmStatus(messageRow) {
@@ -1805,6 +1820,20 @@ function showInlineLlmStatus(messageRow, text, state = "loading") {
   scrollMessageIntoView(messageRow);
 }
 
+function removeInlineLlmStatus(messageRow) {
+  const status = messageRow?.querySelector?.(".llm-inline-status");
+  if (status) status.remove();
+}
+
+function markResponseRendered(requestId) {
+  if (!requestId) return false;
+  if (renderedRequestIds.has(requestId) || messages.querySelector(`[data-request-id="${requestId}"]`)) {
+    return true;
+  }
+  renderedRequestIds.add(requestId);
+  return false;
+}
+
 function renderInlineLlmResult(messageRow, payload) {
   const textParts = [];
   if (payload?.answer) textParts.push(payload.answer);
@@ -1823,8 +1852,12 @@ function renderInlineLlmResult(messageRow, payload) {
 }
 
 function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
+  if (role === "bot" && payload.request_id && markResponseRendered(payload.request_id)) {
+    return messages.querySelector(`[data-request-id="${payload.request_id}"]`);
+  }
   const row = document.createElement("div");
   row.className = `message ${role}`;
+  if (payload.request_id) row.dataset.requestId = payload.request_id;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   const renderers = answerRenderers();
@@ -1857,6 +1890,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     yes.dataset.buttonLabelKo = confirmAction?.label || I18N.ko.buttons.useAiHelper;
     yes.textContent = translateButtonLabel(yes.dataset.buttonLabelKo);
     yes.onclick = () => {
+      if (row.dataset.llmPending === "true" || row.dataset.llmDone === "true") return;
+      row.dataset.llmPending = "true";
       yes.disabled = true;
       no.disabled = true;
       actions.remove();
@@ -1867,6 +1902,8 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
         context: payload.context || {},
         skipUserBubble: true,
         inlineTarget: row,
+      }).catch(() => {
+        showInlineLlmStatus(row, llmStatusText("failed"), "error");
       });
     };
     const no = document.createElement("button");
@@ -1909,8 +1946,12 @@ function typeIntoElement(node, text) {
 }
 
 async function addTypedRagMessage(text, sources = [], payload = {}) {
+  if (payload.request_id && markResponseRendered(payload.request_id)) {
+    return messages.querySelector(`[data-request-id="${payload.request_id}"]`);
+  }
   const row = document.createElement("div");
   row.className = "message bot";
+  if (payload.request_id) row.dataset.requestId = payload.request_id;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   const lead = document.createElement("div");
@@ -2048,16 +2089,35 @@ async function sendQuestion(raw, options = {}) {
   const inlineTarget = options.inlineTarget || null;
   const question = raw.trim();
   if (!question) return;
-  if (isChatPending) return;
+  if (window.chatSubmitting || isChatPending) {
+    if (inlineTarget) {
+      showInlineLlmStatus(inlineTarget, llmStatusText("failed"), "error");
+      inlineTarget.dataset.llmPending = "false";
+    }
+    return;
+  }
   if (!indexReady && !coldStartActive) {
     rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
+    if (inlineTarget) {
+      showInlineLlmStatus(inlineTarget, llmStatusText("timeout"), "error");
+      inlineTarget.dataset.llmPending = "false";
+    }
     startServerRecovery();
     return;
   }
+  window.chatSubmitting = true;
   const requestId = newRequestId();
+  console.log("[CHAT_REQUEST]", requestId, question, allowLlm);
   const duplicateController = pendingByQuestion.get(question);
   if (duplicateController && !allowLlm) {
     duplicateController.abort();
+  } else if (duplicateController && allowLlm) {
+    if (inlineTarget) {
+      showInlineLlmStatus(inlineTarget, llmStatusText("failed"), "error");
+      inlineTarget.dataset.llmPending = "false";
+    }
+    window.chatSubmitting = false;
+    return;
   }
   const controller = new AbortController();
   pendingByQuestion.set(question, controller);
@@ -2086,9 +2146,15 @@ async function sendQuestion(raw, options = {}) {
           context,
         }),
       });
+      console.log("[CHAT_RESPONSE]", requestId, result?.answer_type || result?.status || "");
+      console.log("[REQUEST]", result?.request_id || requestId, result?.answer_type || result?.status || "");
       if (isColdStartCondition(result)) {
         rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
         waiting.remove();
+        if (inlineTarget) {
+          showInlineLlmStatus(inlineTarget, llmStatusText("timeout"), "error");
+          inlineTarget.dataset.llmPending = "false";
+        }
         startServerRecovery();
         return;
       }
@@ -2098,6 +2164,10 @@ async function sendQuestion(raw, options = {}) {
     } while (pendingRequests.has(requestId));
     if (!pendingRequests.has(requestId) || result.request_id !== requestId) {
       waiting.remove();
+      if (inlineTarget) {
+        showInlineLlmStatus(inlineTarget, llmStatusText("failed"), "error");
+        inlineTarget.dataset.llmPending = "false";
+      }
       return;
     }
     waiting.remove();
@@ -2105,13 +2175,15 @@ async function sendQuestion(raw, options = {}) {
     if (inlineTarget && (result.ok === false || result.answer_type === "llm_fallback_failed")) {
       showInlineLlmStatus(
         inlineTarget,
-        result.user_message || result.message || result.answer || llmStatusText("failed"),
+        friendlyLlmErrorMessage(result),
         "error",
       );
+      inlineTarget.dataset.llmDone = "true";
       return;
     }
     if (inlineTarget) {
       renderInlineLlmResult(inlineTarget, result);
+      inlineTarget.dataset.llmDone = "true";
       return;
     }
     let answer = result.answer;
@@ -2128,16 +2200,25 @@ async function sendQuestion(raw, options = {}) {
   } catch (error) {
     if (error.name === "AbortError") {
       waiting.remove();
+      if (inlineTarget) {
+        showInlineLlmStatus(inlineTarget, llmStatusText("timeout"), "error");
+        inlineTarget.dataset.llmPending = "false";
+      }
       return;
     }
     waiting.remove();
     if (isColdStartCondition(error)) {
       rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
+      if (inlineTarget) {
+        showInlineLlmStatus(inlineTarget, llmStatusText("timeout"), "error");
+        inlineTarget.dataset.llmPending = "false";
+      }
       startServerRecovery();
       return;
     }
     if (inlineTarget) {
-      showInlineLlmStatus(inlineTarget, llmStatusText("network"), "error");
+      showInlineLlmStatus(inlineTarget, friendlyLlmErrorMessage(error), "error");
+      inlineTarget.dataset.llmDone = "true";
       return;
     }
     const prefix =
@@ -2150,6 +2231,8 @@ async function sendQuestion(raw, options = {}) {
   } finally {
     pendingRequests.delete(requestId);
     if (pendingByQuestion.get(question) === controller) pendingByQuestion.delete(question);
+    if (inlineTarget) inlineTarget.dataset.llmPending = "false";
+    window.chatSubmitting = false;
     setChatPending(false);
     if (!isMobileDevice()) {
       $("#question").focus({ preventScroll: true });
@@ -2159,6 +2242,8 @@ async function sendQuestion(raw, options = {}) {
 
 $("#chatForm").addEventListener("submit", (event) => {
   event.preventDefault();
+  event.stopPropagation();
+  if (window.chatSubmitting) return;
   if (isChatPending || !indexReady || startupGateActive || coldStartActive) return;
   const value = $("#question").value;
   $("#question").value = "";
@@ -2172,6 +2257,7 @@ $("#languageSelect")?.addEventListener("change", (event) => {
 $("#question").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
+    event.stopPropagation();
     $("#chatForm").requestSubmit();
   }
 });

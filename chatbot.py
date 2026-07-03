@@ -386,11 +386,15 @@ def contextualize(question: str, history: list[dict[str, Any]] | None) -> str:
 
 
 FOLLOWUP_EXPAND_RE = re.compile(r"더\s*알려|자세히|좀\s*더|계속|상세히|추가로|전체\s*보기|더보기|그\s*다음|이어서는|위\s*내용")
-FOLLOWUP_CONTEXT_RE = re.compile(r"그건|그거|그것|그\s*과목|그\s*교수|그\s*수업|그럼|그러면|위\s*내용|앞(?:의|에)\s*내용")
+FOLLOWUP_CONTEXT_RE = re.compile(r"해당\s*과목|이\s*과목|그\s*과목|방금\s*과목|앞에\s*말한\s*과목|위\s*과목|이거|그건|그거|그것|방금\s*거|그\s*교수|그\s*수업|그럼|그러면|위\s*내용|앞(?:의|에)\s*내용")
 FOLLOWUP_ELLIPSIS_RE = re.compile(r"^(?:난이도|공부법|시험|학점|과제|선수\s*과목|수강\s*순서)(?:은|는)?\??$")
 NEW_QUESTION_ENTITY_RE = re.compile(r"교수(?:님|진)?|공지|교육과정|커리큘럼|졸업|장학금|수강\s*신청|학사\s*일정|학과\s*일정")
 QUESTION_ENDING_RE = re.compile(r"(?:누구야|언제야|어려워|알려줘|뭐야|있어|있나요|인가요|인가|나요|야)\??$")
 STUDY_TIP_RE = re.compile(r"학점\s*잘|점수\s*잘|공부\s*어떻게|시험\s*준비|기말\s*준비|중간\s*준비|과제\s*준비|어떻게\s*공부|잘하는\s*방법|A\\+?\s*받|성적\s*잘", re.IGNORECASE)
+COURSE_STUDY_FOLLOWUP_RE = re.compile(
+    r"공부하는\s*방법|어떻게\s*공부|학습\s*방법|준비\s*방법|선수\s*지식|어려운\s*부분|평가\s*방식|과제|시험",
+    re.IGNORECASE,
+)
 
 
 def _history_topics(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -416,6 +420,8 @@ def _history_topics(history: list[dict[str, Any]] | None) -> list[dict[str, Any]
 def _followup_intent(question: str, base_intent: str = "") -> str:
     if FOLLOWUP_EXPAND_RE.search(question):
         return "followup_expand"
+    if COURSE_STUDY_FOLLOWUP_RE.search(question):
+        return "course_study_advice"
     if STUDY_TIP_RE.search(question) or COURSE_GRADE_STRATEGY_RE.search(question):
         return "course_grade_strategy"
     if COURSE_DIFFICULTY_RE.search(question):
@@ -438,6 +444,8 @@ def _expanded_followup_query(question: str, course_name: str, intent: str, base_
         return f"{course_name} {target}" if course_name else f"{question} 더 자세히 알려줘"
     if intent == "course_grade_strategy":
         return f"{course_name} 학점 잘 받는 방법을 알려줘"
+    if intent == "course_study_advice":
+        return f"{course_name} {question}".strip()
     if intent == "course_difficulty":
         return f"{course_name} 난이도와 학습 부담을 알려줘"
     if intent == "course_order":
@@ -453,6 +461,7 @@ def _has_followup_reference(question: str) -> bool:
         FOLLOWUP_EXPAND_RE.search(clean)
         or FOLLOWUP_CONTEXT_RE.search(clean)
         or FOLLOWUP_ELLIPSIS_RE.search(clean)
+        or COURSE_STUDY_FOLLOWUP_RE.search(clean)
     )
 
 
@@ -515,13 +524,16 @@ def resolve_followup_question(question: str, history: list[dict[str, Any]] | Non
         return _followup_reject("new_question_signal", question, base_intent, predicted_intent)
     if not has_reference:
         return _followup_reject("no_reference_word", question, base_intent, predicted_intent)
+    intent = _followup_intent(question, base_intent)
+    compatible_predicted = {base_intent, intent, "general_search", "out_of_scope"}
+    if intent == "course_study_advice":
+        compatible_predicted.update({"course_difficulty", "course_grade_strategy", "course_detail", "exam", "exam_scope", "general_explain"})
     if (
         predicted_intent
-        and predicted_intent not in {"general_search", "out_of_scope", base_intent}
+        and predicted_intent not in compatible_predicted
         and not predicted_intent.startswith("followup")
     ):
         return _followup_reject("intent_changed", question, base_intent, predicted_intent)
-    intent = _followup_intent(question, base_intent)
     expanded = _expanded_followup_query(question, base_course, intent, base_intent)
     previous_user = _last_user_question(history)
     if previous_user and _similarity(expanded, previous_user) > 0.85:
@@ -534,6 +546,7 @@ def resolve_followup_question(question: str, history: list[dict[str, Any]] | Non
         "intent": intent,
         "entities": {"course_name": base_course} if base_course else {},
         "expanded_query": expanded,
+        "resolved_from": "last_course_name" if base_course else "",
     }
     logger.info(
         "[HISTORY] resolved=%s base_intent=%s course_name=%s expanded_query=%r",
@@ -703,6 +716,8 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
         return "campus_location"
     if EXAM_SCOPE_RE.search(question):
         return "exam_scope"
+    if course_name and COURSE_STUDY_FOLLOWUP_RE.search(question):
+        return "course_study_advice"
     if course_name and COURSE_GRADE_STRATEGY_RE.search(question):
         return "course_grade_strategy"
     if NOTICE_EXPLAIN_RE.search(question):
@@ -759,6 +774,8 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
     course_name = detect_course_name(question, index)
     if EXAM_SCOPE_RE.search(question):
         return "exam_scope"
+    if course_name and COURSE_STUDY_FOLLOWUP_RE.search(question):
+        return "course_study_advice"
     if course_name and COURSE_GRADE_STRATEGY_RE.search(question):
         return "course_grade_strategy"
     if course_name and COURSE_ORDER_RE.search(question):
@@ -792,6 +809,7 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         "faculty",
         "campus_location",
         "course_grade_strategy",
+        "course_study_advice",
         "exam_scope",
         "course_recommendation",
         "course_order",
@@ -808,6 +826,8 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         return "schedule_explain"
     if COURSE_ROADMAP_RE.search(question):
         return "course_roadmap"
+    if course_name and COURSE_STUDY_FOLLOWUP_RE.search(question):
+        return "course_study_advice"
     if course_name and COURSE_ORDER_RE.search(question):
         return "course_order"
     if course_name and COURSE_DIFFICULTY_RE.search(question):
@@ -853,7 +873,7 @@ def retrieve_documents(
     }.get(intent, intent)
     top_k = 20 if search_intent in {"notice_list", "schedule_list", "faq_list"} else config.SEARCH_TOP_K
     filters: dict[str, Any] = {"source_types": ["official"]}
-    if search_intent in {"course_recommendation", "course_detail", "course_difficulty", "course_grade_strategy", "course_order", "course_roadmap"}:
+    if search_intent in {"course_recommendation", "course_detail", "course_difficulty", "course_grade_strategy", "course_study_advice", "course_order", "course_roadmap"}:
         course = index.detect_course(question)
         filters.update({
             "document_types": list(COURSE_DOCUMENT_TYPES),
@@ -3125,6 +3145,76 @@ def _course_grade_strategy_response(
     }
 
 
+def _course_item_from_catalog(course_name: str, index: SearchIndex | None = None) -> dict[str, Any]:
+    if index and hasattr(index, "detect_course"):
+        detected = index.detect_course(course_name)
+        if detected:
+            return dict(detected)
+    return {
+        "course_name": course_name,
+        "overview": "공식 교과목 안내에 등록된 과목입니다.",
+        "source_url": KNOWN_COURSE_DETAIL_URLS.get(course_name, COURSE_GUIDE_URL),
+        "fallback_url": COURSE_FULL_GUIDE_URL,
+    }
+
+
+def _course_study_advice_response(
+    question: str,
+    course_name: str,
+    items: list[dict[str, Any]],
+    started: float,
+    *,
+    index: SearchIndex | None = None,
+    session_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    item = items[0] if items else _course_item_from_catalog(course_name, index)
+    source_url = _course_link(item, course_name)
+    topics = item.get("topics") or item.get("detail_topics") or []
+    topic_text = ", ".join(str(topic) for topic in topics[:5] if str(topic).strip())
+    summary = (
+        f"{course_name}은 {topic_text} 등을 차근차근 정리하면서 학습하면 도움이 됩니다."
+        if topic_text
+        else f"{course_name}은 공식 교과목 안내를 기준으로 핵심 개념을 먼저 정리하면서 학습하면 도움이 됩니다."
+    )
+    return {
+        "answer": f"{course_name} 과목 학습 방법 안내입니다.",
+        "answer_type": "course_study_advice",
+        "structured_intent": "course_study_advice",
+        "course_name": course_name,
+        "summary": summary,
+        "items": [
+            {
+                "label": "학습 순서",
+                "value": "교재 목차와 강의 흐름에 맞춰 기본 용어와 핵심 개념을 먼저 정리해 주세요.",
+            },
+            {
+                "label": "공부 방법",
+                "value": "정의와 기호를 눈으로만 보지 말고, 예제 문제를 직접 풀면서 개념이 어떻게 적용되는지 확인해 주세요.",
+            },
+            {
+                "label": "주의할 점",
+                "value": "처음부터 어려운 문제에 집중하기보다 대표 유형과 자주 나오는 개념을 먼저 익히는 것이 좋습니다.",
+            },
+        ],
+        "display_limit": 3,
+        "total_count": 3,
+        "actions": [
+            {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
+        ],
+        "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
+        "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100 if items else 0}],
+        "mode": "DB검색",
+        "score": 100 if items else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "session_id": session_id,
+        "request_id": request_id,
+        "requires_llm_confirmation": False,
+    }
+
+
 def _course_difficulty_response(
     question: str,
     course_name: str,
@@ -4176,6 +4266,54 @@ def normalize_campus_location_response(response: dict[str, Any]) -> dict[str, An
     return response
 
 
+def _known_course_names_for_validation() -> set[str]:
+    return {name for name in {*KNOWN_COURSE_NAMES, *KNOWN_COURSE_NAMES_EXTRA, *COURSE_NAME_ALIASES.values()} if name}
+
+
+def validate_course_response(response: dict[str, Any]) -> dict[str, Any]:
+    course_name = str(response.get("course_name") or "").strip()
+    if not course_name:
+        return response
+    if not response.get("context_resolved") and not response.get("followup"):
+        return response
+    course_names = _known_course_names_for_validation()
+    other_names = [name for name in course_names if name != course_name and normalize_course_key(name) != normalize_course_key(course_name)]
+    fields: list[str] = []
+    for item in response.get("items") or []:
+        if isinstance(item, dict):
+            fields.extend(str(item.get(key) or "") for key in ("title", "course_name", "link_label"))
+    for source in response.get("sources") or []:
+        if isinstance(source, dict):
+            fields.append(str(source.get("title") or ""))
+    for action in response.get("actions") or []:
+        if isinstance(action, dict):
+            fields.append(str(action.get("label") or ""))
+    blob = "\n".join(fields)
+    mismatch = next((name for name in other_names if name and name in blob), "")
+    if not mismatch:
+        return response
+    source_url = response.get("source_urls", [COURSE_FULL_GUIDE_URL])[0] if response.get("source_urls") else COURSE_FULL_GUIDE_URL
+    response.update(
+        {
+            "answer": f"{course_name} 과목 안내입니다.",
+            "summary": f"{course_name} 기준으로 다시 안내합니다. 다른 과목 정보가 섞이지 않도록 공식 과목 정보 기준으로만 답변합니다.",
+            "items": [],
+            "display_limit": 0,
+            "total_count": 0,
+            "sources": [
+                source
+                for source in response.get("sources", [])
+                if isinstance(source, dict) and course_name in str(source.get("title") or "")
+            ],
+            "actions": [{"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url}],
+            "source_mismatch_corrected": True,
+            "source_mismatch_course": mismatch,
+        }
+    )
+    logger.warning("[COURSE_GUARD] course=%s removed_mismatch=%s", course_name, mismatch)
+    return response
+
+
 def apply_data_tier_notice(response: dict[str, Any], hits: list[dict[str, Any]]) -> dict[str, Any]:
     if not any((hit.get("data_tier") or "") == "IMPORTANT_ARCHIVE" for hit in hits):
         return response
@@ -4245,6 +4383,10 @@ def answer_question(
             response["followup"] = followup_meta
             response["original_query"] = original_question
             response["resolved_query"] = clean_question
+            response["context_resolved"] = bool(followup_meta.get("resolved_from_history"))
+            response["resolved_from"] = followup_meta.get("resolved_from") or "history"
+            response.setdefault("course_name", (followup_meta.get("entities") or {}).get("course_name") or "")
+        response = validate_course_response(response)
         if response.get("answer_type") == "campus_location" or response.get("structured_intent") == "campus_location":
             response["answer_policy"] = {
                 "mode": "single_link",
@@ -4345,6 +4487,19 @@ def answer_question(
         response["session_id"] = session_id
         response["request_id"] = request_id
         return finish(response)
+    if initial_intent == "course_study_advice":
+        course_name = detect_course_name(clean_question, index)
+        hits = retrieve_documents(index, clean_question, "course_study_advice")
+        items = normalize_results("course_detail", hits, clean_question)
+        return finish(_course_study_advice_response(
+            clean_question,
+            course_name,
+            items,
+            started,
+            index=index,
+            session_id=session_id,
+            request_id=request_id,
+        ))
     if initial_intent == "course_grade_strategy":
         course_name = detect_course_name(clean_question, index)
         hits = retrieve_documents(index, clean_question, "course_grade_strategy")

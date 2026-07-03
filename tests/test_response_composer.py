@@ -502,6 +502,101 @@ def test_reference_phrase_can_reuse_course_history(tmp_path) -> None:
     assert "컴퓨터그래픽스" in result["resolved_query"]
 
 
+def test_followup_course_study_advice_keeps_last_course(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "이산수학",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "이산수학은 집합, 명제, 관계, 함수, 그래프를 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-discrete",
+            "normalized_items": [
+                {
+                    "course_name": "이산수학",
+                    "overview": "집합, 명제, 관계, 함수, 그래프를 학습하는 과목입니다.",
+                    "topics": ["집합", "명제", "관계", "함수", "그래프"],
+                }
+            ],
+        },
+        {
+            "title": "인공지능",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "인공지능은 탐색과 추론을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-ai",
+            "normalized_items": [
+                {
+                    "course_name": "인공지능",
+                    "overview": "탐색과 추론을 학습하는 과목입니다.",
+                    "topics": ["탐색", "추론"],
+                }
+            ],
+        },
+    ])
+    history = [
+        {"role": "user", "content": "이산수학 어려워?"},
+        {
+            "role": "assistant",
+            "content": "이산수학 과목의 학습 부담 안내입니다.",
+            "intent": "course_difficulty",
+            "entities": {"course_name": "이산수학"},
+        },
+    ]
+
+    result = answer_question("해당 과목을 공부하는 방법은?", history=history, index=index)
+
+    assert result["answer_type"] == "course_study_advice"
+    assert result["structured_intent"] == "course_study_advice"
+    assert result["course_name"] == "이산수학"
+    assert result["context_resolved"] is True
+    assert result["resolved_from"] == "last_course_name"
+    assert result["original_query"] == "해당 과목을 공부하는 방법은?"
+    assert "이산수학" in result["resolved_query"]
+    assert "인공지능" not in str(result)
+
+
+def test_followup_study_pattern_without_pronoun_uses_last_course(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "데이터베이스시스템",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "데이터베이스시스템은 데이터 모델링과 관리 개념을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-db",
+            "normalized_items": [
+                {
+                    "course_name": "데이터베이스시스템",
+                    "overview": "데이터 모델링과 데이터베이스 관리 개념을 학습하는 과목입니다.",
+                    "topics": ["데이터 모델링", "SQL", "정규화"],
+                }
+            ],
+        }
+    ])
+    history = [
+        {
+            "role": "assistant",
+            "content": "데이터베이스시스템 과목의 학습 부담 안내입니다.",
+            "intent": "course_difficulty",
+            "entities": {"course_name": "데이터베이스시스템"},
+        },
+    ]
+
+    result = answer_question("시험은 어떻게 준비해?", history=history, index=index)
+
+    assert result["answer_type"] == "course_study_advice"
+    assert result["course_name"] == "데이터베이스시스템"
+    assert result["context_resolved"] is True
+    assert "데이터베이스시스템" in result["resolved_query"]
+
+
 def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, monkeypatch) -> None:
     import config
     from chatbot import answer_question

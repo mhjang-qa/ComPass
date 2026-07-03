@@ -4132,30 +4132,22 @@ KNOU_CAMPUS_GUIDE_URL = "https://www.knou.ac.kr"
 def campus_location_response(question: str, started: float) -> dict[str, Any]:
     region_match = re.search(r"(서울|경기|인천|부산|대구|광주|대전|울산|강원|충북|충남|전북|전남|경북|경남|제주|세종)", question or "")
     region = region_match.group(1) if region_match else ""
+    summary = (
+        f"{region}지역대학 위치는 방송대 공식 홈페이지의 지역대학 안내에서 확인하실 수 있습니다. "
+        "주소와 운영 정보는 변경될 수 있으므로 방문 전 공식 페이지를 확인해 주세요."
+        if region
+        else (
+            "한국방송통신대학교 지역대학 및 학습관 위치는 공식 홈페이지의 지역대학 안내에서 확인하실 수 있습니다. "
+            "주소와 운영 정보는 변경될 수 있으므로 방문 전 공식 페이지를 확인해 주세요."
+        )
+    )
     return {
         "answer": "지역대학 위치 안내입니다.",
         "answer_type": "campus_location",
-        "summary": "한국방송통신대학교 지역대학 위치는 방송대 공식 홈페이지의 지역대학 안내에서 확인하실 수 있습니다.",
-        "items": [
-            {
-                "label": "확인 방법",
-                "value": "방송대 공식 홈페이지에서 지역대학 및 학습관별 주소와 연락처를 확인하실 수 있습니다.",
-            },
-            {
-                "label": "추가 안내",
-                "value": (
-                    f"{region} 지역대학 정보를 찾고 계신 경우, 공식 페이지에서 해당 지역의 주소와 운영 정보를 확인해 주세요."
-                    if region
-                    else "서울, 경기, 부산 등 찾으시는 지역명을 함께 입력해 주시면 더 정확하게 안내해 드릴 수 있습니다."
-                ),
-            },
-            {
-                "label": "주의 사항",
-                "value": "지역대학 주소와 운영 정보는 변경될 수 있으므로 방문 전 공식 페이지에서 최신 정보를 확인해 주세요.",
-            },
-        ],
-        "display_limit": 3,
-        "total_count": 3,
+        "summary": summary,
+        "items": [],
+        "display_limit": 0,
+        "total_count": 0,
         "actions": [
             {"type": "link", "label": "지역대학 안내 바로가기", "url": KNOU_CAMPUS_GUIDE_URL},
         ],
@@ -4169,6 +4161,19 @@ def campus_location_response(question: str, started: float) -> dict[str, Any]:
         "requires_llm_confirmation": False,
         "structured_intent": "campus_location",
     }
+
+
+def normalize_campus_location_response(response: dict[str, Any]) -> dict[str, Any]:
+    if response.get("answer_type") == "campus_location" or response.get("structured_intent") == "campus_location":
+        response["items"] = []
+        response["display_limit"] = 0
+        response["total_count"] = 0
+        response["answer_policy"] = {
+            "mode": "single_link",
+            "reason": "campus_location",
+            "max_items": 0,
+        }
+    return response
 
 
 def apply_data_tier_notice(response: dict[str, Any], hits: list[dict[str, Any]]) -> dict[str, Any]:
@@ -4235,16 +4240,24 @@ def answer_question(
     )
 
     def finish(response: dict[str, Any]) -> dict[str, Any]:
+        response = normalize_campus_location_response(response)
         if followup_meta.get("is_followup"):
             response["followup"] = followup_meta
             response["original_query"] = original_question
             response["resolved_query"] = clean_question
-        policy_mode = "expanded" if followup_meta.get("intent") == "followup_expand" else "compact"
-        response["answer_policy"] = {
-            "mode": policy_mode,
-            "reason": followup_meta.get("intent") or response.get("answer_type") or "",
-            "max_items": 5 if policy_mode == "expanded" else 3,
-        }
+        if response.get("answer_type") == "campus_location" or response.get("structured_intent") == "campus_location":
+            response["answer_policy"] = {
+                "mode": "single_link",
+                "reason": "campus_location",
+                "max_items": 0,
+            }
+        else:
+            policy_mode = "expanded" if followup_meta.get("intent") == "followup_expand" else "compact"
+            response["answer_policy"] = {
+                "mode": policy_mode,
+                "reason": followup_meta.get("intent") or response.get("answer_type") or "",
+                "max_items": 5 if policy_mode == "expanded" else 3,
+            }
         logger.info(
             "[ANSWER_POLICY] mode=%s reason=%s max_items=%s",
             response["answer_policy"]["mode"],

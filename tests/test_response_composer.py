@@ -87,11 +87,33 @@ def test_campus_location_answer_is_in_scope(tmp_path) -> None:
     assert result["llm_type"] == "campus_location"
     assert result["mode"] == "LLM"
     assert result["requires_llm_confirmation"] is False
+    assert result["items"] == []
+    assert result["display_limit"] == 0
+    assert result["total_count"] == 0
+    assert result["answer_policy"] == {
+        "mode": "single_link",
+        "reason": "campus_location",
+        "max_items": 0,
+    }
     assert result["actions"][0]["label"] == "지역대학 안내 바로가기"
     assert result["actions"][0]["url"] == "https://www.knou.ac.kr"
     assert "졸업" not in result["keywords"]
     assert "졸업요건" not in result["keywords"]
     assert "학위" not in result["keywords"]
+
+
+def test_campus_location_region_uses_single_summary(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    result = answer_question("대전지역대학 위치", index=SearchIndex(tmp_path / "empty.json"))
+
+    assert result["answer_type"] == "campus_location"
+    assert "대전지역대학 위치" in result["summary"]
+    assert result["items"] == []
+    assert result["display_limit"] == 0
+    assert result["total_count"] == 0
+    assert result["actions"][0]["label"] == "지역대학 안내 바로가기"
 
 
 def test_campus_location_english_localization() -> None:
@@ -110,6 +132,9 @@ def test_campus_location_english_localization() -> None:
 
     assert localized["answer"] == "Regional campus location information."
     assert localized["summary"] == "You can check regional campus and learning center locations on the official KNOU website."
+    assert localized["items"] == []
+    assert localized["display_limit"] == 0
+    assert localized["total_count"] == 0
     assert localized["actions"][0]["label"] == "View Regional Campus Information"
 
 

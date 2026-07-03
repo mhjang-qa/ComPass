@@ -294,20 +294,9 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
             result["summary"] = "No schedule items were found in the saved official data.\nYou can check the academic schedule on the official department page."
         elif answer_type == "campus_location":
             result["summary"] = summary
-            result["items"] = [
-                {
-                    "label": "How to check",
-                    "value": "You can check addresses and contact information for each regional campus and learning center on the official KNOU website.",
-                },
-                {
-                    "label": "Additional guidance",
-                    "value": "If you enter a region such as Seoul, Gyeonggi, or Busan, I can guide you more specifically.",
-                },
-                {
-                    "label": "Note",
-                    "value": "Campus addresses and operating information may change, so please confirm the latest information on the official page before visiting.",
-                },
-            ]
+            result["items"] = []
+            result["display_limit"] = 0
+            result["total_count"] = 0
         elif "3건" in original_summary or "3개" in original_summary or answer_type in {"notice_list", "schedule_list"}:
             result["summary"] = summary
         else:

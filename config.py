@@ -59,17 +59,21 @@ LLM_PROVIDER = env("LLM_PROVIDER", "openai").lower()
 OPENAI_API_KEY = env("OPENAI_API_KEY")
 OPENAI_MODEL = env("OPENAI_MODEL", "gpt-4.1-mini")
 GEMINI_API_KEY = env("GEMINI_API_KEY")
-GEMINI_API_KEYS = [
-    key
-    for key in [
-        env("GEMINI_API_KEY"),
-        env("GEMINI_API_KEY_2"),
-        env("GEMINI_API_KEY_3"),
-        env("GEMINI_API_KEY_4"),
-    ]
-    if key
+GEMINI_PRIMARY_KEY = env_int("GEMINI_PRIMARY_KEY", 3)
+_GEMINI_KEY_MAP = {
+    1: env("GEMINI_API_KEY"),
+    2: env("GEMINI_API_KEY_2"),
+    3: env("GEMINI_API_KEY_3"),
+    4: env("GEMINI_API_KEY_4"),
+}
+_GEMINI_KEY_ORDER = [GEMINI_PRIMARY_KEY, 2, 1, 3, 4]
+GEMINI_API_KEY_ENTRIES = [
+    (f"GEMINI_API_KEY_{number}" if number > 1 else "GEMINI_API_KEY", _GEMINI_KEY_MAP[number])
+    for number in dict.fromkeys(number for number in _GEMINI_KEY_ORDER if number in _GEMINI_KEY_MAP)
+    if _GEMINI_KEY_MAP[number]
 ]
-GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_KEYS = [key for _, key in GEMINI_API_KEY_ENTRIES]
+GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_FALLBACK_MODELS = [
     model.strip()
     for model in env("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash").split(",")

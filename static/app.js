@@ -1775,17 +1775,17 @@ function llmStatusText(key) {
   const messages = {
     ko: {
       loading: "LLM 보조 답변을 생성 중입니다...",
-      timeout: "답변 생성 시간이 길어지고 있습니다.\n잠시 후 다시 시도해주세요.",
-      quota: "현재 AI 응답 요청이 많습니다.\n잠시 후 다시 시도해주세요.",
-      failed: "AI 답변 생성 중 문제가 발생했습니다.\n잠시 후 다시 시도해주세요.",
-      network: "AI 답변 생성 중 문제가 발생했습니다.\n잠시 후 다시 시도해주세요.",
+      timeout: "답변 생성 시간이 길어져 AI 보조 답변을 완료하지 못했습니다.\n공식 데이터 기준으로 확인된 내용만 안내드립니다.",
+      quota: "현재 AI 응답 요청이 많아 보조 답변을 생성하지 못했습니다.\n공식 데이터 기준으로 확인된 내용만 안내드립니다.\n잠시 후 다시 시도할 수 있습니다.",
+      failed: "AI 보조 답변 생성 중 문제가 발생했습니다.\n공식 데이터 기준으로 확인된 내용만 안내드립니다.",
+      network: "AI 보조 답변 생성 중 문제가 발생했습니다.\n공식 데이터 기준으로 확인된 내용만 안내드립니다.",
     },
     en: {
       loading: "Generating the AI helper answer...",
-      timeout: "The answer is taking longer than expected.\nPlease try again shortly.",
-      quota: "AI answer requests are high right now.\nPlease try again shortly.",
-      failed: "A problem occurred while generating the AI answer.\nPlease try again shortly.",
-      network: "A problem occurred while generating the AI answer.\nPlease try again shortly.",
+      timeout: "The AI helper answer took too long to complete.\nI will show only the information confirmed from official data.",
+      quota: "AI answer requests are high right now, so the helper answer could not be generated.\nI will show only the information confirmed from official data.\nYou can try again shortly.",
+      failed: "A problem occurred while generating the AI helper answer.\nI will show only the information confirmed from official data.",
+      network: "A problem occurred while generating the AI helper answer.\nI will show only the information confirmed from official data.",
     },
   };
   return messages[currentLanguage]?.[key] || messages.ko[key] || "";
@@ -2172,7 +2172,12 @@ async function sendQuestion(raw, options = {}) {
     }
     waiting.remove();
     result.client_question = question;
-    if (inlineTarget && (result.ok === false || result.answer_type === "llm_fallback_failed")) {
+    if (inlineTarget && result.answer_type === "llm_fallback") {
+      renderInlineLlmResult(inlineTarget, result);
+      inlineTarget.dataset.llmDone = "true";
+      return;
+    }
+    if (inlineTarget && result.ok === false) {
       showInlineLlmStatus(
         inlineTarget,
         friendlyLlmErrorMessage(result),
@@ -2240,26 +2245,29 @@ async function sendQuestion(raw, options = {}) {
   }
 }
 
-$("#chatForm").addEventListener("submit", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  if (window.chatSubmitting) return;
-  if (isChatPending || !indexReady || startupGateActive || coldStartActive) return;
-  const value = $("#question").value;
-  $("#question").value = "";
-  sendQuestion(value);
-});
+if (!window.__chatBound) {
+  $("#chatForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (window.chatSubmitting) return;
+    if (isChatPending || !indexReady || startupGateActive || coldStartActive) return;
+    const value = $("#question").value;
+    $("#question").value = "";
+    sendQuestion(value);
+  });
+  $("#question").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      $("#chatForm").requestSubmit();
+    }
+  });
+  window.__chatBound = true;
+}
 
 $("#languageSelect")?.addEventListener("change", (event) => {
   localStorage.removeItem(QUICK_QUESTIONS_KEY);
   setLanguage(event.target.value);
-});
-$("#question").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    event.stopPropagation();
-    $("#chatForm").requestSubmit();
-  }
 });
 $("#question").addEventListener("focus", () => {
   updateAppHeight();

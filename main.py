@@ -243,16 +243,14 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
         return result
     answer_type = str(result.get("answer_type") or "")
     course_name = result.get("course_name") or ""
-    if answer_type == "llm_fallback_failed":
-        course_label = EN_COURSE_LABELS.get(course_name, course_name) or "this course"
+    if answer_type == "llm_fallback":
         message = (
-            f"The saved official data does not include perceived difficulty information for {course_label}.\n"
-            "The AI helper answer could not be loaded.\n"
-            "Please try again later or check the course information page for the overview and assessment details."
+            "The AI helper answer could not be completed right now.\n"
+            "I will show only the information confirmed from official data."
         )
         result["answer"] = message
         result["user_message"] = message
-        result["message"] = "The AI helper answer could not be generated."
+        result["message"] = message
         result["summary"] = "Official course information is still available."
         for action in result.get("actions") or []:
             label = action.get("label") or ""
@@ -312,6 +310,12 @@ def finalize_chat_response(req: ChatRequest, result: dict[str, Any], session_id:
     attach_request_metadata(result, session_id, request_id, req)
     remember_conversation(session_id, req.question, result)
     record_interaction_async(req.question, result)
+    logger.info(
+        "[CHAT][RETURN] request_id=%s answer_type=%s mode=%s",
+        request_id,
+        result.get("answer_type"),
+        result.get("mode"),
+    )
     return result
 
 
@@ -1029,6 +1033,12 @@ def index_loading_chat_response(req: ChatRequest, session_id: str, request_id: s
         "diagnostics": debug_index_payload(),
     }
     attach_request_metadata(result, session_id, request_id, req)
+    logger.info(
+        "[CHAT][RETURN] request_id=%s answer_type=%s mode=%s",
+        request_id,
+        result.get("answer_type"),
+        result.get("mode"),
+    )
     return result
 
 
@@ -1042,6 +1052,7 @@ def search_test(req: SearchRequest, x_admin_password: str | None = Header(defaul
 def chat(req: ChatRequest):
     session_id, request_id = request_ids(req)
     session_short = session_id[:8]
+    logger.info("[CHAT][RECV] request_id=%s allow_llm=%s", request_id, req.allow_llm)
     clean_question = sanitize_input(req.question)
     history = conversation_history(session_id, req.history)
     quick_intent = quick_intent_from_context(req.context)

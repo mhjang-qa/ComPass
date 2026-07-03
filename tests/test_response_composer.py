@@ -227,6 +227,7 @@ def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, 
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "")
     monkeypatch.setattr(config, "GEMINI_API_KEYS", [])
+    monkeypatch.setattr(config, "GEMINI_API_KEY_ENTRIES", [])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
     index = SearchIndex(tmp_path / "course-index.json")
     index.rebuild(
@@ -250,11 +251,13 @@ def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, 
 
     result = answer_question("인공지능 과목은 많이 어려워?", allow_llm=True, index=index, request_id="req-key")
 
-    assert result["ok"] is False
-    assert result["answer_type"] == "llm_fallback_failed"
+    assert result["ok"] is True
+    assert result["answer_type"] == "llm_fallback"
+    assert result["mode"] == "OFFICIAL_FALLBACK"
+    assert result["show_retry"] is True
     assert result["error_code"] == "LLM_API_KEY_MISSING"
     assert result["fallback_available"] is True
-    assert "현재 LLM 보조 답변을 불러오지 못했습니다" in result["user_message"]
+    assert "공식 데이터 기준으로 확인된 내용만 안내드립니다" in result["user_message"]
     assert "인공지능" in result["items"][0]["official_overview"]
 
 
@@ -270,6 +273,7 @@ def test_course_difficulty_llm_timeout_returns_structured_failure(tmp_path, monk
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(config, "GEMINI_API_KEYS", ["test-key"])
+    monkeypatch.setattr(config, "GEMINI_API_KEY_ENTRIES", [("GEMINI_API_KEY", "test-key")])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
     monkeypatch.setattr("chatbot.requests.post", timeout_post)
     index = SearchIndex(tmp_path / "course-index.json")
@@ -294,7 +298,8 @@ def test_course_difficulty_llm_timeout_returns_structured_failure(tmp_path, monk
 
     result = answer_question("인공지능 과목은 많이 어려워?", allow_llm=True, index=index, request_id="req-timeout")
 
-    assert result["answer_type"] == "llm_fallback_failed"
+    assert result["answer_type"] == "llm_fallback"
+    assert result["mode"] == "OFFICIAL_FALLBACK"
     assert result["error_code"] == "LLM_TIMEOUT"
 
 
@@ -329,6 +334,7 @@ def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(config, "GEMINI_API_KEYS", ["test-key"])
+    monkeypatch.setattr(config, "GEMINI_API_KEY_ENTRIES", [("GEMINI_API_KEY", "test-key")])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.5-flash")
     monkeypatch.setattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-2.0-flash"])
     monkeypatch.setattr("chatbot.requests.post", fake_post)
@@ -339,7 +345,7 @@ def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:
     chatbot.LLM_COOLDOWN_UNTIL.clear()
 
 
-def test_gemini_quota_failover_uses_secondary_api_key(monkeypatch) -> None:
+def test_gemini_quota_failover_uses_key_2_after_key_3(monkeypatch) -> None:
     import config
     import requests
     import chatbot
@@ -364,24 +370,29 @@ def test_gemini_quota_failover_uses_secondary_api_key(monkeypatch) -> None:
     def fake_post(url, **kwargs):
         api_key = kwargs["params"]["key"]
         keys_used.append(api_key)
-        if api_key == "primary-key":
+        if api_key == "third-key":
             return FakeResponse(429, "RESOURCE_EXHAUSTED quota exceeded")
-        return FakeResponse(200, "secondary key answer")
+        return FakeResponse(200, "key 2 answer")
 
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "primary-key")
-    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["primary-key", "secondary-key"])
+    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["third-key", "secondary-key", "primary-key"])
+    monkeypatch.setattr(config, "GEMINI_API_KEY_ENTRIES", [
+        ("GEMINI_API_KEY_3", "third-key"),
+        ("GEMINI_API_KEY_2", "secondary-key"),
+        ("GEMINI_API_KEY", "primary-key"),
+    ])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
     monkeypatch.setattr(config, "GEMINI_FALLBACK_MODELS", [])
     monkeypatch.setattr("chatbot.requests.post", fake_post)
     chatbot.LLM_COOLDOWN_UNTIL.clear()
 
-    assert chatbot.call_llm_raw("hello") == "secondary key answer"
-    assert keys_used == ["primary-key", "secondary-key"]
+    assert chatbot.call_llm_raw("hello") == "key 2 answer"
+    assert keys_used == ["third-key", "secondary-key"]
     chatbot.LLM_COOLDOWN_UNTIL.clear()
 
 
-def test_gemini_quota_failover_reaches_third_api_key(monkeypatch) -> None:
+def test_gemini_quota_failover_reaches_key_1_after_key_3_and_key_2(monkeypatch) -> None:
     import config
     import requests
     import chatbot
@@ -406,20 +417,25 @@ def test_gemini_quota_failover_reaches_third_api_key(monkeypatch) -> None:
     def fake_post(url, **kwargs):
         api_key = kwargs["params"]["key"]
         keys_used.append(api_key)
-        if api_key in {"primary-key", "secondary-key"}:
+        if api_key in {"third-key", "secondary-key"}:
             return FakeResponse(429, "RESOURCE_EXHAUSTED quota exceeded")
-        return FakeResponse(200, "third key answer")
+        return FakeResponse(200, "key 1 answer")
 
     monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "primary-key")
-    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["primary-key", "secondary-key", "third-key"])
+    monkeypatch.setattr(config, "GEMINI_API_KEYS", ["third-key", "secondary-key", "primary-key"])
+    monkeypatch.setattr(config, "GEMINI_API_KEY_ENTRIES", [
+        ("GEMINI_API_KEY_3", "third-key"),
+        ("GEMINI_API_KEY_2", "secondary-key"),
+        ("GEMINI_API_KEY", "primary-key"),
+    ])
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
     monkeypatch.setattr(config, "GEMINI_FALLBACK_MODELS", [])
     monkeypatch.setattr("chatbot.requests.post", fake_post)
     chatbot.LLM_COOLDOWN_UNTIL.clear()
 
-    assert chatbot.call_llm_raw("hello") == "third key answer"
-    assert keys_used == ["primary-key", "secondary-key", "third-key"]
+    assert chatbot.call_llm_raw("hello") == "key 1 answer"
+    assert keys_used == ["third-key", "secondary-key", "primary-key"]
     chatbot.LLM_COOLDOWN_UNTIL.clear()
 
 

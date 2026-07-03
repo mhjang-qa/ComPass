@@ -60,8 +60,10 @@ def test_actions_support_expand_link_and_confirm_llm() -> None:
     assert "[CHAT_RESPONSE]" in script
     assert "[REQUEST]" in script
     assert "window.chatSubmitting" in script
+    assert "window.__chatBound" in script
     assert "row.dataset.llmPending" in script
     assert "markResponseRendered" in script
+    assert 'result.answer_type === "llm_fallback"' in script
 
 
 def test_chat_pending_state_disables_duplicate_inputs() -> None:

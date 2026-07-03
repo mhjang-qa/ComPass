@@ -241,8 +241,12 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `LLM_PROVIDER` | `openai` 또는 `gemini` |
 | `OPENAI_API_KEY` | OpenAI 사용 시 API 키 |
 | `OPENAI_MODEL` | OpenAI 모델명 |
-| `GEMINI_API_KEY` | Gemini 사용 시 API 키 |
-| `GEMINI_MODEL` | Gemini 모델명 |
+| `GEMINI_API_KEY` | Gemini 1번 API 키 |
+| `GEMINI_API_KEY_2` | Gemini 2번 예비 API 키 |
+| `GEMINI_API_KEY_3` | Gemini 3번 우선 API 키 |
+| `GEMINI_PRIMARY_KEY` | Gemini 우선 키 번호. 기본값 3 |
+| `GEMINI_MODEL` | Gemini 1차 모델명. 기본값 `gemini-2.5-flash` |
+| `GEMINI_FALLBACK_MODELS` | Gemini fallback 모델 목록. 기본값 `gemini-2.0-flash` |
 | `CRAWL_START_URL` | 크롤링 시작 URL |
 | `ALLOWED_DOMAIN` | 허용 호스트 |
 | `ALLOWED_PATH_PREFIX` | 허용 URL 경로 접두사. 쉼표로 복수 지정 가능 |
@@ -270,6 +274,8 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `SEARCH_MIN_SCORE` | DB 답변으로 인정할 최소 검색 점수 |
 
 토큰과 키는 코드에 넣지 말고 `.env` 또는 배포 서비스의 Secret 환경변수로만 관리합니다.
+
+Gemini는 기본적으로 `GEMINI_API_KEY_3 → GEMINI_API_KEY_2 → GEMINI_API_KEY` 순서로 호출합니다. 현재 모델에서 quota 또는 provider 오류가 나면 다음 키를 먼저 사용하고, 모든 키가 실패한 뒤 `GEMINI_FALLBACK_MODELS`의 모델로 같은 순서를 다시 시도합니다. 모든 LLM 호출이 실패해도 사용자에게 `429`, `Quota Exceeded`, `Gemini Error`, `LLM_ERROR` 같은 내부 오류를 노출하지 않고 공식 데이터 기준 fallback 응답을 반환합니다.
 
 이전 배포 환경과의 호환을 위해 `NOTION_API_KEY`는 `NOTION_TOKEN`의 별칭으로, `NOTION_DATABASE_ID`는 `NOTION_KNOWLEDGE_DB_ID`의 별칭으로 인식합니다. 신규 설정은 표의 공식 변수명을 사용하십시오.
 
@@ -554,6 +560,8 @@ LLM 답변도 검색 결과를 그대로 붙여 넣지 않고 학생이 이해�
 - 불완전 응답이면 “완결된 문장으로 짧고 구조화하여 다시 작성” 지시를 추가해 최대 1회만 재시도합니다.
 - 재시도 후에도 불완전하면 `course_grade_strategy`, `course_difficulty`, `course_order`, `notice_explain`, `schedule_explain`별 fallback template을 사용합니다.
 - OpenAI Responses API는 `max_output_tokens=1200`, Gemini는 `maxOutputTokens=1200`, `temperature=0.2`로 설정합니다.
+- Gemini 호출 순서는 모델별로 `KEY_3 → KEY_2 → KEY_1`입니다. `gemini-2.5-flash`에서 모든 키가 실패하면 `gemini-2.0-flash`로 내려가 같은 키 순서를 다시 시도합니다.
+- quota, rate limit, 503 provider 오류는 서버 로그에만 남기고 사용자 화면에는 공식 데이터 fallback 문구만 표시합니다.
 - 프론트엔드는 `items` 구조가 있으면 LLM 원문보다 카드형 구조화 응답을 우선 렌더링하고, 불완전 문장은 “답변 다시 생성” 버튼으로 방어합니다.
 - `sanitize_llm_response()`가 중복 라인 제거, bullet 변환, 긴 문장 줄바꿈, 마침표 보강을 수행합니다.
 - 프론트엔드는 LLM fallback의 간단한 Markdown 표와 bullet을 실제 표/목록 UI로 렌더링합니다.
@@ -595,6 +603,8 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 - 프론트는 `sessionStorage`에 `compass_session_id`를 생성하고 모든 `/api/chat` 요청에 포함합니다.
 - 각 요청마다 `request_id`를 생성해 로딩 메시지와 응답을 매칭합니다.
 - LLM 확인 버튼은 전역 `pendingQuestion`이 아니라 해당 응답의 `question/session_id/llm_type/context`로 다시 요청합니다.
+- 프론트는 `window.chatSubmitting`, `isChatPending`, `request_id` 중복 렌더링 Set으로 Enter/버튼 중복 전송과 같은 응답의 중복 버블 생성을 막습니다.
+- LLM 보조 답변 로딩 상태는 기존 확인 카드 내부에만 표시하고, 성공·실패·Abort 모두 `finally` 흐름에서 제거합니다.
 - 답변 생성 중에는 `isChatPending` 상태로 입력창·전송 버튼·Quick Button을 비활성화하고 placeholder를 `답변을 준비하고 있습니다...`로 변경합니다.
 - 요청 성공, 네트워크 오류, 서버 오류, Abort 상황 모두 `finally`에서 입력 잠금을 해제합니다.
 - 서버는 `session_id`가 없으면 UUID를 생성하고 응답 JSON 및 통계 DB에 포함합니다.

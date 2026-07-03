@@ -21,10 +21,22 @@ services:
         value: openai
       - key: OPENAI_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY_2
+        sync: false
+      - key: GEMINI_API_KEY_3
+        sync: false
+      - key: GEMINI_PRIMARY_KEY
+        value: "3"
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_FALLBACK_MODELS
+        value: gemini-2.0-flash
       - key: PUBLIC_LOADER_URL
         value: https://mhjang-qa.github.io/ComPass/
       - key: STARTUP_INDEX_LOAD
-        value: "false"
+        value: "true"
       - key: COMMUNITY_CRAWL_ENABLED
         value: "true"
       - key: COMMUNITY_LIST_PAGES

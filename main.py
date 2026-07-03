@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import config
-from chatbot import answer_question, casual_response, classify_intent, sanitize_input
+from chatbot import answer_question, casual_response, classify_intent, get_llm_health_status, sanitize_input
 from crawler import CommunityCrawler, REQUIRED_DOCUMENT_URLS, KnouCrawler
 from curated_knowledge import curated_documents, match_curated
 from notion_client import NotionClient, notion_error_message
@@ -245,6 +245,21 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
         return result
     answer_type = str(result.get("answer_type") or "")
     course_name = result.get("course_name") or ""
+    if answer_type == "llm_fallback_failed":
+        course_label = EN_COURSE_LABELS.get(course_name, course_name) or "this course"
+        message = (
+            f"The saved official data does not include perceived difficulty information for {course_label}.\n"
+            "The AI helper answer could not be loaded.\n"
+            "Please try again later or check the course information page for the overview and assessment details."
+        )
+        result["answer"] = message
+        result["user_message"] = message
+        result["message"] = "The AI helper answer could not be generated."
+        result["summary"] = "Official course information is still available."
+        for action in result.get("actions") or []:
+            label = action.get("label") or ""
+            action["label"] = translate_action_label_en(label)
+        return result
     defaults = {
         "faculty": ("Computer Science faculty information.", "Here are the main faculty details from the official department data."),
         "faculty_detail": ("Faculty profile information.", "Here is the official faculty profile information."),
@@ -1194,6 +1209,7 @@ def health_payload() -> dict[str, Any]:
         "notion_schema": job_state["notion"],
         "runtime": debug_index_payload(),
         "llm_provider": config.LLM_PROVIDER,
+        "llm": get_llm_health_status(),
     }
 
 

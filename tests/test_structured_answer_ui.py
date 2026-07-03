@@ -53,6 +53,8 @@ def test_actions_support_expand_link_and_confirm_llm() -> None:
     assert 'action.type === "link"' in script
     assert 'action.type === "confirm_llm"' in script
     assert "confirm-actions" in script
+    assert "inlineTarget" in script
+    assert "llm-inline-status" in script
 
 
 def test_chat_pending_state_disables_duplicate_inputs() -> None:

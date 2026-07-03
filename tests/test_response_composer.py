@@ -200,8 +200,13 @@ def test_course_difficulty_llm_answer_separates_official_and_advice(tmp_path, mo
         ]
     )
     monkeypatch.setattr(
-        "chatbot.call_llm",
-        lambda question, **kwargs: "참고용 체감 난이도는 보통이며 프로세스 개념을 먼저 복습하세요.",
+        "chatbot.call_llm_raw",
+        lambda prompt: (
+            "체감 난이도: 참고용으로는 보통 수준입니다.\n"
+            "어렵게 느껴질 수 있는 부분: 프로세스와 메모리 관리 개념입니다.\n"
+            "필요한 준비: 운영체제 기본 용어를 먼저 정리하세요.\n"
+            "학습 팁: 프로세스 개념을 먼저 복습하세요."
+        ),
     )
 
     result = answer_question("운영체제는 어려워?", allow_llm=True, index=index)
@@ -209,9 +214,86 @@ def test_course_difficulty_llm_answer_separates_official_and_advice(tmp_path, mo
     assert result["answer_type"] == "course_difficulty"
     assert result["mode"] == "LLM"
     assert "운영체제의 구조" in result["items"][0]["official_overview"]
-    assert "참고용" in result["items"][0]["difficulty_advice"]
+    assert "참고용" in result["items"][0]["difficulty_advice"]["체감 난이도"]
     assert "공식 기준이 아닌 참고용" in result["items"][0]["disclaimer"]
     assert result["items"][0]["source_url"].endswith("course-34416")
+
+
+def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, monkeypatch) -> None:
+    import config
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild(
+        [
+            {
+                "title": "인공지능",
+                "category": "교과정보 > 교과목안내 > 과목상세",
+                "document_type": "과목상세",
+                "body": "인공지능의 기본 이론과 탐색 및 추론을 학습한다.",
+                "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-34524",
+                "normalized_items": [
+                    {
+                        "course_name": "인공지능",
+                        "overview": "인공지능의 기본 이론과 탐색 및 추론을 학습하는 과목입니다.",
+                        "topics": ["탐색", "추론", "학습"],
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = answer_question("인공지능 과목은 많이 어려워?", allow_llm=True, index=index, request_id="req-key")
+
+    assert result["ok"] is False
+    assert result["answer_type"] == "llm_fallback_failed"
+    assert result["error_code"] == "LLM_API_KEY_MISSING"
+    assert result["fallback_available"] is True
+    assert "현재 LLM 보조 답변을 불러오지 못했습니다" in result["user_message"]
+    assert "인공지능" in result["items"][0]["official_overview"]
+
+
+def test_course_difficulty_llm_timeout_returns_structured_failure(tmp_path, monkeypatch) -> None:
+    import config
+    import requests
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    def timeout_post(*args, **kwargs):
+        raise requests.Timeout("timeout")
+
+    monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.0-flash")
+    monkeypatch.setattr("chatbot.requests.post", timeout_post)
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild(
+        [
+            {
+                "title": "인공지능",
+                "category": "교과정보 > 교과목안내 > 과목상세",
+                "document_type": "과목상세",
+                "body": "인공지능의 기본 이론과 탐색 및 추론을 학습한다.",
+                "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-34524",
+                "normalized_items": [
+                    {
+                        "course_name": "인공지능",
+                        "overview": "인공지능의 기본 이론과 탐색 및 추론을 학습하는 과목입니다.",
+                        "topics": ["탐색", "추론", "학습"],
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = answer_question("인공지능 과목은 많이 어려워?", allow_llm=True, index=index, request_id="req-timeout")
+
+    assert result["answer_type"] == "llm_fallback_failed"
+    assert result["error_code"] == "LLM_TIMEOUT"
 
 
 def test_backend_localizes_dynamic_action_labels_to_english() -> None:

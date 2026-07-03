@@ -406,6 +406,28 @@ body:not(.admin-authenticated) .admin-panel { display: none !important; }
   opacity: .6;
   cursor: not-allowed;
 }
+.llm-inline-status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #cfe0ef;
+  background: #f7fbff;
+  color: var(--navy);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.llm-inline-status.is-loading {
+  color: #5f7184;
+}
+.llm-inline-status.is-error {
+  border-color: #f1c8c8;
+  background: #fff8f8;
+  color: #9a2f2f;
+}
+.llm-inline-status.is-success {
+  border-color: #cfe0ef;
+  background: #ffffff;
+}
 .section-head, .card-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .section-actions { display: flex; gap: 10px; }
 .section-actions > button:not(.primary) { min-height: 44px; padding: 0 16px; border: 1px solid #9dc7e2; border-radius: 12px; color: var(--blue); background: white; font-weight: 800; }

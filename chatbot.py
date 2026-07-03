@@ -54,6 +54,18 @@ OUT_OF_SCOPE_MESSAGE = (
     "ComPass는 컴퓨터과학과 홈페이지에 등록된 공식 정보를 기준으로만 안내할 수 있습니다."
 )
 LLM_SAFE_FAILURE_MESSAGE = "LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+LLM_USER_FAILURE_MESSAGE = "현재 LLM 보조 답변을 불러오지 못했습니다. 공식 데이터 기준으로 다시 확인해 주세요."
+LLM_LAST_ERROR: dict[str, str] = {"code": "", "message": "", "provider": "", "model": ""}
+
+
+class LLMCallError(RuntimeError):
+    """프론트가 처리 가능한 LLM 오류 코드를 보존한다."""
+
+    def __init__(self, code: str, user_message: str = LLM_USER_FAILURE_MESSAGE, detail: str = "") -> None:
+        super().__init__(detail or code)
+        self.code = code
+        self.user_message = user_message
+        self.detail = detail or code
 SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게시판|market|student", re.IGNORECASE)
 SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
@@ -2796,26 +2808,42 @@ def _course_difficulty_response(
     started: float,
     *,
     session_id: str = "",
+    request_id: str = "",
 ) -> dict[str, Any]:
     item = items[0] if items else {
         "course_name": course_name,
         "overview": "공식 교과목 안내에 등록된 과목입니다.",
         "source_url": COURSE_GUIDE_URL,
     }
-    advice_text = call_llm_helper(
-        "course_difficulty",
-        question,
-        {
-            "course_name": course_name,
-            "overview": item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 과목",
-            "topics": item.get("topics") or item.get("detail_topics") or [],
-            "source_url": item.get("source_url") or COURSE_GUIDE_URL,
-            "fallback_url": COURSE_GUIDE_URL,
-        },
-        session_id=session_id,
-    )
     source_url = _course_link(item, course_name)
     official_overview = _official_course_overview(course_name, item)
+    try:
+        advice_text = call_llm_helper(
+            "course_difficulty",
+            question,
+            {
+                "course_name": course_name,
+                "overview": item.get("overview") or item.get("feature") or "공식 교육과정에 편성된 과목",
+                "topics": item.get("topics") or item.get("detail_topics") or [],
+                "source_url": item.get("source_url") or COURSE_GUIDE_URL,
+                "fallback_url": COURSE_GUIDE_URL,
+            },
+            session_id=session_id,
+            request_id=request_id,
+            raise_on_error=True,
+        )
+    except LLMCallError as exc:
+        return _course_difficulty_llm_failure_response(
+            question,
+            course_name,
+            item,
+            official_overview,
+            source_url,
+            started,
+            exc,
+            session_id=session_id,
+            request_id=request_id,
+        )
     advice_text = remove_duplicate_overview(advice_text, official_overview)
     difficulty_advice = _difficulty_advice_object(course_name, item, advice_text)
     response_item = {
@@ -2853,6 +2881,64 @@ def _course_difficulty_response(
         "score": 100 if items else 0,
         "keywords": tokenize(question),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    }
+
+
+def _course_difficulty_llm_failure_response(
+    question: str,
+    course_name: str,
+    item: dict[str, Any],
+    official_overview: str,
+    source_url: str,
+    started: float,
+    error: LLMCallError,
+    *,
+    session_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    user_message = (
+        f"공식 데이터에는 {course_name} 과목의 체감 난이도 정보가 명시되어 있지 않습니다.\n"
+        "현재 LLM 보조 답변을 불러오지 못했습니다.\n"
+        "잠시 후 다시 시도하거나 교과목 안내 페이지에서 강의 개요와 평가 정보를 확인해 주세요."
+    )
+    response_item = {
+        "title": course_name,
+        "official_overview": official_overview,
+        "difficulty_advice": "",
+        "disclaimer": "LLM 보조 답변 실패로 공식 데이터 기준 정보만 유지했습니다.",
+        "source_url": source_url,
+        "detail_url": source_url,
+        "fallback_url": COURSE_FULL_GUIDE_URL,
+        "link_label": f"{course_name} 과목 바로가기",
+    }
+    return {
+        "ok": False,
+        "answer": user_message,
+        "answer_type": "llm_fallback_failed",
+        "message": LLM_SAFE_FAILURE_MESSAGE,
+        "user_message": user_message,
+        "error_code": error.code,
+        "fallback_available": True,
+        "summary": official_overview,
+        "official_overview": official_overview,
+        "items": [response_item],
+        "display_limit": 1,
+        "total_count": 1,
+        "actions": [
+            {"type": "link", "label": f"{course_name} 과목 바로가기", "url": source_url},
+            {"type": "link", "label": "교과목 안내 바로가기", "url": COURSE_FULL_GUIDE_URL},
+        ],
+        "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
+        "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
+        "mode": "LLM_ERROR",
+        "llm_type": "course_difficulty",
+        "course_name": course_name,
+        "score": 100 if item else 0,
+        "keywords": tokenize(question),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "session_id": session_id,
+        "request_id": request_id,
+        "requires_llm_confirmation": False,
     }
 
 
@@ -3188,19 +3274,28 @@ def sanitize_llm_response(text: str, question: str = "") -> str:
 
 def _openai(prompt: str) -> str:
     if not config.OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY가 설정되지 않았습니다.")
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={"Authorization": f"Bearer {config.OPENAI_API_KEY}", "Content-Type": "application/json"},
-        json={
-            "model": config.OPENAI_MODEL,
-            "input": prompt,
-            "temperature": 0.2,
-            "max_output_tokens": 1200,
-        },
-        timeout=45,
-    )
-    response.raise_for_status()
+        raise LLMCallError("LLM_API_KEY_MISSING", detail="OPENAI_API_KEY is not configured")
+    if not config.OPENAI_MODEL:
+        raise LLMCallError("LLM_MODEL_MISSING", detail="OPENAI_MODEL is not configured")
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {config.OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": config.OPENAI_MODEL,
+                "input": prompt,
+                "temperature": 0.2,
+                "max_output_tokens": 1200,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+    except requests.Timeout as exc:
+        raise LLMCallError("LLM_TIMEOUT", detail="OpenAI request timed out") from exc
+    except requests.HTTPError as exc:
+        raise _llm_http_error(exc) from exc
+    except requests.RequestException as exc:
+        raise LLMCallError("LLM_PROVIDER_ERROR", detail=type(exc).__name__) from exc
     data = response.json()
     if data.get("output_text"):
         return data["output_text"].strip()
@@ -3214,17 +3309,26 @@ def _openai(prompt: str) -> str:
 
 def _gemini(prompt: str) -> str:
     if not config.GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent",
-        params={"key": config.GEMINI_API_KEY},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
-        },
-        timeout=45,
-    )
-    response.raise_for_status()
+        raise LLMCallError("LLM_API_KEY_MISSING", detail="GEMINI_API_KEY is not configured")
+    if not config.GEMINI_MODEL:
+        raise LLMCallError("LLM_MODEL_MISSING", detail="GEMINI_MODEL is not configured")
+    try:
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent",
+            params={"key": config.GEMINI_API_KEY},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+    except requests.Timeout as exc:
+        raise LLMCallError("LLM_TIMEOUT", detail="Gemini request timed out") from exc
+    except requests.HTTPError as exc:
+        raise _llm_http_error(exc) from exc
+    except requests.RequestException as exc:
+        raise LLMCallError("LLM_PROVIDER_ERROR", detail=type(exc).__name__) from exc
     data = response.json()
     text = "".join(
         part.get("text", "")
@@ -3232,8 +3336,45 @@ def _gemini(prompt: str) -> str:
         for part in (candidate.get("content") or {}).get("parts") or []
     ).strip()
     if not text:
-        raise RuntimeError("Gemini 응답이 비어 있습니다.")
+        raise LLMCallError("LLM_PROVIDER_ERROR", detail="Gemini response is empty")
     return text
+
+
+def _llm_http_error(exc: requests.HTTPError) -> LLMCallError:
+    status_code = getattr(exc.response, "status_code", 0) or 0
+    if status_code == 429:
+        return LLMCallError("LLM_RATE_LIMIT", detail=f"provider returned HTTP {status_code}")
+    if status_code == 400:
+        return LLMCallError("LLM_BAD_REQUEST", detail=f"provider returned HTTP {status_code}")
+    return LLMCallError("LLM_PROVIDER_ERROR", detail=f"provider returned HTTP {status_code}")
+
+
+def _record_llm_error(provider: str, model: str, exc: LLMCallError) -> None:
+    LLM_LAST_ERROR.update({
+        "code": exc.code,
+        "message": exc.detail,
+        "provider": provider,
+        "model": model,
+    })
+
+
+def get_llm_health_status() -> dict[str, Any]:
+    provider = (config.LLM_PROVIDER or "").strip().lower()
+    if provider == "gemini":
+        configured = bool(config.GEMINI_API_KEY)
+        model = config.GEMINI_MODEL or "gemini-2.0-flash"
+    elif provider == "openai":
+        configured = bool(config.OPENAI_API_KEY)
+        model = config.OPENAI_MODEL
+    else:
+        configured = False
+        model = ""
+    return {
+        "provider": provider,
+        "configured": configured,
+        "model": model,
+        "last_error": LLM_LAST_ERROR.get("code") or "",
+    }
 
 
 def call_llm(question: str, *, prompt_override: str | None = None) -> str:
@@ -3251,7 +3392,7 @@ def call_llm_raw(prompt: str) -> str:
     if provider == "openai":
         return _openai(prompt)
 
-    raise RuntimeError(f"지원하지 않는 LLM_PROVIDER: {config.LLM_PROVIDER}")
+    raise LLMCallError("LLM_PROVIDER_ERROR", detail=f"unsupported LLM_PROVIDER: {config.LLM_PROVIDER}")
 
 
 def call_llm_helper(
@@ -3260,6 +3401,8 @@ def call_llm_helper(
     context: dict[str, Any],
     *,
     session_id: str = "",
+    request_id: str = "",
+    raise_on_error: bool = False,
 ) -> str:
     """LLM 보조 답변 공통 진입점.
 
@@ -3276,16 +3419,21 @@ def call_llm_helper(
         "general_explain",
     } else "general_explain"
     session_short = (session_id or "")[:8] or "server"
+    request_short = (request_id or "")[:12] or "server"
+    model = config.GEMINI_MODEL if provider == "gemini" else config.OPENAI_MODEL
     prompt = build_llm_prompt(normalized_type, question, context)
     logger.info(
-        "LLM 요청: provider=%s, llm_type=%s, session=%s",
+        "[LLM][START] request_id=%s provider=%s model=%s type=%s session=%s",
+        request_short,
         provider,
+        model,
         normalized_type,
         session_short,
     )
     try:
         raw_answer = call_llm_raw(prompt)
         answer = sanitize_llm_response(raw_answer, question)
+        LLM_LAST_ERROR.update({"code": "", "message": "", "provider": provider, "model": model})
         if is_incomplete_llm_text(raw_answer, normalized_type) or is_incomplete_llm_text(answer, normalized_type):
             logger.warning(
                 "LLM 불완전 응답 감지: provider=%s, llm_type=%s, session=%s",
@@ -3311,15 +3459,36 @@ def call_llm_helper(
             )
             return _fallback_text_from_template(_llm_fallback_template(normalized_type, context, question))
         return answer
-    except Exception as exc:
+    except LLMCallError as exc:
+        _record_llm_error(provider, model, exc)
         logger.error(
-            "LLM 오류: provider=%s, llm_type=%s, session=%s, context=%s, error=%s",
+            "[LLM][ERROR] request_id=%s code=%s provider=%s type=%s context=%s message=%s",
+            request_short,
+            exc.code,
             provider,
             normalized_type,
-            session_short,
+            sanitize_input(str(context.get("course_name") or context.get("title") or ""), 80),
+            sanitize_input(exc.detail, 120),
+        )
+        logger.info("[LLM][FALLBACK] request_id=%s fallback=official_only", request_short)
+        if raise_on_error:
+            raise
+        return LLM_SAFE_FAILURE_MESSAGE
+    except Exception as exc:
+        wrapped = LLMCallError("LLM_UNKNOWN_ERROR", detail=type(exc).__name__)
+        _record_llm_error(provider, model, wrapped)
+        logger.error(
+            "[LLM][ERROR] request_id=%s code=%s provider=%s type=%s context=%s message=%s",
+            request_short,
+            wrapped.code,
+            provider,
+            normalized_type,
             sanitize_input(str(context.get("course_name") or context.get("title") or ""), 80),
             type(exc).__name__,
         )
+        logger.info("[LLM][FALLBACK] request_id=%s fallback=official_only", request_short)
+        if raise_on_error:
+            raise wrapped from exc
         return LLM_SAFE_FAILURE_MESSAGE
 
 
@@ -3481,6 +3650,7 @@ def answer_question(
                 items,
                 started,
                 session_id=session_id,
+                request_id=request_id,
             )
             response["session_id"] = session_id
             response["request_id"] = request_id

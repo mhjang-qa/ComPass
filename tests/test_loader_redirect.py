@@ -29,3 +29,7 @@ def test_health_endpoint_is_immediately_available() -> None:
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert response.json()["status"] == "running"
+    assert response.json()["llm"]["provider"]
+    assert "configured" in response.json()["llm"]
+    assert "model" in response.json()["llm"]
+    assert "last_error" in response.json()["llm"]

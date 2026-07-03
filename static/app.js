@@ -1769,6 +1769,59 @@ function answerRenderers() {
   };
 }
 
+function llmStatusText(key) {
+  const messages = {
+    ko: {
+      loading: "LLM 보조 답변을 생성 중입니다...",
+      failed: "현재 LLM 보조 답변을 불러오지 못했습니다. 공식 데이터 기준으로 다시 확인해 주세요.",
+      network: "네트워크 또는 LLM 응답 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+    },
+    en: {
+      loading: "Generating the AI helper answer...",
+      failed: "The AI helper answer could not be loaded. Please check the official data instead.",
+      network: "A network or AI helper response error occurred. Please try again later.",
+    },
+  };
+  return messages[currentLanguage]?.[key] || messages.ko[key] || "";
+}
+
+function ensureInlineLlmStatus(messageRow) {
+  const bubble = messageRow?.querySelector?.(".bubble");
+  if (!bubble) return null;
+  let status = bubble.querySelector(".llm-inline-status");
+  if (!status) {
+    status = document.createElement("div");
+    status.className = "llm-inline-status";
+    bubble.appendChild(status);
+  }
+  return status;
+}
+
+function showInlineLlmStatus(messageRow, text, state = "loading") {
+  const status = ensureInlineLlmStatus(messageRow);
+  if (!status) return;
+  status.className = `llm-inline-status is-${state}`;
+  status.textContent = text;
+  scrollMessageIntoView(messageRow);
+}
+
+function renderInlineLlmResult(messageRow, payload) {
+  const textParts = [];
+  if (payload?.answer) textParts.push(payload.answer);
+  const firstItem = Array.isArray(payload?.items) ? payload.items[0] : null;
+  if (firstItem?.official_overview && !textParts.join("\n").includes(firstItem.official_overview)) {
+    textParts.push(firstItem.official_overview);
+  }
+  if (firstItem?.difficulty_advice) {
+    const advice = typeof firstItem.difficulty_advice === "string"
+      ? firstItem.difficulty_advice
+      : Object.entries(firstItem.difficulty_advice).map(([key, value]) => `${key}: ${value}`).join("\n");
+    if (advice) textParts.push(advice);
+  }
+  if (payload?.disclaimer) textParts.push(payload.disclaimer);
+  showInlineLlmStatus(messageRow, textParts.filter(Boolean).join("\n\n"), "success");
+}
+
 function addMessage(role, text, sources = [], confirmation = false, payload = {}) {
   const row = document.createElement("div");
   row.className = `message ${role}`;
@@ -1807,10 +1860,13 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
       yes.disabled = true;
       no.disabled = true;
       actions.remove();
+      showInlineLlmStatus(row, llmStatusText("loading"), "loading");
       sendQuestion(payload.client_question || payload.question || "", {
         allowLlm: true,
         llmType: payload.llm_type || "general_explain",
         context: payload.context || {},
+        skipUserBubble: true,
+        inlineTarget: row,
       });
     };
     const no = document.createElement("button");
@@ -1989,6 +2045,7 @@ async function sendQuestion(raw, options = {}) {
   const llmType = options.llmType || "";
   const context = options.context || undefined;
   const skipUserBubble = Boolean(options.skipUserBubble);
+  const inlineTarget = options.inlineTarget || null;
   const question = raw.trim();
   if (!question) return;
   if (isChatPending) return;
@@ -2009,7 +2066,7 @@ async function sendQuestion(raw, options = {}) {
     addMessage("user", question);
   }
   setChatPending(true);
-  const waiting = createSearchLoading(requestId);
+  const waiting = inlineTarget ? { remove() {} } : createSearchLoading(requestId);
   try {
     let result;
     let retryCount = 0;
@@ -2045,6 +2102,18 @@ async function sendQuestion(raw, options = {}) {
     }
     waiting.remove();
     result.client_question = question;
+    if (inlineTarget && (result.ok === false || result.answer_type === "llm_fallback_failed")) {
+      showInlineLlmStatus(
+        inlineTarget,
+        result.user_message || result.message || result.answer || llmStatusText("failed"),
+        "error",
+      );
+      return;
+    }
+    if (inlineTarget) {
+      renderInlineLlmResult(inlineTarget, result);
+      return;
+    }
     let answer = result.answer;
     if (result.mode === "DB_LOAD_ERROR") {
       answer = `지식 DB 로딩에 실패했습니다.\n${result.failure_reason || "관리자에게 서버 로그 확인을 요청해 주세요."}`;
@@ -2065,6 +2134,10 @@ async function sendQuestion(raw, options = {}) {
     if (isColdStartCondition(error)) {
       rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
       startServerRecovery();
+      return;
+    }
+    if (inlineTarget) {
+      showInlineLlmStatus(inlineTarget, llmStatusText("network"), "error");
       return;
     }
     const prefix =

@@ -24,6 +24,7 @@ DEFAULT_COURSES = {
 }
 INTENT_PRIORITY = [
     "faculty_detail",
+    "campus_location",
     "course_detail",
     "course_difficulty",
     "course_study_tip",
@@ -48,6 +49,7 @@ INTENT_PRIORITY = [
 SEARCH_SCOPES = {
     "faculty_list": ["faculty"],
     "faculty_detail": ["faculty"],
+    "campus_location": ["university_common"],
     "recent_notice": ["notice"],
     "curriculum": ["curriculum"],
     "course_detail": ["course_detail", "curriculum"],
@@ -68,6 +70,26 @@ SEARCH_SCOPES = {
     "general_search": ["general"],
     "out_of_scope": [],
 }
+
+
+CAMPUS_LOCATION_RE = re.compile(
+    r"지역\s*대학|지역대학|캠퍼스|지역\s*캠퍼스|지역캠퍼스|학습관|찾아가는\s*길|"
+    r"방통대\s*위치|방송대\s*위치|지역대학\s*주소|지역\s*대학\s*주소",
+    re.IGNORECASE,
+)
+CAMPUS_LOCATION_WITH_PLACE_RE = re.compile(
+    r"(?:지역|대학|방통대|방송대|캠퍼스|학습관|컴퓨터과학과|학과).*(?:위치|주소)|"
+    r"(?:위치|주소).*(?:지역|대학|방통대|방송대|캠퍼스|학습관|컴퓨터과학과|학과)",
+    re.IGNORECASE,
+)
+GRADUATION_RE = re.compile(r"졸업|졸업\s*요건|졸업\s*학점|학위|graduation|degree", re.IGNORECASE)
+
+
+def is_campus_location_query(question: str) -> bool:
+    normalized = normalize_question(question)
+    if GRADUATION_RE.search(normalized):
+        return False
+    return bool(CAMPUS_LOCATION_RE.search(normalized) or CAMPUS_LOCATION_WITH_PLACE_RE.search(normalized))
 
 
 @lru_cache(maxsize=1)
@@ -242,6 +264,9 @@ def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]]
 
     if entities.get("faculty_name"):
         return _result("faculty_detail", 0.99, entities, normalized, "교수명 직접 포함")
+
+    if is_campus_location_query(normalized):
+        return _result("campus_location", 0.93, entities, normalized, "지역대학/캠퍼스 위치 질문")
 
     course_name = entities.get("course_name")
     if course_name and re.search(r"난이도|어렵|힘든|공부량|들을만|수업\s*부담|학습\s*부담", normalized):

@@ -16,7 +16,7 @@ import requests
 import config
 from crawler import extract_schedule_items, summarize
 from curated_knowledge import match_curated
-from intent_router import detect_intent as route_intent
+from intent_router import detect_intent as route_intent, is_campus_location_query
 from search_index import (
     COURSE_DOCUMENT_TYPES,
     COURSE_GUIDE_URL,
@@ -106,6 +106,7 @@ ROUTER_TO_INTERNAL_INTENT = {
     "professor_detail": "faculty_detail",
     "faculty_list": "faculty",
     "faculty_detail": "faculty_detail",
+    "campus_location": "campus_location",
     "curriculum": "course_table",
     "course_info": "course_detail",
     "course_detail": "course_detail",
@@ -326,6 +327,7 @@ OUT_OF_SCOPE_PATTERNS = re.compile(
 SCOPE_PATTERNS = re.compile(
     r"방송대|한국방송통신대|knou|컴퓨터과학과|컴과|학과|교수|교과|과목|수강|"
     r"졸업|시험|과제|공지|일정|학사|입학|편입|장학|등록금|학생회|스터디|게시판|faq|"
+    r"지역대학|지역\s*대학|캠퍼스|학습관|방통대\s*위치|방송대\s*위치|주소|찾아가는\s*길|"
     r"자격증|정보처리기사|sqld|데이터베이스|curriculum|course|professor|faculty|notice|"
     r"announcement|schedule|calendar|graduation|degree|department|exam|pdf",
     re.IGNORECASE,
@@ -544,6 +546,8 @@ def resolve_followup_question(question: str, history: list[dict[str, Any]] | Non
 
 
 def is_out_of_scope(question: str) -> bool:
+    if is_campus_location_query(question):
+        return False
     if OUT_OF_SCOPE_PATTERNS.search(question):
         return True
     return not bool(SCOPE_PATTERNS.search(question))
@@ -670,6 +674,7 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
         return {
             "course_table": "curriculum",
             "course_detail": "course_info",
+            "campus_location": "campus_location",
             "schedule_list": "schedule",
             "notice_list": "notice",
             "faq_list": "faq",
@@ -684,6 +689,7 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
                 return {
                     "course_table": "curriculum",
                     "course_detail": "course_info",
+                    "campus_location": "campus_location",
                     "schedule_list": "schedule",
                     "notice_list": "notice",
                     "faq_list": "faq",
@@ -693,6 +699,8 @@ def detect_intent(question: str, index: SearchIndex | None = None) -> str:
         return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
         return "faculty"
+    if is_campus_location_query(question):
+        return "campus_location"
     if EXAM_SCOPE_RE.search(question):
         return "exam_scope"
     if course_name and COURSE_GRADE_STRATEGY_RE.search(question):
@@ -782,6 +790,7 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         "out_of_scope",
         "faculty_detail",
         "faculty",
+        "campus_location",
         "course_grade_strategy",
         "exam_scope",
         "course_recommendation",
@@ -809,6 +818,8 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
         return "faculty_detail"
     if FACULTY_QUERY_RE.search(question):
         return "faculty"
+    if is_campus_location_query(question):
+        return "campus_location"
     if COURSE_DETAIL_RE.search(question):
         return "course_detail"
     return _list_answer_type(question) or "text"
@@ -4115,6 +4126,49 @@ IMPORTANT_ARCHIVE_NOTICE = (
     "이 자료는 중요 보관 문서이지만 게시 시점 기준 정보일 수 있습니다. "
     "최신 기준은 관련 공식 페이지에서 다시 확인해 주세요."
 )
+KNOU_CAMPUS_GUIDE_URL = "https://www.knou.ac.kr"
+
+
+def campus_location_response(question: str, started: float) -> dict[str, Any]:
+    region_match = re.search(r"(서울|경기|인천|부산|대구|광주|대전|울산|강원|충북|충남|전북|전남|경북|경남|제주|세종)", question or "")
+    region = region_match.group(1) if region_match else ""
+    return {
+        "answer": "지역대학 위치 안내입니다.",
+        "answer_type": "campus_location",
+        "summary": "한국방송통신대학교 지역대학 위치는 방송대 공식 홈페이지의 지역대학 안내에서 확인하실 수 있습니다.",
+        "items": [
+            {
+                "label": "확인 방법",
+                "value": "방송대 공식 홈페이지에서 지역대학 및 학습관별 주소와 연락처를 확인하실 수 있습니다.",
+            },
+            {
+                "label": "추가 안내",
+                "value": (
+                    f"{region} 지역대학 정보를 찾고 계신 경우, 공식 페이지에서 해당 지역의 주소와 운영 정보를 확인해 주세요."
+                    if region
+                    else "서울, 경기, 부산 등 찾으시는 지역명을 함께 입력해 주시면 더 정확하게 안내해 드릴 수 있습니다."
+                ),
+            },
+            {
+                "label": "주의 사항",
+                "value": "지역대학 주소와 운영 정보는 변경될 수 있으므로 방문 전 공식 페이지에서 최신 정보를 확인해 주세요.",
+            },
+        ],
+        "display_limit": 3,
+        "total_count": 3,
+        "actions": [
+            {"type": "link", "label": "지역대학 안내 바로가기", "url": KNOU_CAMPUS_GUIDE_URL},
+        ],
+        "source_urls": [KNOU_CAMPUS_GUIDE_URL],
+        "sources": [{"title": "한국방송통신대학교 공식 홈페이지", "url": KNOU_CAMPUS_GUIDE_URL, "score": 100}],
+        "mode": "LLM",
+        "llm_type": "campus_location",
+        "score": 100,
+        "keywords": [token for token in tokenize(question) if token not in {"졸업", "졸업요건", "학위"}],
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "requires_llm_confirmation": False,
+        "structured_intent": "campus_location",
+    }
 
 
 def apply_data_tier_notice(response: dict[str, Any], hits: list[dict[str, Any]]) -> dict[str, Any]:
@@ -4267,6 +4321,11 @@ def answer_question(
         response["session_id"] = session_id
         response["request_id"] = request_id
         response["quick_intent"] = initial_intent
+        return finish(response)
+    if initial_intent == "campus_location":
+        response = campus_location_response(clean_question, started)
+        response["session_id"] = session_id
+        response["request_id"] = request_id
         return finish(response)
     if initial_intent == "exam_scope":
         response = _exam_scope_response(clean_question, index, started)

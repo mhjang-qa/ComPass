@@ -214,6 +214,7 @@ EN_ACTION_LABELS = {
     "원문 보기": "View Original",
     "LLM 보조 답변 사용": "Use AI Helper",
     "AI Helper 사용": "Use AI Helper",
+    "지역대학 안내 바로가기": "View Regional Campus Information",
 }
 EN_COURSE_LABELS = {
     "인공지능": "AI",
@@ -278,6 +279,7 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
         "schedule_list": ("Department schedule information.", "Here are 3 key Computer Science department schedule items."),
         "course_difficulty": (f"{course_name or 'This course'} study workload guide.", "Difficulty and workload are reference guidance, not an official standard."),
         "course_recommendation": ("Recommended courses for beginners and transfer students.", "Here are representative courses based on the official curriculum."),
+        "campus_location": ("Regional campus location information.", "You can check regional campus and learning center locations on the official KNOU website."),
         "document_list": ("Official material search results.", "Here are relevant past exam, exam material, and PDF documents from official data."),
         "llm_confirmation_required": ("AI helper confirmation is required.", "Official data does not define perceived difficulty. AI helper guidance can be used as reference only."),
         "text": ("Official department information.", result.get("summary") or "Here is information based on official department data."),
@@ -290,6 +292,22 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
             result["summary"] = "No recent notices were found in the saved official data.\nYou can check notices on the official department page."
         elif answer_type == "schedule_list" and not (result.get("items") or []):
             result["summary"] = "No schedule items were found in the saved official data.\nYou can check the academic schedule on the official department page."
+        elif answer_type == "campus_location":
+            result["summary"] = summary
+            result["items"] = [
+                {
+                    "label": "How to check",
+                    "value": "You can check addresses and contact information for each regional campus and learning center on the official KNOU website.",
+                },
+                {
+                    "label": "Additional guidance",
+                    "value": "If you enter a region such as Seoul, Gyeonggi, or Busan, I can guide you more specifically.",
+                },
+                {
+                    "label": "Note",
+                    "value": "Campus addresses and operating information may change, so please confirm the latest information on the official page before visiting.",
+                },
+            ]
         elif "3건" in original_summary or "3개" in original_summary or answer_type in {"notice_list", "schedule_list"}:
             result["summary"] = summary
         else:

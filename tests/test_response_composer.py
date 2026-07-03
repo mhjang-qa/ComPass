@@ -57,6 +57,12 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "편입 안내": "course_roadmap",
         "장학금 안내": "scholarship",
         "학과 전화번호": "contact",
+        "지역 대학 위치": "campus_location",
+        "지역대학 위치 알려줘": "campus_location",
+        "방송대 지역대학 주소": "campus_location",
+        "서울 지역대학 어디야": "campus_location",
+        "컴퓨터과학과 위치": "campus_location",
+        "지역 대학 졸업요건": "graduation",
     }
 
     for question, expected in cases.items():
@@ -69,6 +75,42 @@ def test_nlu_router_extracts_course_and_goal_entities() -> None:
     assert routed["intent"] == "course_grade_strategy"
     assert routed["entities"]["course_name"] == "인공지능"
     assert routed["entities"]["grade_goal"] == "C 이상"
+
+
+def test_campus_location_answer_is_in_scope(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    result = answer_question("지역 대학 위치", index=SearchIndex(tmp_path / "empty.json"))
+
+    assert result["answer_type"] == "campus_location"
+    assert result["llm_type"] == "campus_location"
+    assert result["mode"] == "LLM"
+    assert result["requires_llm_confirmation"] is False
+    assert result["actions"][0]["label"] == "지역대학 안내 바로가기"
+    assert result["actions"][0]["url"] == "https://www.knou.ac.kr"
+    assert "졸업" not in result["keywords"]
+    assert "졸업요건" not in result["keywords"]
+    assert "학위" not in result["keywords"]
+
+
+def test_campus_location_english_localization() -> None:
+    from main import localize_response
+
+    localized = localize_response(
+        {
+            "answer_type": "campus_location",
+            "answer": "지역대학 위치 안내입니다.",
+            "summary": "한국방송통신대학교 지역대학 위치는 공식 홈페이지에서 확인하실 수 있습니다.",
+            "items": [{"label": "확인 방법", "value": "공식 페이지에서 확인해 주세요."}],
+            "actions": [{"type": "link", "label": "지역대학 안내 바로가기", "url": "https://www.knou.ac.kr"}],
+        },
+        "en",
+    )
+
+    assert localized["answer"] == "Regional campus location information."
+    assert localized["summary"] == "You can check regional campus and learning center locations on the official KNOU website."
+    assert localized["actions"][0]["label"] == "View Regional Campus Information"
 
 
 def test_ai_course_detail_is_student_friendly_and_does_not_mix_documents(tmp_path) -> None:

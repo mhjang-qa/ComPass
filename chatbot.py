@@ -383,8 +383,11 @@ def contextualize(question: str, history: list[dict[str, Any]] | None) -> str:
     return question
 
 
-FOLLOWUP_EXPAND_RE = re.compile(r"더\s*알려|자세히|좀\s*더|계속|상세히|추가로|전체\s*보기|더보기|그\s*다음|이어서는")
-FOLLOWUP_CONTEXT_RE = re.compile(r"그건|그거|그\s*과목|위\s*내용|난이도는|공부법은|시험은|학점은|어때|어려워|다른\s*과목")
+FOLLOWUP_EXPAND_RE = re.compile(r"더\s*알려|자세히|좀\s*더|계속|상세히|추가로|전체\s*보기|더보기|그\s*다음|이어서는|위\s*내용")
+FOLLOWUP_CONTEXT_RE = re.compile(r"그건|그거|그것|그\s*과목|그\s*교수|그\s*수업|그럼|그러면|위\s*내용|앞(?:의|에)\s*내용")
+FOLLOWUP_ELLIPSIS_RE = re.compile(r"^(?:난이도|공부법|시험|학점|과제|선수\s*과목|수강\s*순서)(?:은|는)?\??$")
+NEW_QUESTION_ENTITY_RE = re.compile(r"교수(?:님|진)?|공지|교육과정|커리큘럼|졸업|장학금|수강\s*신청|학사\s*일정|학과\s*일정")
+QUESTION_ENDING_RE = re.compile(r"(?:누구야|언제야|어려워|알려줘|뭐야|있어|있나요|인가요|인가|나요|야)\??$")
 STUDY_TIP_RE = re.compile(r"학점\s*잘|점수\s*잘|공부\s*어떻게|시험\s*준비|기말\s*준비|중간\s*준비|과제\s*준비|어떻게\s*공부|잘하는\s*방법|A\\+?\s*받|성적\s*잘", re.IGNORECASE)
 
 
@@ -442,6 +445,44 @@ def _expanded_followup_query(question: str, course_name: str, intent: str, base_
     return f"{course_name} {question}".strip()
 
 
+def _has_followup_reference(question: str) -> bool:
+    clean = sanitize_input(question)
+    return bool(
+        FOLLOWUP_EXPAND_RE.search(clean)
+        or FOLLOWUP_CONTEXT_RE.search(clean)
+        or FOLLOWUP_ELLIPSIS_RE.search(clean)
+    )
+
+
+def _last_user_question(history: list[dict[str, Any]] | None) -> str:
+    for item in reversed(history or []):
+        if item.get("role") == "user" and item.get("content"):
+            return sanitize_input(str(item.get("content")), 300)
+    return ""
+
+
+def _similarity(left: str, right: str) -> float:
+    return SequenceMatcher(None, normalize_course_key(left or ""), normalize_course_key(right or "")).ratio()
+
+
+def _followup_reject(reason: str, question: str, previous_intent: str, predicted_intent: str) -> dict[str, Any]:
+    logger.info(
+        "[FOLLOWUP_REJECT] reason=%s old=%s new=%s original=%r",
+        reason,
+        previous_intent,
+        predicted_intent,
+        question,
+    )
+    logger.info(
+        "[FOLLOWUP] original=%r previous_intent=%r predicted_intent=%r accepted=%s",
+        question,
+        previous_intent,
+        predicted_intent,
+        False,
+    )
+    return {"is_followup": False, "expanded_query": question, "reject_reason": reason}
+
+
 def resolve_followup_question(question: str, history: list[dict[str, Any]] | None, index: SearchIndex | None = None) -> dict[str, Any]:
     # 후속질문
     explicit_course = detect_course_name(question, index)
@@ -451,17 +492,38 @@ def resolve_followup_question(question: str, history: list[dict[str, Any]] | Non
     base = topics[0] if topics else {}
     base_course = base.get("course_name") or ""
     base_intent = str(base.get("intent") or "")
-    short_question = len(tokenize(question)) <= 3
-    followup = bool(topics) and (
-        short_question
-        or FOLLOWUP_EXPAND_RE.search(question)
-        or FOLLOWUP_CONTEXT_RE.search(question)
-        or (not explicit_course and re.search(r"난이도|공부법|학점|시험|과제|어려워|어때", question))
+    predicted = analyze_question_intent(question, index) if question else {}
+    predicted_intent = str(predicted.get("intent") or "")
+    has_reference = _has_followup_reference(question)
+    new_question_score = 0
+    if NEW_QUESTION_ENTITY_RE.search(question) and not has_reference:
+        new_question_score += 100
+    if len(normalize_course_key(question)) >= 8 and QUESTION_ENDING_RE.search(question) and not has_reference:
+        new_question_score += 100
+    logger.info(
+        "[FOLLOWUP] original=%r previous_intent=%r predicted_intent=%r accepted=%s",
+        question,
+        base_intent,
+        predicted_intent,
+        bool(topics and has_reference and new_question_score <= 0),
     )
-    if not followup:
+    if not topics:
         return {"is_followup": False, "expanded_query": question}
+    if new_question_score > 0:
+        return _followup_reject("new_question_signal", question, base_intent, predicted_intent)
+    if not has_reference:
+        return _followup_reject("no_reference_word", question, base_intent, predicted_intent)
+    if (
+        predicted_intent
+        and predicted_intent not in {"general_search", "out_of_scope", base_intent}
+        and not predicted_intent.startswith("followup")
+    ):
+        return _followup_reject("intent_changed", question, base_intent, predicted_intent)
     intent = _followup_intent(question, base_intent)
     expanded = _expanded_followup_query(question, base_course, intent, base_intent)
+    previous_user = _last_user_question(history)
+    if previous_user and _similarity(expanded, previous_user) > 0.85:
+        return _followup_reject("expanded_query_too_similar", question, base_intent, predicted_intent)
     resolved = {
         "original_query": question,
         "is_followup": True,

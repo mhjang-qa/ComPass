@@ -321,6 +321,81 @@ def test_explicit_new_course_beats_history(tmp_path) -> None:
     assert result["answer_type"] == "llm_confirmation_required"
 
 
+def test_new_faculty_question_does_not_reuse_course_history(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    history = [
+        {"role": "user", "content": "컴퓨터그래픽 과목 C이상 받으려면?"},
+        {
+            "role": "assistant",
+            "content": "컴퓨터그래픽스 학습 전략 안내입니다.",
+            "intent": "course_grade_strategy",
+            "entities": {"course_name": "컴퓨터그래픽스"},
+        },
+    ]
+
+    result = answer_question("학점 잘주는 교수는 누구야?", history=history, index=index)
+
+    assert "followup" not in result
+    assert result["answer_type"] == "faculty"
+    assert result.get("course_name") is None
+    assert "컴퓨터그래픽스 학점 잘 받는 방법" not in str(result)
+
+
+def test_new_notice_question_does_not_reuse_course_history(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    history = [
+        {"role": "user", "content": "컴퓨터그래픽 과목 C이상 받으려면?"},
+        {
+            "role": "assistant",
+            "content": "컴퓨터그래픽스 학습 전략 안내입니다.",
+            "intent": "course_grade_strategy",
+            "entities": {"course_name": "컴퓨터그래픽스"},
+        },
+    ]
+
+    result = answer_question("최근 공지 알려줘", history=history, index=index)
+
+    assert "followup" not in result
+    assert result["answer_type"] == "notice_list"
+
+
+def test_reference_phrase_can_reuse_course_history(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "컴퓨터그래픽스",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "컴퓨터그래픽스는 그래픽 표현과 처리 원리를 다룬다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-graph",
+            "normalized_items": [{"course_name": "컴퓨터그래픽스", "overview": "그래픽 표현과 처리 원리"}],
+        }
+    ])
+    history = [
+        {"role": "user", "content": "컴퓨터그래픽 과목 C이상 받으려면?"},
+        {
+            "role": "assistant",
+            "content": "컴퓨터그래픽스 학습 전략 안내입니다.",
+            "intent": "course_grade_strategy",
+            "entities": {"course_name": "컴퓨터그래픽스"},
+        },
+    ]
+
+    result = answer_question("그 과목 어려워?", history=history, index=index)
+
+    assert result["followup"]["intent"] == "course_difficulty"
+    assert "컴퓨터그래픽스" in result["resolved_query"]
+
+
 def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, monkeypatch) -> None:
     import config
     from chatbot import answer_question

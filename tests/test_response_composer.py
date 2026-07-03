@@ -296,6 +296,59 @@ def test_course_difficulty_llm_timeout_returns_structured_failure(tmp_path, monk
     assert result["error_code"] == "LLM_TIMEOUT"
 
 
+def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:
+    import config
+    import requests
+    import chatbot
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, text: str = "") -> None:
+            self.status_code = status_code
+            self._text = text
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                error = requests.HTTPError(f"HTTP {self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self) -> dict:
+            return {"candidates": [{"content": {"parts": [{"text": self._text}]}}]}
+
+    def fake_post(url, **kwargs):
+        model = url.split("/models/", 1)[1].split(":generateContent", 1)[0]
+        calls.append(model)
+        if model == "gemini-2.5-flash":
+            return FakeResponse(429)
+        return FakeResponse(200, "fallback model answer")
+
+    monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-2.5-flash")
+    monkeypatch.setattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-2.0-flash"])
+    monkeypatch.setattr("chatbot.requests.post", fake_post)
+    chatbot.LLM_COOLDOWN_UNTIL.clear()
+
+    assert chatbot.call_llm_raw("hello") == "fallback model answer"
+    assert calls == ["gemini-2.5-flash", "gemini-2.0-flash"]
+    chatbot.LLM_COOLDOWN_UNTIL.clear()
+
+
+def test_llm_intent_classifier_is_disabled_by_default(monkeypatch) -> None:
+    import config
+    import chatbot
+
+    def fail_if_called(prompt):
+        raise AssertionError("LLM intent classifier should not call provider by default")
+
+    monkeypatch.setattr(config, "ENABLE_LLM_INTENT_CLASSIFIER", False)
+    monkeypatch.setattr("chatbot.call_llm_raw", fail_if_called)
+
+    assert chatbot.classify_intent_with_llm("인공지능 난이도") is None
+
+
 def test_backend_localizes_dynamic_action_labels_to_english() -> None:
     from main import localize_response
 

@@ -62,6 +62,12 @@ OPENAI_API_KEY = env("OPENAI_API_KEY")
 OPENAI_MODEL = env("OPENAI_MODEL", "gpt-4.1-mini")
 GEMINI_API_KEY = env("GEMINI_API_KEY")
 GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_FALLBACK_MODELS = [
+    model.strip()
+    for model in env("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash").split(",")
+    if model.strip()
+]
+ENABLE_LLM_INTENT_CLASSIFIER = env_bool("ENABLE_LLM_INTENT_CLASSIFIER", False)
 
 CRAWL_START_URL = env("CRAWL_START_URL", "https://cs.knou.ac.kr/sites/cs1/index.do")
 ALLOWED_DOMAIN = env("ALLOWED_DOMAIN", "cs.knou.ac.kr")

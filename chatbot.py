@@ -56,6 +56,11 @@ OUT_OF_SCOPE_MESSAGE = (
 LLM_SAFE_FAILURE_MESSAGE = "LLM 보조 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
 LLM_USER_FAILURE_MESSAGE = "현재 LLM 보조 답변을 불러오지 못했습니다. 공식 데이터 기준으로 다시 확인해 주세요."
 LLM_LAST_ERROR: dict[str, str] = {"code": "", "message": "", "provider": "", "model": ""}
+LLM_COOLDOWN_UNTIL: dict[str, float] = {}
+LLM_COOLDOWN_SECONDS = {
+    "LLM_RATE_LIMIT": 60.0,
+    "LLM_PROVIDER_ERROR": 12.0,
+}
 
 
 class LLMCallError(RuntimeError):
@@ -66,6 +71,24 @@ class LLMCallError(RuntimeError):
         self.code = code
         self.user_message = user_message
         self.detail = detail or code
+
+
+def _llm_cooldown_key(provider: str, model: str = "") -> str:
+    return f"{provider}:{model or '*'}"
+
+
+def _is_llm_in_cooldown(provider: str, model: str = "") -> bool:
+    now = time.time()
+    keys = [_llm_cooldown_key(provider, model), _llm_cooldown_key(provider, "*")]
+    return any(LLM_COOLDOWN_UNTIL.get(key, 0) > now for key in keys)
+
+
+def _set_llm_cooldown(provider: str, model: str, code: str) -> None:
+    seconds = LLM_COOLDOWN_SECONDS.get(code)
+    if not seconds:
+        return
+    until = time.time() + seconds
+    LLM_COOLDOWN_UNTIL[_llm_cooldown_key(provider, model)] = until
 SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게시판|market|student", re.IGNORECASE)
 SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
@@ -416,8 +439,14 @@ def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
 
     실패하거나 JSON 파싱이 안 되면 None을 반환해 RAG 원문 노출 대신 기존 안전 흐름을 유지한다.
     """
+    if not config.ENABLE_LLM_INTENT_CLASSIFIER:
+        return None
     provider = (config.LLM_PROVIDER or "").strip().lower()
     if provider not in {"openai", "gemini"}:
+        return None
+    model = config.GEMINI_MODEL if provider == "gemini" else config.OPENAI_MODEL
+    if _is_llm_in_cooldown(provider, model):
+        logger.info("LLM Intent 보조 분류 스킵: provider=%s model=%s cooldown=true", provider, model)
         return None
     prompt = (
         "다음 학생 질문의 의도를 아래 Intent 중 하나로 분류하라.\n"
@@ -3307,28 +3336,17 @@ def _openai(prompt: str) -> str:
     return "".join(parts).strip()
 
 
-def _gemini(prompt: str) -> str:
-    if not config.GEMINI_API_KEY:
-        raise LLMCallError("LLM_API_KEY_MISSING", detail="GEMINI_API_KEY is not configured")
-    if not config.GEMINI_MODEL:
-        raise LLMCallError("LLM_MODEL_MISSING", detail="GEMINI_MODEL is not configured")
-    try:
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent",
-            params={"key": config.GEMINI_API_KEY},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-    except requests.Timeout as exc:
-        raise LLMCallError("LLM_TIMEOUT", detail="Gemini request timed out") from exc
-    except requests.HTTPError as exc:
-        raise _llm_http_error(exc) from exc
-    except requests.RequestException as exc:
-        raise LLMCallError("LLM_PROVIDER_ERROR", detail=type(exc).__name__) from exc
+def _gemini_request(prompt: str, model: str) -> str:
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        params={"key": config.GEMINI_API_KEY},
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
     data = response.json()
     text = "".join(
         part.get("text", "")
@@ -3336,17 +3354,60 @@ def _gemini(prompt: str) -> str:
         for part in (candidate.get("content") or {}).get("parts") or []
     ).strip()
     if not text:
-        raise LLMCallError("LLM_PROVIDER_ERROR", detail="Gemini response is empty")
+        raise LLMCallError("LLM_PROVIDER_ERROR", detail=f"Gemini response is empty model={model}")
     return text
 
 
-def _llm_http_error(exc: requests.HTTPError) -> LLMCallError:
+def _gemini_models_to_try() -> list[str]:
+    models = [config.GEMINI_MODEL, *getattr(config, "GEMINI_FALLBACK_MODELS", [])]
+    return list(dict.fromkeys(model for model in models if model))
+
+
+def _gemini(prompt: str) -> str:
+    if not config.GEMINI_API_KEY:
+        raise LLMCallError("LLM_API_KEY_MISSING", detail="GEMINI_API_KEY is not configured")
+    if not config.GEMINI_MODEL:
+        raise LLMCallError("LLM_MODEL_MISSING", detail="GEMINI_MODEL is not configured")
+    last_error: LLMCallError | None = None
+    for model in _gemini_models_to_try():
+        if _is_llm_in_cooldown("gemini", model):
+            logger.info("[LLM][SKIP] provider=gemini model=%s reason=cooldown", model)
+            last_error = LLMCallError("LLM_RATE_LIMIT", detail=f"Gemini model in cooldown: {model}")
+            continue
+        try:
+            return _gemini_request(prompt, model)
+        except requests.Timeout as exc:
+            last_error = LLMCallError("LLM_TIMEOUT", detail=f"Gemini request timed out model={model}")
+            break
+        except requests.HTTPError as exc:
+            last_error = _llm_http_error(exc, model=model)
+            _set_llm_cooldown("gemini", model, last_error.code)
+            if last_error.code not in {"LLM_RATE_LIMIT", "LLM_PROVIDER_ERROR"}:
+                break
+            logger.warning("[LLM][RETRY] provider=gemini model=%s code=%s trying_fallback=true", model, last_error.code)
+            continue
+        except requests.RequestException as exc:
+            last_error = LLMCallError("LLM_PROVIDER_ERROR", detail=f"{type(exc).__name__} model={model}")
+            _set_llm_cooldown("gemini", model, last_error.code)
+            continue
+        except LLMCallError as exc:
+            last_error = exc
+            _set_llm_cooldown("gemini", model, exc.code)
+            if exc.code not in {"LLM_PROVIDER_ERROR"}:
+                break
+    if last_error:
+        _set_llm_cooldown("gemini", "*", last_error.code)
+        raise last_error
+    raise LLMCallError("LLM_UNKNOWN_ERROR", detail="Gemini request failed without detail")
+
+
+def _llm_http_error(exc: requests.HTTPError, *, model: str = "") -> LLMCallError:
     status_code = getattr(exc.response, "status_code", 0) or 0
     if status_code == 429:
-        return LLMCallError("LLM_RATE_LIMIT", detail=f"provider returned HTTP {status_code}")
+        return LLMCallError("LLM_RATE_LIMIT", detail=f"provider returned HTTP {status_code}{f' model={model}' if model else ''}")
     if status_code == 400:
-        return LLMCallError("LLM_BAD_REQUEST", detail=f"provider returned HTTP {status_code}")
-    return LLMCallError("LLM_PROVIDER_ERROR", detail=f"provider returned HTTP {status_code}")
+        return LLMCallError("LLM_BAD_REQUEST", detail=f"provider returned HTTP {status_code}{f' model={model}' if model else ''}")
+    return LLMCallError("LLM_PROVIDER_ERROR", detail=f"provider returned HTTP {status_code}{f' model={model}' if model else ''}")
 
 
 def _record_llm_error(provider: str, model: str, exc: LLMCallError) -> None:
@@ -3363,17 +3424,24 @@ def get_llm_health_status() -> dict[str, Any]:
     if provider == "gemini":
         configured = bool(config.GEMINI_API_KEY)
         model = config.GEMINI_MODEL or "gemini-2.0-flash"
+        fallback_models = getattr(config, "GEMINI_FALLBACK_MODELS", [])
     elif provider == "openai":
         configured = bool(config.OPENAI_API_KEY)
         model = config.OPENAI_MODEL
+        fallback_models = []
     else:
         configured = False
         model = ""
+        fallback_models = []
+    cooldown_remaining = max(0, round(LLM_COOLDOWN_UNTIL.get(_llm_cooldown_key(provider, "*"), 0) - time.time()))
     return {
         "provider": provider,
         "configured": configured,
         "model": model,
+        "fallback_models": fallback_models,
+        "intent_classifier_enabled": bool(config.ENABLE_LLM_INTENT_CLASSIFIER),
         "last_error": LLM_LAST_ERROR.get("code") or "",
+        "cooldown_remaining_sec": cooldown_remaining,
     }
 
 

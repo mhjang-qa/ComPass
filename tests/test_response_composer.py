@@ -22,6 +22,7 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("인공지능은 어떤 커리큘럼이야?") == "course_detail"
     assert classify_intent("파이썬프로그래밍기초 수업 난이도는?") == "course_difficulty"
     assert classify_intent("운영체제는 어려워?") == "course_difficulty"
+    assert classify_intent("컴퓨터그래픽 학점 잘 받으려면") == "course_grade_strategy"
     assert classify_intent("컴퓨터구조는 뭐 배우는 과목이야?") == "course_detail"
     assert classify_intent("데이터베이스 시험범위는?") == "exam_scope"
     assert classify_intent("운영체제 기말 범위") == "exam_scope"
@@ -43,6 +44,7 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "인공지능이 뭐야": "course_detail",
         "인공지능 어렵나요": "course_difficulty",
         "인공지능 C이상 맞으려면": "course_grade_strategy",
+        "컴퓨터그래픽스 학점 잘 받으려면": "course_study_tip",
         "데이터베이스시스템 듣기 전에 뭐 알아야 해": "course_order",
         "편입생인데 어떤 과목부터 들어": "course_roadmap",
         "최근 공지": "recent_notice",
@@ -217,6 +219,105 @@ def test_course_difficulty_llm_answer_separates_official_and_advice(tmp_path, mo
     assert "참고용" in result["items"][0]["difficulty_advice"]["체감 난이도"]
     assert "공식 기준이 아닌 참고용" in result["items"][0]["disclaimer"]
     assert result["items"][0]["source_url"].endswith("course-34416")
+
+
+def test_followup_expand_uses_recent_course_history(tmp_path, monkeypatch) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "컴퓨터그래픽스",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "컴퓨터그래픽스는 그래픽 표현과 처리 원리를 다룬다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-graph",
+            "normalized_items": [
+                {
+                    "course_name": "컴퓨터그래픽스",
+                    "overview": "그래픽 표현과 처리 원리를 학습하는 과목입니다.",
+                    "topics": ["그래픽 표현", "처리 원리", "실습"],
+                }
+            ],
+        }
+    ])
+    monkeypatch.setattr(
+        "chatbot.call_llm_raw",
+        lambda prompt: (
+            "추천 공부법: 그래픽 표현 개념을 먼저 정리하세요.\n"
+            "우선 익혀야 할 내용: 좌표와 렌더링 흐름입니다.\n"
+            "시험 대비 팁: 예제 중심으로 개념을 연결하세요."
+        ),
+    )
+    history = [
+        {
+            "role": "assistant",
+            "content": "컴퓨터그래픽스 학습 전략 안내입니다.",
+            "intent": "course_grade_strategy",
+            "entities": {"course_name": "컴퓨터그래픽스"},
+        }
+    ]
+
+    result = answer_question("더 알려줘", history=history, index=index)
+
+    assert result["answer_type"] == "course_grade_strategy"
+    assert result["followup"]["intent"] == "followup_expand"
+    assert result["followup"]["entities"]["course_name"] == "컴퓨터그래픽스"
+    assert "컴퓨터그래픽스" in result["resolved_query"]
+    assert result["answer_policy"]["mode"] == "expanded"
+
+
+def test_contextual_followup_uses_recent_course_for_difficulty(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "컴퓨터그래픽스",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "컴퓨터그래픽스는 그래픽 표현과 처리 원리를 다룬다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-graph",
+            "normalized_items": [{"course_name": "컴퓨터그래픽스", "overview": "그래픽 표현과 처리 원리"}],
+        }
+    ])
+    history = [
+        {
+            "role": "assistant",
+            "content": "컴퓨터그래픽스 과목 안내입니다.",
+            "intent": "course_info",
+            "entities": {"course_name": "컴퓨터그래픽스"},
+        }
+    ]
+
+    result = answer_question("그 과목 어려워?", history=history, index=index)
+
+    assert result["answer_type"] == "llm_confirmation_required"
+    assert result["followup"]["intent"] == "course_difficulty"
+    assert "컴퓨터그래픽스" in result["resolved_query"]
+
+
+def test_explicit_new_course_beats_history(tmp_path) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    history = [
+        {
+            "role": "assistant",
+            "content": "컴퓨터그래픽스 과목 안내입니다.",
+            "intent": "course_info",
+            "entities": {"course_name": "컴퓨터그래픽스"},
+        }
+    ]
+
+    result = answer_question("데이터베이스는 어려워?", history=history, index=index)
+
+    assert "followup" not in result
+    assert result["course_name"] == "데이터베이스시스템"
+    assert result["answer_type"] == "llm_confirmation_required"
 
 
 def test_course_difficulty_llm_key_missing_returns_structured_failure(tmp_path, monkeypatch) -> None:

@@ -16,6 +16,8 @@ ComPass는 단순 검색 결과 제공 챗봇이 아닙니다. 공식 데이터�
 
 Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()` 3단계로 동작합니다. Entity는 `faculty_name`, `course_name`, `grade`, `target`, `grade_goal`을 추출하며, Intent 우선순위는 `faculty_detail > course_detail > course_difficulty > course_grade_strategy > course_order > course_roadmap > faculty_list > curriculum > schedule > notice > graduation > faq > contact > smalltalk > general_search > out_of_scope`입니다. 규칙 기반 confidence가 0.7 미만이고 LLM 설정이 활성화된 경우에는 JSON 전용 프롬프트로 Intent 보조 분류를 1회 시도하며, 실패 시 원문 검색 결과를 그대로 노출하지 않고 기존 안전 응답 흐름을 유지합니다.
 
+짧은 후속 질문은 세션의 최근 3개 Q/A 요약을 기준으로 보완합니다. 예를 들어 `컴퓨터그래픽 학점 잘 받으려면?` 이후 `더 알려줘`, `그 과목 어려워?`, `시험은 어떻게 준비해?`처럼 주어가 생략된 질문은 직전 답변의 `intent`, `course_name`, `rag_sources`를 참고해 `컴퓨터그래픽스 학점 잘 받는 방법을 더 자세히 알려줘` 같은 expanded query로 변환한 뒤 기존 RAG/LLM 흐름을 사용합니다. 새 과목명이 명시된 질문은 히스토리보다 현재 입력을 우선합니다.
+
 과목 상세 질문은 교수진이나 공지사항을 함께 출력하지 않고, 과목 개요·쉬운 설명·주요 학습 내용·추천 대상·공식 바로가기로 재구성합니다.
 
 검색 인덱스를 만들 때 `course_catalog`도 함께 생성합니다. 과목명, 공백 제거 별칭, 주요 약칭, Notion 문서 ID, 공식 URL, 문서유형을 저장하며 질문에서 가장 긴 과목명 또는 별칭을 우선 감지합니다.
@@ -26,7 +28,7 @@ Intent Router는 `normalize_question()`, `extract_entities()`, `detect_intent()`
 
 수업 난이도, 공부량, 공부 방법, 선수지식처럼 공식 데이터에 없는 학습 조언은 즉시 단정하지 않습니다. 공식 과목 개요를 먼저 확인한 후 사용자가 동의하면 제한적 LLM 보조 답변을 생성하며, 체감 난이도가 참고용이고 개인 경험에 따라 달라진다는 점을 명시합니다. 공식 학점·개설 학기·시험 범위·평가 방식은 추측하지 않습니다.
 
-`C이상`, `A받으려면`, `잘하려면`, `공부법`, `시험 대비`, `학습 전략`처럼 성적·학습 전략을 묻는 질문은 `course_grade_strategy`로 분류합니다. 이 경우 공식 과목 개요와 주요 학습 내용만 근거로 사용하고, 성적 취득 전략은 공식 기준이 아닌 참고용 LLM 보조 설명으로 분리합니다.
+`C이상`, `A받으려면`, `학점 잘 받으려면`, `잘하려면`, `공부법`, `시험 대비`, `학습 전략`처럼 성적·학습 전략을 묻는 질문은 라우터에서 `course_study_tip` 또는 `course_grade_strategy`로 분류하고 내부적으로 같은 학습 전략 응답을 사용합니다. 이 경우 공식 과목 개요와 주요 학습 내용만 근거로 사용하고, 성적 취득 전략은 공식 기준이 아닌 참고용 LLM 보조 설명으로 분리합니다.
 
 ## 주요 기능
 
@@ -556,6 +558,8 @@ ComPass는 문서 유형과 유효기간에 따라 지식 데이터를 다음 �
 LLM은 공식 DB 검색 결과가 충분하지 않고 사용자가 보조 답변을 허용한 경우에만 호출합니다.
 LLM 답변도 검색 결과를 그대로 붙여 넣지 않고 학생이 이해하기 쉬운 형태로 재구성합니다.
 
+- 모바일 PIP를 기준으로 기본 답변은 3~5문장 이내, 목록은 최대 3개까지만 먼저 제공합니다.
+- 사용자가 `더 알려줘`, `자세히`, `전체 보기`, `계속`, `추가 설명`처럼 확장을 요청한 경우에만 최대 7문장과 5개 항목까지 허용합니다.
 - 제목 → 1~2줄 설명 → 표/목록 → 참고 안내 → 바로가기 순서로 정리합니다.
 - 문장 중간 끊김, 키워드 나열, 긴 단락을 후처리로 정리합니다.
 - `is_incomplete_llm_text()`가 마지막 문장, 열린 라벨, 미완성 접속어, 짧은 설명형 응답, 깨진 표를 검사합니다.
@@ -608,6 +612,8 @@ LLM 보조 답변은 `call_llm_helper(llm_type, question, context)`로 공통 �
 
 - 프론트는 `sessionStorage`에 `compass_session_id`를 생성하고 모든 `/api/chat` 요청에 포함합니다.
 - 각 요청마다 `request_id`를 생성해 로딩 메시지와 응답을 매칭합니다.
+- 서버는 세션별 최근 3개 Q/A만 유지하며, assistant 항목에는 답변 요약, `intent`, `entities.course_name`, `rag_sources`, `created_at`만 저장합니다. 전체 답변 원문이나 개인정보는 저장하지 않습니다.
+- 후속 질문으로 판단되면 `[INTENT]`, `[HISTORY]`, `[ANSWER_POLICY]` 로그에 원문 질문, 기준 intent, 과목명, expanded query, compact/expanded 정책을 남깁니다.
 - LLM 확인 버튼은 전역 `pendingQuestion`이 아니라 해당 응답의 `question/session_id/llm_type/context`로 다시 요청합니다.
 - 프론트는 `window.chatSubmitting`, `isChatPending`, `request_id` 중복 렌더링 Set으로 Enter/버튼 중복 전송과 같은 응답의 중복 버블 생성을 막습니다.
 - LLM 보조 답변 로딩 상태는 기존 확인 카드 내부에만 표시하고, 성공·실패·Abort 모두 `finally` 흐름에서 제거합니다.

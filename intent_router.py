@@ -11,10 +11,22 @@ from synonyms import apply_synonyms
 
 DICTIONARY_PATH = Path(__file__).resolve().parent / "data" / "intent_dictionary.json"
 INTENTS_PATH = Path(__file__).resolve().parent / "data" / "intents.json"
+DEFAULT_COURSES = {
+    "컴퓨터그래픽스",
+    "컴퓨터그래픽",
+    "데이터베이스시스템",
+    "데이터베이스",
+    "운영체제",
+    "인공지능",
+    "자료구조",
+    "알고리즘",
+    "파이썬프로그래밍기초",
+}
 INTENT_PRIORITY = [
     "faculty_detail",
     "course_detail",
     "course_difficulty",
+    "course_study_tip",
     "course_grade_strategy",
     "course_order",
     "course_roadmap",
@@ -40,6 +52,7 @@ SEARCH_SCOPES = {
     "curriculum": ["curriculum"],
     "course_detail": ["course_detail", "curriculum"],
     "course_difficulty": ["course_detail", "curriculum"],
+    "course_study_tip": ["course_detail", "curriculum"],
     "course_grade_strategy": ["course_detail", "curriculum"],
     "course_order": ["course_detail", "curriculum"],
     "course_roadmap": ["curriculum", "course_detail"],
@@ -120,6 +133,7 @@ def _faculty_names(catalogs: dict[str, Any] | None = None) -> list[str]:
 def _course_names(catalogs: dict[str, Any] | None = None) -> list[str]:
     dictionary = load_dictionary()
     names = {name for name in dictionary.get("courses", []) if name}
+    names.update(DEFAULT_COURSES)
     for item in _catalog_list(catalogs, "courses"):
         for key in ("course_name", "title", "name"):
             name = (item.get(key) or "").strip()
@@ -234,6 +248,8 @@ def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]]
         return _result("course_detail", 0.94, entities, normalized, "과목 설명 질문")
     if course_name and re.search(r"난이도|어렵|힘든|공부량|들을만|수업\s*부담|학습\s*부담", normalized):
         return _result("course_difficulty", 0.92, entities, normalized, "과목 난이도 질문")
+    if course_name and re.search(r"학점\s*잘|점수\s*잘|공부\s*어떻게|시험\s*준비|기말\s*준비|중간\s*준비|과제\s*준비|어떻게\s*(?:공부|준비)|잘하는\s*방법|A\+?\s*받|성적\s*잘", normalized, re.IGNORECASE):
+        return _result("course_study_tip", 0.93, entities, normalized, "과목 공부법/성적 전략 질문")
     if course_name and re.search(r"[ABC]\s*(?:이상|받|맞)|성적\s*잘|점수\s*잘|잘하려면|맞으려면|받으려면|공부법|시험\s*대비|학습\s*전략|어떻게\s*(?:공부|준비)", normalized, re.IGNORECASE):
         return _result("course_grade_strategy", 0.93, entities, normalized, "성적 목표/학습 전략 질문")
     if course_name and re.search(r"선수\s*지식|선수\s*과목|듣기\s*전|전에\s*뭐|먼저|수강\s*순서|학습\s*순서", normalized):

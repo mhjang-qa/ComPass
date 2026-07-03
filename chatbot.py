@@ -47,6 +47,7 @@ KNOWN_COURSE_DETAIL_URLS = {
 COURSE_NAME_ALIASES = {
     "데이터베이스": "데이터베이스시스템",
     "db": "데이터베이스시스템",
+    "컴퓨터그래픽": "컴퓨터그래픽스",
 }
 KNOWN_COURSE_NAMES_EXTRA = {"데이터정보처리입문"}
 FACULTY_HOMEPAGE_FALLBACKS = {
@@ -109,6 +110,7 @@ ROUTER_TO_INTERNAL_INTENT = {
     "course_info": "course_detail",
     "course_detail": "course_detail",
     "course_difficulty": "course_difficulty",
+    "course_study_tip": "course_grade_strategy",
     "course_order": "course_order",
     "course_roadmap": "course_roadmap",
     "course_grade": "course_grade_strategy",
@@ -231,7 +233,7 @@ COURSE_DIFFICULTY_RE = re.compile(
     re.IGNORECASE,
 )
 COURSE_GRADE_STRATEGY_RE = re.compile(
-    r"(?:[ABC]\s*이상|[ABC]\s*(?:받|맞)|성적\s*잘|점수\s*잘|잘하려면|맞으려면|받으려면|"
+    r"(?:[ABC]\s*이상|[ABC]\s*(?:받|맞)|학점\s*잘|성적\s*잘|점수\s*잘|잘하려면|맞으려면|받으려면|"
     r"어떻게\s*(?:공부|준비)|공부법|시험\s*대비|학습\s*전략)",
     re.IGNORECASE,
 )
@@ -366,7 +368,7 @@ def casual_response(question: str) -> dict[str, Any] | None:
     }
 
 
-def contextualize(question: str, history: list[dict[str, str]] | None) -> str:
+def contextualize(question: str, history: list[dict[str, Any]] | None) -> str:
     if not history:
         return question
     recent_user = [
@@ -379,6 +381,104 @@ def contextualize(question: str, history: list[dict[str, str]] | None) -> str:
     if (pronoun_like or short_followup) and recent_user:
         return f"{recent_user[-1]} / 후속 질문: {question}"
     return question
+
+
+FOLLOWUP_EXPAND_RE = re.compile(r"더\s*알려|자세히|좀\s*더|계속|상세히|추가로|전체\s*보기|더보기|그\s*다음|이어서는")
+FOLLOWUP_CONTEXT_RE = re.compile(r"그건|그거|그\s*과목|위\s*내용|난이도는|공부법은|시험은|학점은|어때|어려워|다른\s*과목")
+STUDY_TIP_RE = re.compile(r"학점\s*잘|점수\s*잘|공부\s*어떻게|시험\s*준비|기말\s*준비|중간\s*준비|과제\s*준비|어떻게\s*공부|잘하는\s*방법|A\\+?\s*받|성적\s*잘", re.IGNORECASE)
+
+
+def _history_topics(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    topics: list[dict[str, Any]] = []
+    for item in reversed(history or []):
+        if item.get("role") != "assistant":
+            continue
+        entities = item.get("entities") if isinstance(item.get("entities"), dict) else {}
+        course_name = entities.get("course_name") or detect_course_name(str(item.get("content") or ""))
+        intent = str(item.get("intent") or "")
+        if course_name or intent:
+            topics.append({
+                "course_name": course_name,
+                "intent": intent,
+                "summary": sanitize_input(str(item.get("content") or ""), 160),
+                "rag_sources": item.get("rag_sources") or [],
+            })
+        if len(topics) >= 3:
+            break
+    return topics
+
+
+def _followup_intent(question: str, base_intent: str = "") -> str:
+    if FOLLOWUP_EXPAND_RE.search(question):
+        return "followup_expand"
+    if STUDY_TIP_RE.search(question) or COURSE_GRADE_STRATEGY_RE.search(question):
+        return "course_grade_strategy"
+    if COURSE_DIFFICULTY_RE.search(question):
+        return "course_difficulty"
+    if COURSE_ORDER_RE.search(question):
+        return "course_order"
+    if COURSE_DETAIL_RE.search(question):
+        return "course_info"
+    return base_intent or "general_explain"
+
+
+def _expanded_followup_query(question: str, course_name: str, intent: str, base_intent: str) -> str:
+    if intent == "followup_expand":
+        target = {
+            "course_grade_strategy": "학점 잘 받는 방법을 더 자세히 알려줘",
+            "course_difficulty": "난이도와 학습 부담을 더 자세히 알려줘",
+            "course_order": "수강 순서와 선수지식을 더 자세히 알려줘",
+            "course_info": "배우는 내용을 더 자세히 알려줘",
+        }.get(base_intent, "관련 내용을 더 자세히 알려줘")
+        return f"{course_name} {target}" if course_name else f"{question} 더 자세히 알려줘"
+    if intent == "course_grade_strategy":
+        return f"{course_name} 학점 잘 받는 방법을 알려줘"
+    if intent == "course_difficulty":
+        return f"{course_name} 난이도와 학습 부담을 알려줘"
+    if intent == "course_order":
+        return f"{course_name} 수강 순서와 선수지식을 알려줘"
+    if intent == "course_info":
+        return f"{course_name} 과목 설명을 알려줘"
+    return f"{course_name} {question}".strip()
+
+
+def resolve_followup_question(question: str, history: list[dict[str, Any]] | None, index: SearchIndex | None = None) -> dict[str, Any]:
+    # 후속질문
+    explicit_course = detect_course_name(question, index)
+    if explicit_course:
+        return {"is_followup": False, "expanded_query": question}
+    topics = _history_topics(history)
+    base = topics[0] if topics else {}
+    base_course = base.get("course_name") or ""
+    base_intent = str(base.get("intent") or "")
+    short_question = len(tokenize(question)) <= 3
+    followup = bool(topics) and (
+        short_question
+        or FOLLOWUP_EXPAND_RE.search(question)
+        or FOLLOWUP_CONTEXT_RE.search(question)
+        or (not explicit_course and re.search(r"난이도|공부법|학점|시험|과제|어려워|어때", question))
+    )
+    if not followup:
+        return {"is_followup": False, "expanded_query": question}
+    intent = _followup_intent(question, base_intent)
+    expanded = _expanded_followup_query(question, base_course, intent, base_intent)
+    resolved = {
+        "original_query": question,
+        "is_followup": True,
+        "resolved_from_history": bool(base_course or base_intent),
+        "base_intent": base_intent,
+        "intent": intent,
+        "entities": {"course_name": base_course} if base_course else {},
+        "expanded_query": expanded,
+    }
+    logger.info(
+        "[HISTORY] resolved=%s base_intent=%s course_name=%s expanded_query=%r",
+        resolved["resolved_from_history"],
+        base_intent,
+        base_course,
+        expanded,
+    )
+    return resolved
 
 
 def is_out_of_scope(question: str) -> bool:
@@ -453,7 +553,7 @@ def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
         "반드시 JSON만 반환하라.\n"
         "Intent:\n"
         "faculty_list, faculty_detail, curriculum, course_detail, course_difficulty,\n"
-        "course_grade_strategy, course_order, course_roadmap, recent_notice, notice, schedule,\n"
+        "course_study_tip, course_grade_strategy, course_order, course_roadmap, recent_notice, notice, schedule,\n"
         "graduation, transfer, exam, scholarship, faq, contact, out_of_scope, general_search\n"
         f"질문:\n{question}\n"
         "반환 예:\n"
@@ -2455,6 +2555,12 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
         "schedule_explain": "일정 원문을 복사하지 말고 기간과 학생 행동 중심으로 쉽게 설명한다.",
         "general_explain": "공식 데이터로 확인되는 핵심만 학생 눈높이로 설명한다.",
     }
+    expanded = bool(context.get("expanded_answer") or FOLLOWUP_EXPAND_RE.search(question or ""))
+    length_rule = (
+        "사용자가 상세 설명을 요청했으므로 최대 7문장까지 허용한다. 목록은 최대 5개까지만 제공한다."
+        if expanded
+        else "모바일 화면 기준으로 3~5문장 이내로 답변한다. 목록은 최대 3개까지만 먼저 제공한다. 마지막에 더 자세한 설명이 필요하면 “더 알려줘”라고 안내한다."
+    )
     return f"""
 너는 한국방송통신대학교 컴퓨터과학과 학생을 돕는 AI 보조 설명 엔진이다.
 공식 데이터와 일반적인 참고 조언을 반드시 구분한다.
@@ -2465,6 +2571,7 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
 답변은 바로 본문부터 시작한다.
 과제 대행, 코딩 대행, 정답 대행은 제공하지 않는다.
 한국어로 간결하게 작성한다.
+{length_rule}
 문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
 답변은 700자 이내로 작성한다.
 표와 JSON은 사용하지 않는다.
@@ -3801,7 +3908,7 @@ def apply_data_tier_notice(response: dict[str, Any], hits: list[dict[str, Any]])
 def answer_question(
     question: str,
     *,
-    history: list[dict[str, str]] | None = None,
+    history: list[dict[str, Any]] | None = None,
     allow_llm: bool = False,
     llm_type: str | None = None,
     session_id: str = "",
@@ -3831,13 +3938,43 @@ def answer_question(
         casual["request_id"] = request_id
         return casual
     index = index or SearchIndex()
+    original_question = clean_question
+    followup_meta = resolve_followup_question(clean_question, history, index)
+    if followup_meta.get("is_followup") and followup_meta.get("expanded_query"):
+        clean_question = sanitize_input(str(followup_meta["expanded_query"]))
+    routed_for_log = analyze_question_intent(clean_question, index)
+    logger.info(
+        "[INTENT] query=%r intent=%s confidence=%.2f",
+        original_question,
+        followup_meta.get("intent") if followup_meta.get("is_followup") else routed_for_log.get("intent"),
+        float(routed_for_log.get("confidence") or 0),
+    )
+
+    def finish(response: dict[str, Any]) -> dict[str, Any]:
+        if followup_meta.get("is_followup"):
+            response["followup"] = followup_meta
+            response["original_query"] = original_question
+            response["resolved_query"] = clean_question
+        policy_mode = "expanded" if followup_meta.get("intent") == "followup_expand" else "compact"
+        response["answer_policy"] = {
+            "mode": policy_mode,
+            "reason": followup_meta.get("intent") or response.get("answer_type") or "",
+            "max_items": 5 if policy_mode == "expanded" else 3,
+        }
+        logger.info(
+            "[ANSWER_POLICY] mode=%s reason=%s max_items=%s",
+            response["answer_policy"]["mode"],
+            response["answer_policy"]["reason"],
+            response["answer_policy"]["max_items"],
+        )
+        return response
     priority_intent = FORCED_QUICK_INTENTS.get(str(forced_intent or "").strip().lower()) or priority_button_intent(clean_question)
     if priority_intent in {"notice_list", "course_table", "schedule_list"}:
         response = build_priority_intent_response(priority_intent, clean_question, index, started)
         response["session_id"] = session_id
         response["request_id"] = request_id
         response["quick_intent"] = priority_intent
-        return response
+        return finish(response)
     initial_intent = classify_intent(clean_question, index)
     if initial_intent == "faculty_detail":
         faculty = detect_faculty_member(clean_question, index)
@@ -3847,11 +3984,11 @@ def answer_question(
             matched = next((item for item in parsed_items if item.get("name") == faculty.get("name")), None)
             if matched:
                 faculty = matched
-        return build_faculty_detail_response(
+        return finish(build_faculty_detail_response(
             faculty,
             question=clean_question,
             started=started,
-        )
+        ))
     if initial_intent == "faculty":
         hits = retrieve_documents(index, clean_question, "faculty")
         items = normalize_results("faculty", hits, clean_question)
@@ -3876,8 +4013,8 @@ def answer_question(
             response["search_scope"] = ["faculty"]
             if not response.get("sources"):
                 response["sources"] = [{"title": "컴퓨터과학과 교수진", "url": FACULTY_URL, "score": 100}]
-            return response
-        return {
+            return finish(response)
+        return finish({
             "answer": "컴퓨터과학과 공식 교수진 데이터를 충분히 찾지 못했습니다.",
             "answer_type": "faculty",
             "summary": "교수진 페이지에서 전체 목록을 확인해 주세요.",
@@ -3894,43 +4031,43 @@ def answer_question(
             "failure_reason": "교수진 공식 문서 없음",
             "structured_intent": "faculty_list",
             "search_scope": ["faculty"],
-        }
+        })
     if initial_intent in {"course_table", "notice_list"}:
         response = build_priority_intent_response(initial_intent, clean_question, index, started)
         response["session_id"] = session_id
         response["request_id"] = request_id
         response["quick_intent"] = initial_intent
-        return response
+        return finish(response)
     if initial_intent == "exam_scope":
         response = _exam_scope_response(clean_question, index, started)
         response["session_id"] = session_id
         response["request_id"] = request_id
-        return response
+        return finish(response)
     if initial_intent == "course_grade_strategy":
         course_name = detect_course_name(clean_question, index)
         hits = retrieve_documents(index, clean_question, "course_grade_strategy")
         items = normalize_results("course_grade_strategy", hits, clean_question)
-        return _course_grade_strategy_response(
+        return finish(_course_grade_strategy_response(
             clean_question,
             course_name,
             items,
             started,
             session_id=session_id,
             request_id=request_id,
-        )
+        ))
     if initial_intent == "course_difficulty":
         course_name = detect_course_name(clean_question, index)
         hits = retrieve_documents(index, clean_question, "course_difficulty")
         items = normalize_results("course_difficulty", hits, clean_question)
         if not allow_llm:
-            return _course_difficulty_confirmation(
+            return finish(_course_difficulty_confirmation(
                 clean_question,
                 course_name,
                 items,
                 started,
                 session_id=session_id,
                 request_id=request_id,
-            )
+            ))
         try:
             response = _course_difficulty_response(
                 clean_question,
@@ -3942,7 +4079,7 @@ def answer_question(
             )
             response["session_id"] = session_id
             response["request_id"] = request_id
-            return response
+            return finish(response)
         except Exception as exc:
             logger.exception("과목 난이도 LLM 보조 답변 실패: %s", exc)
             result = _course_difficulty_confirmation(
@@ -3962,13 +4099,13 @@ def answer_question(
                     action for action in result["actions"] if action.get("type") == "link"
                 ],
             )
-            return result
+            return finish(result)
     if initial_intent in {"course_order", "course_roadmap", "notice_explain", "schedule_explain"}:
         requested_llm_type = llm_type or _llm_type_from_intent(initial_intent)
         hits = retrieve_documents(index, clean_question, initial_intent)
         context = _llm_context_from_hits(requested_llm_type, clean_question, hits, index)
         if not allow_llm:
-            return _llm_confirmation_response(
+            return finish(_llm_confirmation_response(
                 clean_question,
                 requested_llm_type,
                 context,
@@ -3976,8 +4113,8 @@ def answer_question(
                 started,
                 session_id=session_id,
                 request_id=request_id,
-            )
-        return _llm_helper_response(
+            ))
+        return finish(_llm_helper_response(
             clean_question,
             requested_llm_type,
             context,
@@ -3985,7 +4122,7 @@ def answer_question(
             started,
             session_id=session_id,
             request_id=request_id,
-        )
+        ))
     curated = match_curated(clean_question, history)
     if curated:
         if curated.get("answer_type") == "course_recommendation":
@@ -4013,7 +4150,7 @@ def answer_question(
             response["summary"] = curated.get("summary") or response["summary"]
             response["structured_intent"] = curated.get("intent")
             response["validity"] = curated.get("validity")
-            return response
+            return finish(response)
         if curated.get("answer_type") == "certification_list" and curated.get("structured_items"):
             source_url = curated.get("source_url") or DEPARTMENT_HOME_URL
             items = [
@@ -4037,8 +4174,8 @@ def answer_question(
             response["structured_intent"] = curated.get("intent")
             response["validity"] = curated.get("validity")
             response["note"] = curated.get("note", "")
-            return response
-        return {
+            return finish(response)
+        return finish({
             "answer": curated["answer"],
             "answer_type": curated.get("answer_type", "text"),
             "summary": curated.get("note", ""),
@@ -4059,7 +4196,7 @@ def answer_question(
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "structured_intent": curated.get("intent"),
             "validity": curated.get("validity"),
-        }
+        })
     if is_course_recommendation(clean_question):
         hits = retrieve_documents(index, clean_question, "course_recommendation")
         course_items = _course_items(hits)
@@ -4077,7 +4214,7 @@ def answer_question(
                 }
                 for item in course_items
             ]
-            return {
+            return finish({
                 "answer": "편입생 및 입문자 기준 추천 가능한 과목입니다.",
                 "answer_type": "course_recommendation",
                 "summary": "공식 교육과정 데이터에서 확인한 과목 3개를 먼저 안내드립니다.",
@@ -4093,8 +4230,8 @@ def answer_question(
                 "elapsed_ms": round((time.perf_counter() - started) * 1000),
                 "structured_intent": "course_recommendation",
                 "validity": "학기별 개설 과목 및 학점은 공식 교육과정표 확인 필요",
-            }
-        return {
+            })
+        return finish({
             "answer": "과목 추천을 위해 필요한 구조화된 교육과정 데이터를 아직 충분히 찾지 못했습니다.",
             "answer_type": "course_recommendation",
             "summary": "교육과정 데이터를 다시 크롤링하거나 관리자 화면에서 인덱스를 재생성해 주세요.",
@@ -4110,9 +4247,9 @@ def answer_question(
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "structured_intent": "course_recommendation",
             "failure_reason": "구조화 교육과정 데이터 없음",
-        }
+        })
     if not detect_course_name(clean_question, index) and not detect_faculty_member(clean_question, index) and is_out_of_scope(clean_question):
-        return {
+        return finish({
             "answer": OUT_OF_SCOPE_MESSAGE,
             "answer_type": "out_of_scope",
             "summary": OUT_OF_SCOPE_MESSAGE,
@@ -4126,7 +4263,7 @@ def answer_question(
             "keywords": tokenize(clean_question),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "failure_reason": "범위 외 질문",
-        }
+        })
 
     search_question = contextualize(clean_question, history)
     requested_answer_type = classify_intent(search_question, index)
@@ -4137,10 +4274,10 @@ def answer_question(
         hits = _supplement_schedule_hits(index, hits)
     best_score = hits[0].get("score", 100) if hits else 0
     if requested_answer_type == "schedule_list" and not normalize_results("schedule_list", hits, search_question):
-        return build_schedule_unavailable_response(started, clean_question)
+        return finish(build_schedule_unavailable_response(started, clean_question))
     if hits and best_score >= config.SEARCH_MIN_SCORE:
         if any((hit.get("document_type") or "") in DOCUMENT_RESOURCE_TYPES for hit in hits) and re.search(r"기출|시험문제|이전\s*시험|pdf|PDF", search_question, re.IGNORECASE):
-            return _document_resource_response(search_question, hits, started)
+            return finish(_document_resource_response(search_question, hits, started))
         sources = [
             {"title": hit.get("title"), "url": hit.get("source_url"), "score": hit.get("score")}
             for hit in hits[:3]
@@ -4212,7 +4349,9 @@ def answer_question(
         if response.get("answer_type") == "text" and should_auto_llm(search_question, hits, response.get("answer", "")):
             requested_llm_type = _llm_type_from_intent(requested_answer_type)
             context = _llm_context_from_hits(requested_llm_type, search_question, hits, index)
-            return _llm_helper_response(
+            if followup_meta.get("intent") == "followup_expand":
+                context["expanded_answer"] = True
+            return finish(_llm_helper_response(
                 search_question,
                 requested_llm_type,
                 context,
@@ -4220,13 +4359,13 @@ def answer_question(
                 started,
                 session_id=session_id,
                 request_id=request_id,
-            )
+            ))
         response = apply_data_tier_notice(response, hits)
         response["answer"] = sanitize_public_answer(response.get("answer", ""))
-        return response
+        return finish(response)
 
     if not allow_llm:
-        return {
+        return finish({
             "answer": (
                 "현재 공식 데이터에서 관련 정보를 찾지 못했습니다.\n"
                 "원하시면 AI 보조 답변을 통해 관련 정보를 추가로 안내해드릴 수 있습니다."
@@ -4244,11 +4383,13 @@ def answer_question(
             "keywords": tokenize(clean_question),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "failure_reason": "검색 점수 기준 미달",
-        }
+        })
 
     try:
         requested_llm_type = llm_type or "general_explain"
         context = _llm_context_from_hits(requested_llm_type, clean_question, hits, index)
+        if followup_meta.get("intent") == "followup_expand":
+            context["expanded_answer"] = True
         answer = call_llm_helper(
             requested_llm_type,
             clean_question,
@@ -4270,7 +4411,7 @@ def answer_question(
                 ]
             )
             llm_source_urls.extend([course_url, COURSE_FULL_GUIDE_URL])
-        return {
+        return finish({
             "answer": answer,
             "answer_type": "text",
             "summary": "공식 데이터 범위 안에서 학생이 이해하기 쉽게 재구성한 보조 답변입니다.",
@@ -4290,10 +4431,10 @@ def answer_question(
             "llm_type": requested_llm_type,
             "session_id": session_id,
             "request_id": request_id,
-        }
+        })
     except Exception as exc:
         logger.exception("LLM fallback 실패: %s", exc)
-        return {
+        return finish({
             "answer": OUT_OF_SCOPE_MESSAGE,
             "answer_type": "out_of_scope",
             "summary": OUT_OF_SCOPE_MESSAGE,
@@ -4310,4 +4451,4 @@ def answer_question(
             "llm_type": llm_type or "general_explain",
             "session_id": session_id,
             "request_id": request_id,
-        }
+        })

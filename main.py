@@ -54,7 +54,7 @@ index_job_lock = threading.Lock()
 index_load_lock = threading.Lock()
 index_ready_event = threading.Event()
 conversation_lock = threading.Lock()
-conversation_store: dict[str, deque[dict[str, str]]] = {}
+conversation_store: dict[str, deque[dict[str, Any]]] = {}
 job_state: dict[str, Any] = {
     "crawl": {
         "running": False,
@@ -115,7 +115,7 @@ def update_crawl_state(**updates: Any) -> None:
 
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
-    history: list[dict[str, str]] = Field(default_factory=list)
+    history: list[dict[str, Any]] = Field(default_factory=list)
     allow_llm: bool = False
     llm_type: str | None = None
     session_id: str | None = None
@@ -296,7 +296,7 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
     return result
 
 
-def conversation_history(session_id: str, incoming: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+def conversation_history(session_id: str, incoming: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     # 세션 대화
     if incoming:
         return incoming[-10:]
@@ -306,9 +306,17 @@ def conversation_history(session_id: str, incoming: list[dict[str, str]] | None 
 
 def remember_conversation(session_id: str, question: str, result: dict[str, Any]) -> None:
     with conversation_lock:
-        history = conversation_store.setdefault(session_id, deque(maxlen=10))
+        history = conversation_store.setdefault(session_id, deque(maxlen=6))
         history.append({"role": "user", "content": sanitize_input(question, 300)})
-        history.append({"role": "assistant", "content": sanitize_input(result.get("summary") or result.get("answer") or "", 500)})
+        course_name = result.get("course_name") or ((result.get("items") or [{}])[0].get("title") if result.get("items") else "")
+        history.append({
+            "role": "assistant",
+            "content": sanitize_input(result.get("summary") or result.get("answer") or "", 300),
+            "intent": str(result.get("structured_intent") or result.get("answer_type") or ""),
+            "entities": {"course_name": course_name} if course_name else {},
+            "rag_sources": [str(source.get("title") or source.get("url") or "") for source in (result.get("sources") or [])[:3]],
+            "created_at": now_iso(),
+        })
 
 
 def finalize_chat_response(req: ChatRequest, result: dict[str, Any], session_id: str, request_id: str) -> dict[str, Any]:

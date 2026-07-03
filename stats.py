@@ -1,5 +1,3 @@
-"""질문·답변 통계를 Notion 통계 DB에 저장."""
-
 from __future__ import annotations
 
 import logging

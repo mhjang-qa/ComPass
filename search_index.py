@@ -1,5 +1,3 @@
-"""Notion 지식 문서 기반 로컬 검색 인덱스."""
-
 from __future__ import annotations
 
 import json
@@ -72,7 +70,7 @@ PUNCT_TABLE = str.maketrans("", "", string.punctuation + "·ㆍ()[]{}<>《》「
 
 
 def normalize_course_key(value: str) -> str:
-    """과목명 비교용 정규화: 공백·괄호·특수문자를 제거하고 대소문자를 통일한다."""
+    # 과목명 정규화
     text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\{[^}]*\}", "", value or "")
     text = text.translate(PUNCT_TABLE)
     return re.sub(r"\s+", "", text).lower()
@@ -268,7 +266,7 @@ class SearchIndex:
 
     @staticmethod
     def _normalized_item_text(items: list[dict[str, Any]]) -> str:
-        """교수진·과목 구조화 필드도 키워드 검색 대상에 포함한다."""
+        # 구조화 필드 검색
         values: list[str] = []
         for item in items:
             for key in (
@@ -584,7 +582,7 @@ class SearchIndex:
         return ranked[:top_k]
 
     def find_curriculum_url(self) -> str:
-        """인덱스에 저장된 공식 교육과정 원본 URL을 우선 반환한다."""
+        # 교육과정 URL
         with self._lock:
             documents = list(self.payload.get("documents") or [])
         candidates: list[tuple[int, str]] = []

@@ -1,5 +1,3 @@
-"""정확한 단답이 필요한 관리자 검증형 구조화 지식."""
-
 from __future__ import annotations
 
 import json

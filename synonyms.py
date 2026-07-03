@@ -1,8 +1,3 @@
-"""ComPass Intent Engine 유사어 사전.
-
-Intent 분류 전 단계에서 사용자 표현을 공식 용어로 정규화한다.
-"""
-
 from __future__ import annotations
 
 import re
@@ -30,7 +25,7 @@ def synonym_replacements() -> dict[str, str]:
 
 
 def apply_synonyms(text: str) -> str:
-    """긴 유사어부터 공식 용어로 치환한다."""
+    # 유사어 정리
     normalized = text or ""
     replacements = synonym_replacements()
     for source, target in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):

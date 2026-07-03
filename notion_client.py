@@ -1,5 +1,3 @@
-"""Notion 지식 DB 조회 및 URL 기준 upsert."""
-
 from __future__ import annotations
 
 import json
@@ -71,7 +69,7 @@ class NotionAPIError(RuntimeError):
 
 
 def notion_error_message(exc: Exception, database_label: str = "Notion DB") -> str:
-    """관리자 화면에 노출할 수 있는 실행 가능한 Notion 오류 문구를 반환한다."""
+    # Notion 에러 문구
     message = str(exc)
     if "object_not_found" in message or "Could not find database" in message:
         return (
@@ -505,7 +503,7 @@ class NotionClient:
         *,
         status_name: str = "archived",
     ) -> dict[str, int]:
-        """최근 수집 정책에서 제외되는 기존 게시판 문서를 삭제하지 않고 보관 상태로 전환한다."""
+        # 보관 전환
         pages = self.query_all(database_id)
         result = {"checked": 0, "archived": 0, "skipped": 0, "failed": 0}
         logger.info("[Notion 보관 정책 시작] total=%d status=%s", len(pages), status_name)
@@ -563,7 +561,7 @@ class NotionClient:
         return result
 
     def reclassify_data_tiers(self, database_id: str = config.NOTION_KNOWLEDGE_DB_ID) -> dict[str, Any]:
-        """기존 Notion 지식 DB 문서 전체에 데이터 계층 정책을 재적용한다."""
+        # 계층 재분류
         pages = self.query_all(database_id)
         result: dict[str, Any] = {
             "checked": 0,
@@ -620,7 +618,7 @@ class NotionClient:
         return result
 
     def upsert_curated_knowledge(self) -> dict[str, int]:
-        """관리자 검증 지식을 일반 크롤링 문서와 동일한 DB에 동기화한다."""
+        # 검증 지식 저장
         return self.upsert_many(curated_documents())
 
     def knowledge_documents(self, limit: int | None = None) -> list[dict[str, Any]]:

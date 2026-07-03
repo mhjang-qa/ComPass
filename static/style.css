@@ -789,7 +789,7 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
   scroll-padding-bottom: calc(var(--composer-height) + var(--safe-bottom));
 }
 
-/* 전체화면 모드: 상단 영역 축소 */
+/* 전체화면 */
 .app-shell.fullscreen .topbar {
   min-height: 72px;
   padding: 14px 28px;
@@ -818,7 +818,7 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
   font-size: 13px;
 }
 
-/* 질문/답변 텍스트 12px 조정 */
+/* 본문 글자 */
 .messages .bubble,
 .message-content,
 .answer-card,
@@ -831,14 +831,14 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
   font-size: 12px;
 }
 
-/* 카드 내부 줄간격도 약간 축소 */
+/* 카드 줄간격 */
 .message-content,
 .answer-card-summary,
 .answer-field {
   line-height: 1.5;
 }
 
-/* 빠른 메뉴는 작게 유지하되 입력창은 iOS 자동 확대 방지를 위해 16px 유지 */
+/* iOS 입력 확대 방지 */
 .suggestions button,
 .confirm-actions button {
   font-size: 12px;
@@ -864,7 +864,7 @@ body.keyboard-open .app-shell.mobile-fullscreen .messages {
   font-size: 13px;
 }
 
-/* Initial chat screen guards */
+/* 초기화면 방어 */
 .quick-actions,
 .suggestions.quick-actions,
 .widget-window .suggestions.quick-actions,

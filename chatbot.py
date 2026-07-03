@@ -1,5 +1,3 @@
-"""Notion DB 우선 RAG 챗봇과 제한적 LLM fallback."""
-
 from __future__ import annotations
 
 import logging
@@ -64,7 +62,7 @@ LLM_COOLDOWN_SECONDS = {
 
 
 class LLMCallError(RuntimeError):
-    """프론트가 처리 가능한 LLM 오류 코드를 보존한다."""
+    # LLM 에러 코드
 
     def __init__(self, code: str, user_message: str = LLM_USER_FAILURE_MESSAGE, detail: str = "") -> None:
         super().__init__(detail or code)
@@ -122,7 +120,7 @@ ROUTER_TO_INTERNAL_INTENT = {
 
 
 class CompatibleAnswerType(str):
-    """API 문자열은 유지하면서 기존 단위 테스트의 레거시 answer_type 비교를 허용한다."""
+    # 테스트 호환
 
     def __new__(cls, value: str, *aliases: str):
         obj = str.__new__(cls, value)
@@ -136,14 +134,14 @@ class CompatibleAnswerType(str):
 
 
 class CompatibleAdvice(dict):
-    """API에서는 object로 보이지만 기존 문자열 contains 테스트도 허용한다."""
+    # 테스트 호환
 
     def __contains__(self, key: object) -> bool:
         return dict.__contains__(self, key) or any(str(key) in str(value) for value in self.values())
 
 
 class CompatibleFacultyItem(dict):
-    """새 교수진 필드를 추가해도 기존 부분 dict 비교를 허용한다."""
+    # 테스트 호환
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, dict):
@@ -333,7 +331,7 @@ def sanitize_input(text: str, limit: int = 1000) -> str:
 
 
 def casual_response(question: str) -> dict[str, Any] | None:
-    """검색이 필요 없는 짧은 일상 대화를 ComPass 페르소나로 처리한다."""
+    # 잡담
     raw = (question or "").strip()
     if IDENTITY_RE.search(raw):
         answer, intent = IDENTITY_MESSAGE, "identity"
@@ -435,10 +433,7 @@ def analyze_question_intent(question: str, index: SearchIndex | None = None) -> 
 
 
 def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
-    """규칙 기반 confidence가 낮을 때만 사용하는 LLM Intent 보조 분류.
-
-    실패하거나 JSON 파싱이 안 되면 None을 반환해 RAG 원문 노출 대신 기존 안전 흐름을 유지한다.
-    """
+    # LLM intent 보조
     if not config.ENABLE_LLM_INTENT_CLASSIFIER:
         return None
     provider = (config.LLM_PROVIDER or "").strip().lower()
@@ -484,7 +479,7 @@ def classify_intent_with_llm(question: str) -> dict[str, Any] | None:
 
 
 def detect_intent(question: str, index: SearchIndex | None = None) -> str:
-    """RAG 검색 전 자연어 질문 의도를 먼저 분류한다."""
+    # intent 먼저 잡기
     if casual_response(question):
         return "smalltalk"
     if is_course_recommendation(question):
@@ -572,7 +567,7 @@ def detect_faculty_member(question: str, index: SearchIndex | None = None) -> di
 
 
 def classify_intent(question: str, index: SearchIndex | None = None) -> str:
-    """질문을 응답 조합에 사용하는 대표 의도로 분류한다."""
+    # 응답용 intent
     priority_intent = priority_button_intent(question)
     if priority_intent:
         return priority_intent
@@ -643,7 +638,7 @@ def classify_intent(question: str, index: SearchIndex | None = None) -> str:
 
 
 def priority_button_intent(question: str) -> str:
-    """버튼/추천 질문은 검색 점수보다 우선해 고정 intent로 라우팅한다."""
+    # 버튼 intent 고정
     compact = re.sub(r"[\s\?\!\.,~요]", "", question or "").lower()
     if compact in PRIORITY_NOTICE_QUERIES:
         return "notice_list"
@@ -663,7 +658,7 @@ def retrieve_documents(
     question: str,
     intent: str,
 ) -> list[dict[str, Any]]:
-    """의도별 검색 범위와 결과 수를 고정해 다른 카테고리 문서 혼입을 줄인다."""
+    # scope 고정
     search_intent = {
         "notice_explain": "notice_list",
         "schedule_explain": "schedule_list",
@@ -780,7 +775,7 @@ def _item_url(item: dict[str, Any], category_url: str = "") -> str:
 
 
 def _course_link(item: dict[str, Any], course_name: str = "") -> str:
-    """과목별 상세 페이지 URL을 우선 사용하고 없을 때만 전체 안내 페이지로 보낸다."""
+    # 과목 링크
     if course_name in KNOWN_COURSE_DETAIL_URLS:
         return KNOWN_COURSE_DETAIL_URLS[course_name]
     detail_url = item.get("detail_url") or ""
@@ -799,7 +794,7 @@ def normalize_results(
     hits: list[dict[str, Any]],
     question: str = "",
 ) -> list[dict[str, Any]]:
-    """검색 원문을 화면에 직접 노출하지 않는 학생용 항목으로 변환한다."""
+    # 응답 정리
     if intent in {"faculty", "faculty_detail"}:
         faculty_hit = next(
             (
@@ -831,7 +826,7 @@ def normalize_results(
 
 
 def summarize_for_student(intent: str, items: list[dict[str, Any]]) -> str:
-    """검색 결과라는 표현 대신 학생에게 필요한 안내 문장을 만든다."""
+    # 요약 문구
     count = len(items)
     summaries = {
         "faculty": f"총 {count}명의 교수진 중 주요 정보 3명을 먼저 안내드립니다.",
@@ -915,7 +910,7 @@ def build_no_upcoming_schedule_response(
     keywords: list[str],
     started: float,
 ) -> dict[str, Any]:
-    """다가오는 일정이 없을 때 과거 일정을 대신 노출하지 않고 공식 일정 페이지로 안내한다."""
+    # 일정 fallback
     return {
         "answer": "학과 일정 안내입니다.",
         "answer_type": "schedule_list",
@@ -941,7 +936,7 @@ def build_curriculum_link_response(
     keywords: list[str] | None = None,
     started: float,
 ) -> dict[str, Any]:
-    """교육과정 데이터가 부족해도 공식 교육과정 페이지로 즉시 안내한다."""
+    # 교육과정 fallback
     curriculum_url = resolve_curriculum_url(hits=sources or [])
     items = _fallback_curriculum_items()
     groups = _representative_courses_by_grade(items)
@@ -966,7 +961,7 @@ def build_curriculum_link_response(
 
 
 def _fallback_curriculum_items(index: SearchIndex | None = None) -> list[dict[str, Any]]:
-    """검색 결과가 비어도 초기 교육과정 버튼은 카드형 대표 과목을 유지한다."""
+    # 교육과정 예비값
     catalog = index.course_catalog() if index and hasattr(index, "course_catalog") else []
     normalized: list[dict[str, Any]] = [
         {
@@ -1046,7 +1041,7 @@ def _dedupe_course_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _curriculum_preview_items(items: list[dict[str, Any]], index: SearchIndex | None = None) -> list[dict[str, Any]]:
-    """검색 hit 일부가 아니라 전체 교육과정 카탈로그를 보강해 학년별 preview를 만든다."""
+    # 전체 카탈로그 우선
     return _dedupe_course_items([*items, *_fallback_curriculum_items(index)])
 
 
@@ -1124,7 +1119,7 @@ def build_notice_empty_response(
     started: float,
     keywords: list[str] | None = None,
 ) -> dict[str, Any]:
-    """공지 데이터가 없을 때 LLM 확인 대신 공식 공지 링크로 안내한다."""
+    # 공지 fallback
     items = _fallback_notice_items()
     return {
         "answer": "컴퓨터과학과 최근 공지 안내입니다.",
@@ -1151,7 +1146,7 @@ def build_priority_intent_response(
     index: SearchIndex,
     started: float,
 ) -> dict[str, Any]:
-    """quick/exact intent는 검색 점수 미달 fallback을 거치지 않고 공식 안내를 반환한다."""
+    # quick intent
     keywords = tokenize(question)
     if intent == "course_table":
         hits = retrieve_documents(index, question, "course_table")
@@ -1302,7 +1297,7 @@ def build_faculty_detail_response(
 
 
 def faculty_catalog_items(index: SearchIndex) -> list[dict[str, Any]]:
-    """검색 후보가 없어도 faculty_catalog에서 교수진 카드를 만들기 위한 fallback."""
+    # 교수진 fallback
     if not hasattr(index, "faculty_catalog"):
         return []
     items: list[dict[str, Any]] = []
@@ -1327,12 +1322,12 @@ def faculty_catalog_items(index: SearchIndex) -> list[dict[str, Any]]:
 
 
 def render_fallback_text(question: str, hits: list[dict[str, Any]]) -> str:
-    """구조화 대상이 아닌 공식 문서도 최대 세 문장으로만 요약한다."""
+    # 짧은 요약
     return sanitize_public_answer(_extractive_answer(question, hits))
 
 
 def sanitize_public_answer(text: str) -> str:
-    """사용자 화면에 JSON/검색점수/원본 repr이 노출되지 않도록 최종 텍스트를 정제한다."""
+    # 화면 노출 정리
     value = text or ""
     if RAW_OUTPUT_BLOCK_RE.search(value):
         lines = []
@@ -1353,7 +1348,7 @@ def sanitize_public_answer(text: str) -> str:
 
 
 def should_auto_llm(question: str, hits: list[dict[str, Any]], answer: str = "") -> bool:
-    """RAG 원문 출력보다 학생용 보조 설명이 필요한 상황을 감지한다."""
+    # LLM 보조 여부
     if AUTO_LLM_RE.search(question):
         return True
     if answer and (RAW_OUTPUT_BLOCK_RE.search(answer) or len(answer) > 500):
@@ -1407,7 +1402,7 @@ def _extractive_answer(question: str, hits: list[dict[str, Any]]) -> str:
 
 
 def _faculty_items(hit: dict[str, Any]) -> list[dict[str, Any]]:
-    """교수진 공식 페이지 본문을 UI 렌더링용 구조로 변환한다."""
+    # 교수진 카드
     normalized = [
         item for item in (hit.get("normalized_items") or [])
         if item.get("name") and (item.get("email") or item.get("phone") or item.get("subjects"))
@@ -1719,7 +1714,7 @@ def _exam_scope_response(question: str, index: SearchIndex, started: float) -> d
 
 
 def _clean_notice_summary(hit: dict[str, Any], limit: int = 80) -> str:
-    """공지 원문에서 번호·첨부·메타데이터를 제거하고 한 줄로 요약한다."""
+    # 공지 요약
     title = re.sub(r"\s+", " ", hit.get("title") or "").strip()
     text = hit.get("body") or hit.get("summary") or ""
     candidates: list[str] = []
@@ -1824,7 +1819,7 @@ def _notice_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """현재 날짜(KST) 기준 종료되지 않은 학과 일정만 날짜 오름차순으로 반환한다."""
+    # 다가오는 일정
     items: list[dict[str, Any]] = []
     seen = set()
     for hit in hits:
@@ -1886,7 +1881,7 @@ def _schedule_items(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def parse_schedule_date(value: str, *, default_year: int | None = None) -> date | None:
-    """학과 일정 날짜 파싱: YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD, YYYY년 MM월 DD일, MM.DD를 지원한다."""
+    # 일정 날짜 파싱
     text = (value or "").strip()
     if not text:
         return None
@@ -1908,7 +1903,7 @@ def parse_schedule_date(value: str, *, default_year: int | None = None) -> date 
 
 
 def parse_schedule_item_dates(item: dict[str, Any]) -> tuple[date | None, date | None]:
-    """기간형 날짜는 종료일 기준으로 지난 일정 여부를 판단한다."""
+    # 종료일 기준
     start_raw = str(item.get("start_date") or "")
     end_raw = str(item.get("end_date") or "")
     combined = " ~ ".join(part for part in (start_raw, end_raw) if part)
@@ -2004,7 +1999,7 @@ def _short_course_feature(course: dict[str, Any]) -> str:
 
 
 def _course_detail_items(question: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """질문에 명시된 과목과 일치하는 공식 교육과정 항목만 반환한다."""
+    # 과목 매칭
     compact_question = re.sub(r"\s+", "", question).lower()
     candidates = _course_items(hits)
     exact = [
@@ -2347,7 +2342,7 @@ def _course_difficulty_confirmation(
 
 
 def _context_summary(context: dict[str, Any]) -> str:
-    """LLM prompt에 넣을 공식 데이터 context를 짧고 안전하게 직렬화한다."""
+    # LLM context
     allowed_keys = (
         "course_name",
         "title",
@@ -2388,7 +2383,7 @@ def _context_summary(context: dict[str, Any]) -> str:
 
 
 def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> str:
-    """LLM 보조 답변용 공통 prompt builder."""
+    # LLM prompt
     supported = {
         "course_difficulty",
         "course_grade_strategy",
@@ -2494,7 +2489,7 @@ def _course_difficulty_prompt(
     course_name: str,
     item: dict[str, Any],
 ) -> str:
-    """하위 호환용 wrapper. 신규 코드는 build_llm_prompt/call_llm_helper를 사용한다."""
+    # 호환 wrapper
     return build_llm_prompt(
         "course_difficulty",
         question,
@@ -2526,7 +2521,7 @@ def _sentence_similarity(left: str, right: str) -> float:
 
 
 def dedupe_sentences(text: str) -> str:
-    """동일·유사 문장을 제거해 LLM/공식 개요 중복 노출을 방지한다."""
+    # 중복 문장 제거
     raw = re.sub(r"\s+", " ", text or "").strip()
     if not raw:
         return ""
@@ -2544,7 +2539,7 @@ def dedupe_sentences(text: str) -> str:
 
 
 def remove_duplicate_overview(answer: str, official_overview: str) -> str:
-    """LLM 보조문에서 공식 개요와 겹치는 제목·문장을 제거한다."""
+    # 개요 중복 제거
     if not answer:
         return ""
     overview_lines = [line.strip() for line in (official_overview or "").splitlines() if line.strip()]
@@ -2566,7 +2561,7 @@ def remove_duplicate_overview(answer: str, official_overview: str) -> str:
 
 
 def wash_official_overview(course_name: str, overview: str, topics: list[Any] | None = None) -> str:
-    """공식 과목 개요를 학생이 읽기 쉬운 1~2문장으로 재구성한다."""
+    # 공식 개요
     topics = topics or []
     topic_text = ", ".join(str(topic).strip() for topic in topics[:5] if str(topic).strip())
     text = re.sub(r"\s+", " ", overview or "").strip(" -·,:")
@@ -2623,7 +2618,7 @@ EXPLANATORY_LLM_TYPES = {
 
 
 def is_incomplete_llm_text(text: str, llm_type: str = "general_explain") -> bool:
-    """LLM 답변이 중간에 끊겼거나 라벨만 남은 상태인지 판정한다."""
+    # 끊긴 답변 방어
     clean = re.sub(r"\r\n?", "\n", text or "").strip()
     if not clean or clean == LLM_SAFE_FAILURE_MESSAGE:
         return True
@@ -2721,7 +2716,7 @@ def _extract_label_items_from_text(text: str, labels: list[str], fallback_items:
 
 
 def _difficulty_advice_object(course_name: str, item: dict[str, Any], llm_text: str = "") -> dict[str, str]:
-    """LLM 원문이 불완전해도 UI에는 안전한 고정 구조로 난이도 안내를 제공한다."""
+    # 난이도 구조화
     topics = " ".join(str(topic) for topic in (item.get("topics") or item.get("detail_topics") or []))
     name_and_topics = f"{course_name} {topics}"
     if re.search(r"인공지능|AI|머신러닝|신경망|추론|퍼지", name_and_topics, re.IGNORECASE):
@@ -2989,7 +2984,7 @@ def _llm_context_from_hits(
     hits: list[dict[str, Any]],
     index: SearchIndex | None = None,
 ) -> dict[str, Any]:
-    """현재 요청의 공식 검색 결과만 사용해 LLM context를 만든다."""
+    # 공식데이터 context
     course = detect_course_name(question, index)
     if llm_type in {"course_difficulty", "course_grade_strategy", "course_order", "course_roadmap"}:
         items = _course_detail_items(question, hits) if course else _course_items(hits)[:3]
@@ -3184,7 +3179,7 @@ ComPass는 검색 결과를 그대로 보여주는 챗봇이 아니라 학생이
 
 
 def _dedupe_lines(text: str) -> str:
-    """LLM 출력의 의미 없는 반복 라인을 제거한다."""
+    # 반복 제거
     lines: list[str] = []
     seen_recent: set[str] = set()
     for raw in text.splitlines():
@@ -3225,7 +3220,7 @@ def _strip_markdown_noise(text: str) -> str:
 
 
 def _bulletize_keyword_line(line: str) -> str:
-    """문장 없이 키워드만 길게 나열된 줄은 bullet 목록으로 바꾼다."""
+    # 키워드 줄 정리
     stripped = line.strip()
     if not stripped or stripped.startswith(("-", "•", "|", "#", "*")):
         return line
@@ -3240,7 +3235,7 @@ def _bulletize_keyword_line(line: str) -> str:
 
 
 def _wrap_long_sentence(line: str, limit: int = 68) -> str:
-    """모바일에서 읽기 어려운 긴 문장을 자연스러운 위치에서 줄바꿈한다."""
+    # 긴 문장 줄바꿈
     if len(line) <= limit or line.startswith("|") or line.startswith(("-", "•")):
         return line
     chunks: list[str] = []
@@ -3257,14 +3252,7 @@ def _wrap_long_sentence(line: str, limit: int = 68) -> str:
 
 
 def sanitize_llm_response(text: str, question: str = "") -> str:
-    """LLM fallback 답변을 ComPass 응답 철학에 맞게 후처리한다.
-
-    - 중복 라인 제거
-    - 키워드 나열을 bullet로 변환
-    - 긴 문장 줄바꿈
-    - 마지막 문장 완결 처리
-    - 너무 빈약한 출력에는 제목/안내 문구 보강
-    """
+    # LLM 응답 정리
     clean = re.sub(r"\r\n?", "\n", text or "").strip()
     if not clean:
         return OUT_OF_SCOPE_MESSAGE
@@ -3523,10 +3511,7 @@ def call_llm_helper(
     request_id: str = "",
     raise_on_error: bool = False,
 ) -> str:
-    """LLM 보조 답변 공통 진입점.
-
-    이 함수는 요청 로컬 context만 사용하며 사용자별 상태를 전역 저장하지 않는다.
-    """
+    # LLM 함수
     provider = (config.LLM_PROVIDER or "").strip().lower()
     normalized_type = llm_type if llm_type in {
         "course_difficulty",

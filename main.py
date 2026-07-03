@@ -1,5 +1,3 @@
-"""ComPass FastAPI 애플리케이션."""
-
 from __future__ import annotations
 
 import logging
@@ -102,7 +100,7 @@ def now_iso() -> str:
 
 
 def update_crawl_state(**updates: Any) -> None:
-    """크롤링 상태 응답을 갱신하고 updated_at/percent를 항상 동기화한다."""
+    # 크롤링 상태
     crawl_state = job_state.setdefault("crawl", {})
     progress_update = updates.pop("progress", None)
     if progress_update is not None:
@@ -295,7 +293,7 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
 
 
 def conversation_history(session_id: str, incoming: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
-    """session_id별 최근 대화만 사용한다. 다른 사용자 대화는 절대 공유하지 않는다."""
+    # 세션 대화
     if incoming:
         return incoming[-10:]
     with conversation_lock:
@@ -318,7 +316,7 @@ def finalize_chat_response(req: ChatRequest, result: dict[str, Any], session_id:
 
 
 def sync_index_runtime_state(reason: str = "index_status") -> dict[str, Any]:
-    """현재 메모리 인덱스 상태를 runtime/job 상태와 관리자 화면 값에 반영한다."""
+    # 인덱스 상태값
     status = index.status()
     documents = int(status.get("documents") or 0)
     loading = bool(runtime_state.get("index_loading") or index_load_lock.locked())

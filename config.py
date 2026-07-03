@@ -1,5 +1,3 @@
-"""환경변수와 공통 경로 설정."""
-
 from __future__ import annotations
 
 import os

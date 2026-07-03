@@ -1,9 +1,3 @@
-"""ComPass 자연어 의도 라우터.
-
-RAG 검색 전에 질문을 정규화하고 Intent/Entity/Search Scope를 결정한다.
-규칙 기반 confidence가 낮을 때만 상위 계층에서 LLM 보조 분류를 시도할 수 있다.
-"""
-
 from __future__ import annotations
 
 import json
@@ -92,12 +86,12 @@ def compact_text(value: str) -> str:
 
 
 def normalize_query(question: str) -> str:
-    """Intent Engine용 자연어 정규화: 소문자화, 유사어 치환, 조사/특수문자 제거."""
+    # 질문 정리
     return compact_text(question)
 
 
 def normalize_question(question: str) -> str:
-    """띄어쓰기·유사어·구두점을 정리한다."""
+    # 표기 흔들림 보정
     text = apply_synonyms(re.sub(r"\s+", " ", question or "").strip())
     dictionary = load_dictionary()
     for source, target in sorted((dictionary.get("synonyms") or {}).items(), key=lambda item: len(item[0]), reverse=True):
@@ -151,14 +145,14 @@ def _contains_any(question: str, values: list[str]) -> bool:
 
 
 def extract_entities(question: str, catalogs: dict[str, Any] | None = None) -> dict[str, Any]:
-    """교수명, 과목명, 학년/대상, 성적 목표를 추출한다."""
+    # 엔티티 추출
     normalized = normalize_question(question)
     entities: dict[str, Any] = {}
     faculty_name = _match_name(normalized, _faculty_names(catalogs))
     course_name = _match_name(normalized, _course_names(catalogs))
     if faculty_name:
         entities["faculty_name"] = faculty_name
-        entities["name"] = faculty_name  # 기존 코드 호환
+        entities["name"] = faculty_name  # 호환
     if course_name:
         entities["course_name"] = course_name
 
@@ -181,7 +175,7 @@ def _result(intent: str, confidence: float, entities: dict[str, Any], normalized
         "intent": intent,
         "confidence": confidence,
         "entities": entities,
-        "entity": entities,  # 이전 구현 호환
+        "entity": entities,  # 호환
         "normalized_question": normalized,
         "search_scope": SEARCH_SCOPES.get(intent, ["general"]),
         "answer_type": {
@@ -200,7 +194,7 @@ def _result(intent: str, confidence: float, entities: dict[str, Any], normalized
 
 
 def _match_configured_intent(normalized: str) -> tuple[str, float, str]:
-    """data/intents.json 기반 Exact/Keyword intent 매칭."""
+    # intent 매칭
     compact = normalize_query(normalized)
     intents = load_intents()
     for intent in INTENT_PRIORITY:
@@ -221,7 +215,7 @@ def _match_configured_intent(normalized: str) -> tuple[str, float, str]:
 
 
 def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """질문을 Intent/Entity/Search Scope로 분류한다."""
+    # intent 분류
     if isinstance(catalogs, list):
         catalogs = {"faculty": catalogs}
     normalized = normalize_question(question)

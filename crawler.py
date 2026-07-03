@@ -1,5 +1,3 @@
-"""한국방송통신대학교 컴퓨터과학과 공개 페이지 크롤러."""
-
 from __future__ import annotations
 
 import hashlib
@@ -100,7 +98,7 @@ COURSE_DETAIL_ENDPOINT = "https://cs.knou.ac.kr/learningInformation/cs1/view.do"
 
 
 def course_detail_url(spec: dict[str, str]) -> str:
-    """교과목 상세 팝업 POST 파라미터를 브라우저에서 열 수 있는 GET URL 형태로 보존한다."""
+    # 과목 상세 URL
     query = urlencode(
         {
             "year": spec.get("year", ""),
@@ -121,14 +119,14 @@ def _subtract_years(base: date, years: int) -> date:
 
 
 def crawl_cutoff_date(today: date | None = None, years: int | None = None) -> date:
-    """게시판 수집 허용 기준일을 계산한다."""
+    # 수집 기준일
     base = today or datetime.now().astimezone().date()
     target_years = config.CRAWL_NOTICE_YEARS_LIMIT if years is None else years
     return _subtract_years(base, max(0, target_years))
 
 
 def extract_post_date(text: str) -> str:
-    """공식 게시물의 게시일을 ISO 날짜 문자열로 추출한다."""
+    # 게시일 추출
     for pattern in DATE_PATTERNS:
         match = pattern.search(text or "")
         if not match:
@@ -157,7 +155,7 @@ def parse_iso_date(value: str) -> date | None:
 
 
 def is_static_document_record(record: dict[str, Any]) -> bool:
-    """기간 제한 없이 유지해야 하는 정적/기준 정보 문서 여부."""
+    # 기준 정보
     source_type = (record.get("source_type") or "").lower()
     if source_type == "community":
         return False
@@ -176,7 +174,7 @@ def is_static_document_record(record: dict[str, Any]) -> bool:
 
 
 def is_board_document_record(record: dict[str, Any]) -> bool:
-    """최근 3년 제한을 적용할 게시판/게시물 문서 여부."""
+    # 게시판 문서
     if is_static_document_record(record):
         return False
     url = record.get("source_url") or ""
@@ -195,7 +193,7 @@ def is_board_document_record(record: dict[str, Any]) -> bool:
 
 
 def is_expired_document_record(record: dict[str, Any], today: date | None = None) -> bool:
-    """게시판 문서가 수집 허용 기간을 초과했는지 판정한다."""
+    # 기간 초과
     if not is_board_document_record(record):
         return False
     published = parse_iso_date(record.get("published_at") or "")
@@ -216,7 +214,7 @@ def _temporary_valid_end(published: date | None) -> str:
 
 
 def classify_data_tier(record: dict[str, Any], today: date | None = None) -> dict[str, Any]:
-    """문서의 데이터 계층, 활성 상태, 보관 사유, 최근성 점수를 판정한다."""
+    # 데이터 계층
     if not config.ENABLE_DATA_TIERING:
         return {
             "data_tier": "CORE",
@@ -315,7 +313,7 @@ def classify_data_tier(record: dict[str, Any], today: date | None = None) -> dic
 
 
 def should_collect_document_record(record: dict[str, Any], today: date | None = None) -> tuple[bool, str]:
-    """크롤링 결과를 유지할지 결정한다. reason: collect/static/old_post/missing_post_date."""
+    # 수집 여부
     if is_static_document_record(record):
         return True, "static"
     if is_board_document_record(record):
@@ -333,7 +331,7 @@ def should_collect_document_record(record: dict[str, Any], today: date | None = 
 
 
 def search_recency_boost(record: dict[str, Any], today: date | None = None) -> float:
-    """검색 점수에 더할 최신성/정적 기준정보 가중치."""
+    # 최신성 가중치
     if is_static_document_record(record):
         return 30.0
     published = parse_iso_date(record.get("published_at") or "")
@@ -493,7 +491,7 @@ TRANSLATION_TERMS = {
 
 
 def translate_label_en(text: str) -> str:
-    """외부 번역 API 없이 검색용 영문 필드를 보강하는 용어 중심 번역."""
+    # 영문 검색 보강
     value = text or ""
     for ko, en in sorted(TRANSLATION_TERMS.items(), key=lambda item: len(item[0]), reverse=True):
         value = value.replace(ko, en)
@@ -524,7 +522,7 @@ def extract_keywords(text: str, limit: int = 15) -> list[str]:
 
 
 def extract_schedule_items(text: str) -> list[dict[str, str]]:
-    """월간 달력 원문에서 실제 일정 행만 추출한다."""
+    # 일정 추출
     if not text:
         return []
 
@@ -793,7 +791,7 @@ class KnouCrawler:
         return documents
 
     def fetch_document(self, url: str) -> CrawlDocument | None:
-        """필수 공식 페이지 한 건을 수집한다. 앱 초기 지식 보장에 사용한다."""
+        # 필수 페이지
         normalized = normalize_url(url)
         if not self.is_allowed(normalized):
             logger.warning("필수 페이지 수집 제외 url=%s", normalized)
@@ -854,7 +852,7 @@ class KnouCrawler:
         soup: BeautifulSoup,
         progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> list[CrawlDocument]:
-        """교과목 안내의 JavaScript POST 팝업을 과목별 공식 문서로 수집한다."""
+        # 과목 상세 수집
         documents: list[CrawlDocument] = []
         specs = self._course_detail_specs(soup)
         if not self.is_allowed(COURSE_DETAIL_ENDPOINT):
@@ -977,7 +975,7 @@ class KnouCrawler:
         )
 
     def _extract_board_page_links(self, current_url: str, soup: BeautifulSoup) -> list[str]:
-        """JavaScript page_link로만 제공되는 게시판 페이지 URL을 생성한다."""
+        # 게시판 page_link
         current_page = soup.select_one("._curPage")
         total_page = soup.select_one("._totPage")
         page_form = soup.select_one('form[name="pageForm"][action], form[action*="/bbs/cs1/"]')
@@ -1110,7 +1108,7 @@ class KnouCrawler:
         return document
 
     def _parse_binary_document(self, url: str, response: requests.Response) -> CrawlDocument | None:
-        """PDF 등 비 HTML 첨부를 실패 허용 방식으로 검색 가능한 문서로 변환한다."""
+        # PDF/첨부
         try:
             content_type = response.headers.get("content-type", "")
             body = ""
@@ -1207,7 +1205,7 @@ class KnouCrawler:
 
     @classmethod
     def _extract_faculty_items(cls, content: BeautifulSoup, base_url: str) -> list[dict[str, Any]]:
-        """교수진 페이지를 교수별 카드 렌더링에 적합한 구조로 변환한다."""
+        # 교수진 파싱
         homepage_by_name: dict[str, str] = {}
         homepage_by_slug: dict[str, str] = {}
 
@@ -1297,7 +1295,7 @@ class KnouCrawler:
         cls,
         content: BeautifulSoup,
     ) -> tuple[list[str], list[list[str]], list[dict[str, Any]]]:
-        """HTML 표를 열 병합을 보존한 행렬과 검색/응답용 과목 데이터로 변환한다."""
+        # 표 파싱
         best_headers: list[str] = []
         best_rows: list[list[str]] = []
         best_items: list[dict[str, Any]] = []
@@ -1554,7 +1552,7 @@ class KnouCrawler:
 
 
 class CommunityCrawler:
-    """c-knou 공개 게시판의 최근 글을 비공식 보조 지식으로 수집한다."""
+    # 커뮤니티 크롤링
 
     DETAIL_PATH_RE = re.compile(r"^/computer_science/\d+/?$")
     LIST_PATH_RE = re.compile(r"^/computer_science(?:/page/\d+)?/?$")

@@ -243,6 +243,12 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
         return result
     answer_type = str(result.get("answer_type") or "")
     course_name = result.get("course_name") or ""
+    if answer_type == "llm_pending":
+        message = "The AI helper answer is being generated."
+        result["answer"] = message
+        result["user_message"] = message
+        result["message"] = message
+        return result
     if answer_type == "llm_fallback":
         message = (
             "The AI helper answer could not be completed right now.\n"

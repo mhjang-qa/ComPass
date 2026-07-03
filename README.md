@@ -247,6 +247,8 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `GEMINI_PRIMARY_KEY` | Gemini 우선 키 번호. 기본값 3 |
 | `GEMINI_MODEL` | Gemini 1차 모델명. 기본값 `gemini-2.5-flash` |
 | `GEMINI_FALLBACK_MODELS` | Gemini fallback 모델 목록. 기본값 `gemini-2.0-flash` |
+| `GEMINI_MAX_OUTPUT_TOKENS` | Gemini 최대 출력 토큰. 기본값 1024 |
+| `LLM_TIMEOUT_SEC` | 백엔드 LLM 호출 timeout. 기본값 45초 |
 | `CRAWL_START_URL` | 크롤링 시작 URL |
 | `ALLOWED_DOMAIN` | 허용 호스트 |
 | `ALLOWED_PATH_PREFIX` | 허용 URL 경로 접두사. 쉼표로 복수 지정 가능 |
@@ -562,6 +564,10 @@ LLM 답변도 검색 결과를 그대로 붙여 넣지 않고 학생이 이해�
 - OpenAI Responses API는 `max_output_tokens=1200`, Gemini는 `maxOutputTokens=1200`, `temperature=0.2`로 설정합니다.
 - Gemini 호출 순서는 모델별로 `KEY_3 → KEY_2 → KEY_1`입니다. `gemini-2.5-flash`에서 모든 키가 실패하면 `gemini-2.0-flash`로 내려가 같은 키 순서를 다시 시도합니다.
 - quota, rate limit, 503 provider 오류는 서버 로그에만 남기고 사용자 화면에는 공식 데이터 fallback 문구만 표시합니다.
+- Gemini 응답은 `response.text`, REST `candidates[].content.parts[].text`, SDK object parts를 모두 확인해 text를 추출합니다.
+- 서버는 `[LLM][RAW_CHECK]` 로그로 finish reason, candidate/part 수, text 길이, safety, usage 요약을 남겨 `MAX_TOKENS`, safety block, parts 누락을 구분합니다. API 키와 프롬프트 원문은 로그에 남기지 않습니다.
+- 불완전 응답은 빈 text, 20자 미만, `MAX_TOKENS`, `SAFETY`, `RECITATION`, `NO_CANDIDATES`, `NO_PARTS`일 때만 재시도합니다. `입니다`, `있습니다`, `합니다` 같은 한국어 종결 어미만으로 실패 처리하지 않습니다.
+- 재시도 후에도 실패하면 `answer_type=llm_fallback`, `mode=OFFICIAL_FALLBACK`, `llm_error_code=LLM_INCOMPLETE` 형태로 내려가며 `mode=LLM`으로 포장하지 않습니다.
 - 프론트엔드는 `items` 구조가 있으면 LLM 원문보다 카드형 구조화 응답을 우선 렌더링하고, 불완전 문장은 “답변 다시 생성” 버튼으로 방어합니다.
 - `sanitize_llm_response()`가 중복 라인 제거, bullet 변환, 긴 문장 줄바꿈, 마침표 보강을 수행합니다.
 - 프론트엔드는 LLM fallback의 간단한 Markdown 표와 bullet을 실제 표/목록 UI로 렌더링합니다.

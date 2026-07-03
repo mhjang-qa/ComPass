@@ -79,6 +79,8 @@ GEMINI_FALLBACK_MODELS = [
     for model in env("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash").split(",")
     if model.strip()
 ]
+GEMINI_MAX_OUTPUT_TOKENS = env_int("GEMINI_MAX_OUTPUT_TOKENS", 1024)
+LLM_TIMEOUT_SEC = env_int("LLM_TIMEOUT_SEC", 45)
 ENABLE_LLM_INTENT_CLASSIFIER = env_bool("ENABLE_LLM_INTENT_CLASSIFIER", False)
 
 CRAWL_START_URL = env("CRAWL_START_URL", "https://cs.knou.ac.kr/sites/cs1/index.do")

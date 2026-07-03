@@ -33,6 +33,10 @@ services:
         value: gemini-2.5-flash
       - key: GEMINI_FALLBACK_MODELS
         value: gemini-2.0-flash
+      - key: GEMINI_MAX_OUTPUT_TOKENS
+        value: "1024"
+      - key: LLM_TIMEOUT_SEC
+        value: "45"
       - key: PUBLIC_LOADER_URL
         value: https://mhjang-qa.github.io/ComPass/
       - key: STARTUP_INDEX_LOAD

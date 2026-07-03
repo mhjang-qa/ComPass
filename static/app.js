@@ -38,6 +38,7 @@ const ICON_CONFIG_KEY = "COMPASS_ICON_CONFIG";
 const INDEX_LOADING_MAX_RETRIES = 3;
 const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
 const SERVER_WAKE_TIMEOUT_MS = 10000;
+const LLM_TIMEOUT_MS = 60000;
 const SERVER_DELAY_NOTICE_ATTEMPTS = 20;
 const SERVER_READY_INTERVAL_MS = 2000;
 const TYPING_SPEED_MS = 12;
@@ -1892,8 +1893,10 @@ function addMessage(role, text, sources = [], confirmation = false, payload = {}
     yes.onclick = () => {
       if (row.dataset.llmPending === "true" || row.dataset.llmDone === "true") return;
       row.dataset.llmPending = "true";
+      yes.dataset.loading = "true";
       yes.disabled = true;
       no.disabled = true;
+      yes.textContent = currentLanguage === "en" ? "Generating AI answer..." : "AI 답변 생성 중...";
       actions.remove();
       showInlineLlmStatus(row, llmStatusText("loading"), "loading");
       sendQuestion(payload.client_question || payload.question || "", {
@@ -2135,7 +2138,7 @@ async function sendQuestion(raw, options = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        timeoutMs: SERVER_WAKE_TIMEOUT_MS,
+        timeoutMs: allowLlm ? LLM_TIMEOUT_MS : SERVER_WAKE_TIMEOUT_MS,
         body: JSON.stringify({
           question,
           allow_llm: allowLlm,

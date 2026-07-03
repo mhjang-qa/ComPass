@@ -303,6 +303,39 @@ def test_course_difficulty_llm_timeout_returns_structured_failure(tmp_path, monk
     assert result["error_code"] == "LLM_TIMEOUT"
 
 
+def test_gemini_text_extractor_supports_rest_shape() -> None:
+    from chatbot import extract_gemini_text, is_incomplete_llm_answer
+
+    raw = {
+        "candidates": [
+            {
+                "finishReason": "STOP",
+                "content": {"parts": [{"text": "공식 데이터 기준으로 참고용 학습 안내입니다."}]},
+            }
+        ],
+        "usageMetadata": {"candidatesTokenCount": 12},
+    }
+
+    text = extract_gemini_text(raw)
+    incomplete, reason = is_incomplete_llm_answer(text, {"finish_reason": "STOP", "candidates_len": 1, "parts_len": 1})
+
+    assert text == "공식 데이터 기준으로 참고용 학습 안내입니다."
+    assert incomplete is False
+    assert reason == "OK"
+
+
+def test_gemini_incomplete_detection_uses_finish_reason() -> None:
+    from chatbot import is_incomplete_llm_answer
+
+    incomplete, reason = is_incomplete_llm_answer(
+        "충분히 긴 응답이지만 토큰 제한으로 끝났습니다.",
+        {"finish_reason": "MAX_TOKENS", "candidates_len": 1, "parts_len": 1},
+    )
+
+    assert incomplete is True
+    assert reason == "MAX_TOKENS"
+
+
 def test_gemini_rate_limit_tries_configured_fallback_model(monkeypatch) -> None:
     import config
     import requests

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import json
 import re
+import threading
 import time
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -31,6 +33,9 @@ from search_index import (
 )
 
 logger = logging.getLogger(__name__)
+LLM_CALL_STATE = threading.local()
+RUNNING_LLM_REQUESTS: set[str] = set()
+RUNNING_LLM_LOCK = threading.Lock()
 
 DEPARTMENT_HOME_URL = config.DEPARTMENT_HOME_URL
 COURSE_FULL_GUIDE_URL = f"{COURSE_GUIDE_URL}#course-34524"
@@ -2396,10 +2401,11 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
     normalized_type = llm_type if llm_type in supported else "general_explain"
     formats = {
         "course_difficulty": (
-            "체감 난이도:\n"
-            "필요한 준비:\n"
-            "학습 팁:\n"
-            "참고 안내:"
+            "일반 문장으로만 답변한다.\n"
+            "5~7문장 이내로 작성한다.\n"
+            "표와 JSON은 사용하지 않는다.\n"
+            "공식 데이터에 없는 난이도는 참고용 추정이라고 명시한다.\n"
+            "마지막 문장은 반드시 “공식 난이도 정보는 제공되지 않아 참고용 안내입니다.”로 끝낸다."
         ),
         "course_grade_strategy": (
             "과목:\n"
@@ -2461,6 +2467,7 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
 한국어로 간결하게 작성한다.
 문장이 중간에 끊기지 않도록 완결된 문장으로 끝낸다.
 답변은 700자 이내로 작성한다.
+표와 JSON은 사용하지 않는다.
 각 항목은 1~2문장 이내로 끝낸다.
 각 항목은 완결된 문장으로 끝낸다.
 마지막 문장은 반드시 마침표로 끝낸다.
@@ -2643,6 +2650,93 @@ def is_incomplete_llm_text(text: str, llm_type: str = "general_explain") -> bool
     if not re.search(r"[.!?。요다)\]]$", last_line):
         return True
     return False
+
+
+def extract_gemini_text(raw: Any) -> str:
+    # text 뽑기
+    texts: list[str] = []
+    if raw is None:
+        return ""
+    try:
+        direct_text = getattr(raw, "text", None)
+        if direct_text:
+            texts.append(str(direct_text))
+    except Exception:
+        pass
+    if isinstance(raw, dict):
+        for candidate in raw.get("candidates", []) or []:
+            content = candidate.get("content") or {}
+            for part in content.get("parts", []) or []:
+                if isinstance(part, dict) and part.get("text"):
+                    texts.append(str(part["text"]))
+    try:
+        for candidate in getattr(raw, "candidates", []) or []:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", []) if content else []
+            for part in parts or []:
+                part_text = getattr(part, "text", None)
+                if part_text:
+                    texts.append(str(part_text))
+    except Exception:
+        pass
+    return "\n".join(t.strip() for t in texts if t and t.strip()).strip()
+
+
+def _gemini_raw_meta(raw: Any) -> dict[str, Any]:
+    candidates = raw.get("candidates", []) if isinstance(raw, dict) else getattr(raw, "candidates", []) or []
+    first_candidate = candidates[0] if candidates else {}
+    first_content = first_candidate.get("content") if isinstance(first_candidate, dict) else getattr(first_candidate, "content", None)
+    parts = first_content.get("parts", []) if isinstance(first_content, dict) else getattr(first_content, "parts", []) if first_content else []
+    finish_reason = first_candidate.get("finishReason") if isinstance(first_candidate, dict) else getattr(first_candidate, "finish_reason", None)
+    prompt_feedback = raw.get("promptFeedback") if isinstance(raw, dict) else getattr(raw, "prompt_feedback", None)
+    usage = raw.get("usageMetadata") if isinstance(raw, dict) else getattr(raw, "usage_metadata", None)
+    safety = first_candidate.get("safetyRatings") if isinstance(first_candidate, dict) else getattr(first_candidate, "safety_ratings", None)
+    return {
+        "finish_reason": str(finish_reason or ""),
+        "candidates_len": len(candidates or []),
+        "parts_len": len(parts or []),
+        "prompt_block_reason": str((prompt_feedback or {}).get("blockReason") if isinstance(prompt_feedback, dict) else getattr(prompt_feedback, "block_reason", "") or ""),
+        "safety_summary": sanitize_input(str(safety or ""), 180),
+        "usage_summary": sanitize_input(str(usage or ""), 180),
+    }
+
+
+def _log_gemini_raw_check(raw: Any, text: str, model: str, key_label: str) -> None:
+    # 원문 체크
+    meta = _gemini_raw_meta(raw)
+    logger.warning(
+        "[LLM][RAW_CHECK] request_id=%s model=%s key=%s finish=%s candidates=%s parts=%s text_len=%s prompt_block=%s safety=%s usage=%s",
+        getattr(LLM_CALL_STATE, "request_id", "server"),
+        model,
+        key_label,
+        meta["finish_reason"],
+        meta["candidates_len"],
+        meta["parts_len"],
+        len(text or ""),
+        meta["prompt_block_reason"],
+        meta["safety_summary"],
+        meta["usage_summary"],
+    )
+    LLM_CALL_STATE.raw_meta = meta
+
+
+def is_incomplete_llm_answer(text: str, raw_meta: dict[str, Any] | None = None) -> tuple[bool, str]:
+    # 응답 체크
+    clean = (text or "").strip()
+    if not clean:
+        return True, "EMPTY_TEXT"
+    if len(clean) < 20:
+        return True, "TOO_SHORT"
+    meta = raw_meta or {}
+    finish_reason = str(meta.get("finish_reason") or "").upper()
+    if finish_reason in {"MAX_TOKENS", "SAFETY", "RECITATION", "OTHER"}:
+        return True, finish_reason
+    if raw_meta is not None:
+        if int(meta.get("candidates_len") or 0) <= 0:
+            return True, "NO_CANDIDATES"
+        if int(meta.get("parts_len") or 0) <= 0:
+            return True, "NO_PARTS"
+    return False, "OK"
 
 
 def _llm_fallback_template(llm_type: str, context: dict[str, Any], question: str = "") -> dict[str, Any]:
@@ -2920,6 +3014,34 @@ def _course_difficulty_llm_failure_response(
     session_id: str = "",
     request_id: str = "",
 ) -> dict[str, Any]:
+    if error.code == "LLM_PENDING":
+        pending_message = "AI 보조 답변을 생성 중입니다."
+        return {
+            "ok": True,
+            "answer": pending_message,
+            "answer_type": "llm_pending",
+            "message": pending_message,
+            "user_message": pending_message,
+            "fallback_available": False,
+            "show_retry": False,
+            "summary": official_overview,
+            "official_overview": official_overview,
+            "items": [],
+            "display_limit": 0,
+            "total_count": 0,
+            "actions": [],
+            "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
+            "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
+            "mode": "LLM_PENDING",
+            "llm_type": "course_difficulty",
+            "course_name": course_name,
+            "score": 100 if item else 0,
+            "keywords": tokenize(question),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "session_id": session_id,
+            "request_id": request_id,
+            "requires_llm_confirmation": False,
+        }
     if error.code == "LLM_TIMEOUT":
         user_message = (
             "답변 생성 시간이 길어져 AI 보조 답변을 완료하지 못했습니다.\n"
@@ -2953,6 +3075,7 @@ def _course_difficulty_llm_failure_response(
         "message": user_message,
         "user_message": user_message,
         "error_code": error.code,
+        "llm_error_code": error.code,
         "fallback_available": True,
         "show_retry": True,
         "summary": official_overview,
@@ -3316,7 +3439,7 @@ def _openai(prompt: str) -> str:
                 "temperature": 0.2,
                 "max_output_tokens": 1200,
             },
-            timeout=20,
+            timeout=config.LLM_TIMEOUT_SEC,
         )
         response.raise_for_status()
     except requests.Timeout as exc:
@@ -3336,23 +3459,24 @@ def _openai(prompt: str) -> str:
     return "".join(parts).strip()
 
 
-def _gemini_request(prompt: str, model: str, api_key: str) -> str:
+def _gemini_request(prompt: str, model: str, api_key: str, key_label: str = "") -> str:
     response = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": api_key},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+            "generationConfig": {
+                "temperature": 0.3,
+                "topP": 0.8,
+                "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS,
+            },
         },
-        timeout=20,
+        timeout=config.LLM_TIMEOUT_SEC,
     )
     response.raise_for_status()
-    data = response.json()
-    text = "".join(
-        part.get("text", "")
-        for candidate in data.get("candidates") or []
-        for part in (candidate.get("content") or {}).get("parts") or []
-    ).strip()
+    raw = response.json()
+    text = extract_gemini_text(raw)
+    _log_gemini_raw_check(raw, text, model, key_label or "GEMINI_API_KEY")
     if not text:
         raise LLMCallError("LLM_PROVIDER_ERROR", detail=f"Gemini response is empty model={model}")
     return text
@@ -3402,7 +3526,7 @@ def _gemini(prompt: str) -> str:
             continue
         for key_index, (key_label, api_key) in enumerate(api_key_entries, start=1):
             try:
-                result = _gemini_request(prompt, model, api_key)
+                result = _gemini_request(prompt, model, api_key, key_label)
                 if key_index > 1:
                     logger.info("[Gemini Failover Success] Using %s", key_label)
                 return result
@@ -3549,6 +3673,14 @@ def call_llm_helper(
     request_short = (request_id or "")[:12] or "server"
     model = config.GEMINI_MODEL if provider == "gemini" else config.OPENAI_MODEL
     prompt = build_llm_prompt(normalized_type, question, context)
+    lock_seed = f"{session_id}:{normalized_type}:{question}"
+    lock_key = hashlib.sha256(lock_seed.encode("utf-8")).hexdigest()
+    with RUNNING_LLM_LOCK:
+        if lock_key in RUNNING_LLM_REQUESTS:
+            if raise_on_error:
+                raise LLMCallError("LLM_PENDING", detail="duplicate LLM request")
+            return LLM_SAFE_FAILURE_MESSAGE
+        RUNNING_LLM_REQUESTS.add(lock_key)
     logger.info(
         "[LLM][START] request_id=%s provider=%s model=%s type=%s session=%s",
         request_short,
@@ -3558,34 +3690,60 @@ def call_llm_helper(
         session_short,
     )
     try:
+        LLM_CALL_STATE.request_id = request_short
+        LLM_CALL_STATE.raw_meta = None
         raw_answer = call_llm_raw(prompt)
-        answer = sanitize_llm_response(raw_answer, question)
-        LLM_LAST_ERROR.update({"code": "", "message": "", "provider": provider, "model": model})
-        if is_incomplete_llm_text(raw_answer, normalized_type) or is_incomplete_llm_text(answer, normalized_type):
+        raw_meta = getattr(LLM_CALL_STATE, "raw_meta", None)
+        incomplete, reason = is_incomplete_llm_answer(raw_answer, raw_meta)
+        logger.warning(
+            "[LLM][CHECK] request_id=%s attempt=%s reason=%s text_len=%s",
+            request_short,
+            1,
+            reason,
+            len(raw_answer or ""),
+        )
+        if not incomplete:
+            answer = sanitize_llm_response(raw_answer, question)
+            LLM_LAST_ERROR.update({"code": "", "message": "", "provider": provider, "model": model})
+            return answer
+        if incomplete:
             logger.warning(
-                "LLM 불완전 응답 감지: provider=%s, llm_type=%s, session=%s",
+                "[LLM][RETRY] request_id=%s short_prompt=true reason=%s provider=%s type=%s session=%s",
+                request_short,
+                reason,
                 provider,
                 normalized_type,
                 session_short,
             )
             retry_prompt = (
-                f"{prompt}\n\n"
-                "[재작성 지시]\n"
-                "이전 답변이 중간에 끊겼습니다. 반드시 완결된 문장으로 짧고 구조화하여 다시 작성하세요. "
-                "각 항목은 1~2문장 이내로 끝내세요. 답변은 700자 이내로 작성하고 마지막 문장은 반드시 마침표로 끝내세요."
+                "한국방송통신대학교 컴퓨터과학과 학생에게 답변한다.\n"
+                "공식 데이터에 없는 난이도는 참고용 추정이라고 명시한다.\n"
+                "표와 JSON은 쓰지 않는다.\n"
+                "5문장 이내로 완결된 문장만 쓴다.\n"
+                "마지막 문장은 “공식 난이도 정보는 제공되지 않아 참고용 안내입니다.”로 끝낸다.\n\n"
+                f"[질문]\n{sanitize_input(question, 300)}\n\n"
+                f"[공식 데이터]\n{_context_summary(context)}"
             )
+            LLM_CALL_STATE.raw_meta = None
             retry_raw = call_llm_raw(retry_prompt)
-            retry_answer = sanitize_llm_response(retry_raw, question)
-            if not is_incomplete_llm_text(retry_raw, normalized_type) and not is_incomplete_llm_text(retry_answer, normalized_type):
+            retry_meta = getattr(LLM_CALL_STATE, "raw_meta", None)
+            retry_incomplete, retry_reason = is_incomplete_llm_answer(retry_raw, retry_meta)
+            logger.warning(
+                "[LLM][CHECK] request_id=%s attempt=%s reason=%s text_len=%s",
+                request_short,
+                2,
+                retry_reason,
+                len(retry_raw or ""),
+            )
+            if not retry_incomplete:
+                retry_answer = sanitize_llm_response(retry_raw, question)
+                LLM_LAST_ERROR.update({"code": "", "message": "", "provider": provider, "model": model})
                 return retry_answer
             logger.warning(
-                "LLM 재시도 후에도 불완전하여 fallback 사용: provider=%s, llm_type=%s, session=%s",
-                provider,
-                normalized_type,
-                session_short,
+                "[LLM][FALLBACK] request_id=%s reason=LLM_INCOMPLETE_AFTER_RETRY",
+                request_short,
             )
-            return _fallback_text_from_template(_llm_fallback_template(normalized_type, context, question))
-        return answer
+            raise LLMCallError("LLM_INCOMPLETE", detail=retry_reason)
     except LLMCallError as exc:
         _record_llm_error(provider, model, exc)
         logger.error(
@@ -3617,6 +3775,9 @@ def call_llm_helper(
         if raise_on_error:
             raise wrapped from exc
         return LLM_SAFE_FAILURE_MESSAGE
+    finally:
+        with RUNNING_LLM_LOCK:
+            RUNNING_LLM_REQUESTS.discard(lock_key)
 
 
 IMPORTANT_ARCHIVE_NOTICE = (

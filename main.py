@@ -20,7 +20,14 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import config
-from chatbot import answer_question, casual_response, classify_intent, get_llm_health_status, sanitize_input
+from chatbot import (
+    answer_question,
+    casual_response,
+    classify_intent,
+    get_llm_health_status,
+    normalize_honorific_response,
+    sanitize_input,
+)
 from crawler import CommunityCrawler, REQUIRED_DOCUMENT_URLS, KnouCrawler
 from curated_knowledge import curated_documents, match_curated
 from notion_client import NotionClient, notion_error_message
@@ -321,6 +328,8 @@ def remember_conversation(session_id: str, question: str, result: dict[str, Any]
 
 def finalize_chat_response(req: ChatRequest, result: dict[str, Any], session_id: str, request_id: str) -> dict[str, Any]:
     result = localize_response(result, "en" if req.language == "en" else "ko")
+    if req.language != "en":
+        result = normalize_honorific_response(result)
     attach_request_metadata(result, session_id, request_id, req)
     remember_conversation(session_id, req.question, result)
     record_interaction_async(req.question, result)

@@ -2643,6 +2643,10 @@ def build_llm_prompt(llm_type: str, question: str, context: dict[str, Any]) -> s
     )
     return f"""
 너는 한국방송통신대학교 컴퓨터과학과 학생을 돕는 AI 보조 설명 엔진이다.
+ComPass는 학생 대상 공식 정보 안내 서비스입니다.
+모든 응답은 반드시 정중한 존댓말로 작성합니다.
+반말, 명령형, 사전식 서술체(~한다/~이다/~된다)는 사용하지 않습니다.
+학생에게 안내하는 상담원 수준의 자연스러운 존댓말을 사용합니다.
 공식 데이터와 일반적인 참고 조언을 반드시 구분한다.
 공식 데이터에 없는 학점, 개설 학기, 평가 방식, 시험 범위, 날짜, 규정, URL은 추측하지 않는다.
 공식 데이터에 없는 내용은 “참고용 안내”라고 명확히 표시한다.
@@ -3578,6 +3582,123 @@ def _wrap_long_sentence(line: str, limit: int = 68) -> str:
     if current:
         chunks.append(current)
     return "\n".join(chunks)
+
+
+BANNED_HONORIFIC_ENDINGS = [
+    "하지 않는다",
+    "제공되지 않는다",
+    "가능하다",
+    "불가능하다",
+    "필요하다",
+    "달라",
+    "확인해야 한다",
+    "참고해야 한다",
+    "존재한다",
+    "없다",
+    "있다",
+    "해야 한다",
+    "된다",
+    "제공된다",
+    "한다",
+]
+BANNED_HONORIFIC_PATTERNS = [
+    r"하지\s*않는다(?=[\s\.\n]|$)",
+    r"제공되지\s*않는다(?=[\s\.\n]|$)",
+    r"가능하다(?=[\s\.\n]|$)",
+    r"불가능하다(?=[\s\.\n]|$)",
+    r"필요하다(?=[\s\.\n]|$)",
+    r"달라(?=[\s\.\n\"”']|$)",
+    r"확인해야\s*한다(?=[\s\.\n]|$)",
+    r"참고해야\s*한다(?=[\s\.\n]|$)",
+    r"존재한다(?=[\s\.\n]|$)",
+    r"없다(?=[\s\.\n]|$)",
+    r"있다(?=[\s\.\n]|$)",
+    r"해야\s*한다(?=[\s\.\n]|$)",
+    r"된다(?=[\s\.\n]|$)",
+    r"제공된다(?=[\s\.\n]|$)",
+    r"한다(?=[\s\.\n]|$)",
+]
+HONORIFIC_SKIP_KEYS = {
+    "url",
+    "source_url",
+    "detail_url",
+    "fallback_url",
+    "href",
+    "type",
+    "target",
+    "mode",
+    "answer_type",
+    "structured_intent",
+    "intent",
+    "llm_type",
+    "course_name",
+    "name",
+    "title",
+    "label",
+    "link_label",
+    "date",
+    "created_at",
+    "updated_at",
+    "request_id",
+    "session_id",
+}
+
+
+def validate_honorific(text: str) -> bool:
+    return not any(re.search(pattern, text or "") for pattern in BANNED_HONORIFIC_PATTERNS)
+
+
+def convert_to_honorific(text: str) -> str:
+    # 존댓말 보정
+    value = text or ""
+    replacements = [
+        (r"제공되지\s*않는다", "제공되지 않습니다"),
+        (r"하지\s*않는다", "하지 않습니다"),
+        (r"확인해야\s*한다", "확인해 주세요"),
+        (r"참고해야\s*한다", "참고해 주세요"),
+        (r"필요하면", "필요하시면"),
+        (r"입력해\s*달라", "입력해 주세요"),
+        (r"해\s*달라", "해 주세요"),
+        (r"달라(?=[\s\.\n\"”']|$)", "입력해 주세요"),
+        (r"수\s*없다", "어렵습니다"),
+        (r"수\s*있다", "수 있습니다"),
+        (r"불가능하다", "어렵습니다"),
+        (r"가능하다", "가능합니다"),
+        (r"필요하다", "필요합니다"),
+        (r"존재한다", "있습니다"),
+        (r"제공된다", "제공됩니다"),
+        (r"된다", "됩니다"),
+        (r"없다", "없습니다"),
+        (r"있다", "있습니다"),
+        (r"한다", "합니다"),
+        (r"이다", "입니다"),
+    ]
+    for pattern, replacement in replacements:
+        value = re.sub(pattern, replacement, value)
+    return value
+
+
+def normalize_honorific_text(text: str) -> str:
+    if not text or not re.search(r"[가-힣]", text):
+        return text
+    converted = convert_to_honorific(text)
+    if not validate_honorific(converted):
+        converted = convert_to_honorific(converted)
+    return converted
+
+
+def normalize_honorific_response(value: Any, key: str = "") -> Any:
+    # 최종 문체
+    if isinstance(value, dict):
+        return {
+            item_key: normalize_honorific_response(item_value, item_key)
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [normalize_honorific_response(item, key) for item in value]
+    if isinstance(value, str) and key not in HONORIFIC_SKIP_KEYS:
+        return normalize_honorific_text(value)
+    return value
 
 
 def sanitize_llm_response(text: str, question: str = "") -> str:

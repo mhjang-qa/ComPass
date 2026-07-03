@@ -344,6 +344,45 @@ def test_new_faculty_question_does_not_reuse_course_history(tmp_path) -> None:
     assert "컴퓨터그래픽스 학점 잘 받는 방법" not in str(result)
 
 
+def test_honorific_filter_rewrites_plain_style_text() -> None:
+    from chatbot import normalize_honorific_response, validate_honorific
+
+    response = {
+        "answer": (
+            "해당 과목의 C학점 이상 취득을 위한 구체적인 기준은 공식적으로 제공되지 않는다.\n"
+            "학점 취득 기준은 과목별 평가 방식과 성적 부여 기준에 따라 달라질 수 있다.\n"
+            "더 자세한 정보가 필요하면 \"더 알려줘\"라고 입력해 달라."
+        ),
+        "summary": "공식 기준이 없다.",
+        "items": [
+            {
+                "title": "컴퓨터그래픽스",
+                "value": "공식 데이터 기준으로 확인해야 한다.",
+                "disclaimer": "참고해야 한다.",
+                "source_url": "https://example.com/한다",
+                "link_label": "공식 페이지 바로가기",
+            }
+        ],
+    }
+
+    normalized = normalize_honorific_response(response)
+    combined = "\n".join([
+        normalized["answer"],
+        normalized["summary"],
+        normalized["items"][0]["value"],
+        normalized["items"][0]["disclaimer"],
+    ])
+
+    assert "제공되지 않습니다" in normalized["answer"]
+    assert "달라질 수 있습니다" in normalized["answer"]
+    assert "입력해 주세요" in normalized["answer"]
+    assert "없습니다" in normalized["summary"]
+    assert normalized["items"][0]["value"] == "공식 데이터 기준으로 확인해 주세요."
+    assert normalized["items"][0]["disclaimer"] == "참고해 주세요."
+    assert normalized["items"][0]["source_url"] == "https://example.com/한다"
+    assert validate_honorific(combined) is True
+
+
 def test_new_notice_question_does_not_reuse_course_history(tmp_path) -> None:
     from chatbot import answer_question
     from search_index import SearchIndex

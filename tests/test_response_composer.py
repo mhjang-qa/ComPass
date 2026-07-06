@@ -2,6 +2,7 @@ from chatbot import (
     analyze_question_intent,
     build_structured_response,
     classify_intent,
+    detect_course_name,
     normalize_results,
     summarize_for_student,
 )
@@ -23,6 +24,9 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("파이썬프로그래밍기초 수업 난이도는?") == "course_difficulty"
     assert classify_intent("운영체제는 어려워?") == "course_difficulty"
     assert classify_intent("컴퓨터그래픽 학점 잘 받으려면") == "course_grade_strategy"
+    assert classify_intent("컴퓨터이해 A+ 받으려면?") == "course_grade_strategy"
+    assert classify_intent("컴퓨터의이해 공부법") == "course_grade_strategy"
+    assert classify_intent("컴이해 난이도") == "course_difficulty"
     assert classify_intent("컴퓨터구조는 뭐 배우는 과목이야?") == "course_detail"
     assert classify_intent("데이터베이스 시험범위는?") == "exam_scope"
     assert classify_intent("운영체제 기말 범위") == "exam_scope"
@@ -45,6 +49,8 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "인공지능 어렵나요": "course_difficulty",
         "데이터베이스 과목 어려워?": "course_difficulty",
         "인공지능 C이상 맞으려면": "course_grade_strategy",
+        "컴퓨터이해 A+ 받으려면?": "course_grade_strategy",
+        "컴퓨터의이해 공부법": "course_grade_strategy",
         "컴퓨터그래픽스 학점 잘 받으려면": "course_study_tip",
         "데이터베이스시스템 듣기 전에 뭐 알아야 해": "course_order",
         "편입생인데 어떤 과목부터 들어": "course_roadmap",
@@ -75,6 +81,73 @@ def test_nlu_router_extracts_course_and_goal_entities() -> None:
     assert routed["intent"] == "course_grade_strategy"
     assert routed["entities"]["course_name"] == "인공지능"
     assert routed["entities"]["grade_goal"] == "C 이상"
+
+
+def test_course_name_normalizes_common_aliases() -> None:
+    assert detect_course_name("컴퓨터이해 A+ 받으려면?") == "컴퓨터의이해"
+    assert detect_course_name("컴퓨터의 이해 A+ 받으려면?") == "컴퓨터의이해"
+    assert detect_course_name("컴이해 난이도") == "컴퓨터의이해"
+    assert detect_course_name("DB 과목 어려워?") == "데이터베이스시스템"
+
+
+def test_course_study_strategy_alias_questions_do_not_go_out_of_scope(tmp_path, monkeypatch) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    monkeypatch.setattr(
+        "chatbot.call_llm_raw",
+        lambda prompt: (
+            "추천 공부법: 기본 개념을 먼저 정리하고 강의 흐름에 맞춰 복습해 주세요.\n"
+            "우선 익혀야 할 내용: 교재의 핵심 용어와 예제 문제를 먼저 확인해 주세요.\n"
+            "시험 대비 팁: 기출과 예제 문제를 통해 개념 적용 방식을 점검해 주세요."
+        ),
+    )
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "컴퓨터의이해",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "컴퓨터의이해는 컴퓨터과학 입문 개념을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-computer",
+            "normalized_items": [
+                {
+                    "course_name": "컴퓨터의이해",
+                    "overview": "컴퓨터과학의 기본 개념을 학습하는 과목입니다.",
+                    "topics": ["컴퓨터 개념", "정보 기술", "기초 이론"],
+                }
+            ],
+        },
+        {
+            "title": "머신러닝",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "머신러닝은 기계학습 기본 개념을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-ml",
+            "normalized_items": [
+                {
+                    "course_name": "머신러닝",
+                    "overview": "기계학습의 기본 개념을 학습하는 과목입니다.",
+                    "topics": ["지도학습", "비지도학습"],
+                }
+            ],
+        },
+    ])
+
+    cases = [
+        ("컴퓨터이해 A+ 받으려면?", "컴퓨터의이해", "course_grade_strategy"),
+        ("컴퓨터의 이해 A+ 받으려면?", "컴퓨터의이해", "course_grade_strategy"),
+        ("컴퓨터의이해 공부법", "컴퓨터의이해", "course_grade_strategy"),
+        ("컴이해 난이도", "컴퓨터의이해", "llm_confirmation_required"),
+        ("머신러닝 C학점 이상 받으려면?", "머신러닝", "course_grade_strategy"),
+    ]
+
+    for question, course_name, answer_type in cases:
+        result = answer_question(question, index=index)
+        assert result["answer_type"] == answer_type
+        assert result.get("course_name") == course_name
+        assert result["answer_type"] != "out_of_scope"
+        assert result.get("mode") != "SYSTEM"
 
 
 def test_campus_location_answer_is_in_scope(tmp_path) -> None:

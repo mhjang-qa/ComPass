@@ -48,6 +48,10 @@ COURSE_NAME_ALIASES = {
     "데이터베이스": "데이터베이스시스템",
     "db": "데이터베이스시스템",
     "컴퓨터그래픽": "컴퓨터그래픽스",
+    "컴퓨터이해": "컴퓨터의이해",
+    "컴퓨터의 이해": "컴퓨터의이해",
+    "컴이해": "컴퓨터의이해",
+    "컴퓨터 이해": "컴퓨터의이해",
 }
 KNOWN_COURSE_NAMES_EXTRA = {"데이터정보처리입문"}
 FACULTY_HOMEPAGE_FALLBACKS = {
@@ -570,21 +574,50 @@ def is_course_recommendation(question: str) -> bool:
     return bool(COURSE_RECOMMENDATION_RE.search(question))
 
 
+def _log_course_normalize(raw: str, matched_course: str, method: str, score: float = 0.0) -> None:
+    logger.info(
+        "[COURSE_NORMALIZE] raw=%r normalized=%r matched_course=%s match_method=%s score=%.2f",
+        raw,
+        normalize_course_key(raw or ""),
+        matched_course or "",
+        method,
+        score,
+    )
+
+
 def detect_course_name(question: str, index: SearchIndex | None = None) -> str:
     if index and hasattr(index, "detect_course"):
         detected = index.detect_course(question)
         if detected:
-            return detected.get("course_name") or ""
+            course_name = detected.get("course_name") or ""
+            _log_course_normalize(question, course_name, "index_alias", 1.0)
+            return course_name
     compact = normalize_course_key(question or "")
     for alias, canonical in COURSE_NAME_ALIASES.items():
         if normalize_course_key(alias) in compact:
+            _log_course_normalize(question, canonical, "alias_dict", 1.0)
             return canonical
     matches = [
         name
         for name in {*KNOWN_COURSE_NAMES, *KNOWN_COURSE_NAMES_EXTRA}
         if normalize_course_key(name) in compact
     ]
-    return max(matches, key=len) if matches else ""
+    if matches:
+        matched = max(matches, key=len)
+        _log_course_normalize(question, matched, "known_substring", 1.0)
+        return matched
+    best_name = ""
+    best_score = 0.0
+    for name in {*KNOWN_COURSE_NAMES, *KNOWN_COURSE_NAMES_EXTRA}:
+        score = SequenceMatcher(None, compact, normalize_course_key(name)).ratio()
+        if score > best_score:
+            best_name = name
+            best_score = score
+    if best_score >= 0.82:
+        _log_course_normalize(question, best_name, "similarity", best_score)
+        return best_name
+    _log_course_normalize(question, "", "no_match", best_score)
+    return ""
 
 
 def detect_course_candidates(question: str, index: SearchIndex | None = None) -> list[str]:
@@ -615,6 +648,29 @@ def analyze_question_intent(question: str, index: SearchIndex | None = None) -> 
         routed = {**routed, "intent": "exam_scope"}
     raw_intent = routed.get("intent")
     course_name = detect_course_name(question, index)
+    if (
+        course_name
+        and COURSE_STUDY_FOLLOWUP_RE.search(question or "")
+        and not EXAM_SCOPE_RE.search(question or "")
+        and raw_intent not in {"course_study_tip", "course_grade_strategy", "course_study_advice"}
+    ):
+        routed = {
+            **routed,
+            "raw_intent": raw_intent,
+            "intent": "course_study_advice",
+            "confidence": max(float(routed.get("confidence") or 0), 0.9),
+            "reason": "keyword:study_strategy",
+        }
+        raw_intent = routed.get("raw_intent") or raw_intent
+    if course_name and COURSE_GRADE_STRATEGY_RE.search(question or "") and raw_intent not in {"course_study_tip", "course_grade_strategy"}:
+        routed = {
+            **routed,
+            "raw_intent": raw_intent,
+            "intent": "course_grade_strategy",
+            "confidence": max(float(routed.get("confidence") or 0), 0.91),
+            "reason": "keyword:grade_strategy",
+        }
+        raw_intent = routed.get("raw_intent") or raw_intent
     if course_name and COURSE_DIFFICULTY_RE.search(question or "") and raw_intent != "course_difficulty":
         routed = {
             **routed,
@@ -2544,6 +2600,7 @@ def _course_difficulty_confirmation(
         "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
         "mode": "LLM확인",
+        "allow_llm": True,
         "requires_llm_confirmation": True,
         "llm_type": "course_difficulty",
         "course_name": course_name,
@@ -3135,6 +3192,7 @@ def _course_grade_strategy_response(
         "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100}],
         "mode": "LLM",
+        "allow_llm": True,
         "llm_type": "course_grade_strategy",
         "course_name": course_name,
         "score": 100 if items else 0,
@@ -3206,6 +3264,7 @@ def _course_study_advice_response(
         "source_urls": list(dict.fromkeys([source_url, COURSE_FULL_GUIDE_URL])),
         "sources": [{"title": f"{course_name} 공식 과목 정보", "url": source_url, "score": 100 if items else 0}],
         "mode": "DB검색",
+        "allow_llm": True,
         "score": 100 if items else 0,
         "keywords": tokenize(question),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
@@ -4360,6 +4419,7 @@ def answer_question(
         return casual
     index = index or SearchIndex()
     original_question = clean_question
+    logger.info("[INTENT_DEBUG] raw_query=%r", original_question)
     followup_meta = resolve_followup_question(clean_question, history, index)
     if followup_meta.get("is_followup") and followup_meta.get("expanded_query"):
         clean_question = sanitize_input(str(followup_meta["expanded_query"]))
@@ -4415,6 +4475,15 @@ def answer_question(
         response["quick_intent"] = priority_intent
         return finish(response)
     initial_intent = classify_intent(clean_question, index)
+    matched_course_for_route = detect_course_name(clean_question, index)
+    study_strategy_detected = bool(COURSE_GRADE_STRATEGY_RE.search(clean_question) or COURSE_STUDY_FOLLOWUP_RE.search(clean_question) or COURSE_DIFFICULTY_RE.search(clean_question))
+    logger.info(
+        "[LLM_ROUTE] intent=%s allow_llm=%s reason=course_matched:%s study_strategy:%s",
+        initial_intent,
+        bool(allow_llm or (matched_course_for_route and study_strategy_detected)),
+        bool(matched_course_for_route),
+        study_strategy_detected,
+    )
     if initial_intent == "faculty_detail":
         faculty = detect_faculty_member(clean_question, index)
         if faculty and faculty.get("_not_found"):
@@ -4705,7 +4774,14 @@ def answer_question(
             "structured_intent": "course_recommendation",
             "failure_reason": "구조화 교육과정 데이터 없음",
         })
-    if not detect_course_name(clean_question, index) and not detect_faculty_member(clean_question, index) and is_out_of_scope(clean_question):
+    out_scope_course = detect_course_name(clean_question, index)
+    out_scope_study = bool(COURSE_GRADE_STRATEGY_RE.search(clean_question) or COURSE_STUDY_FOLLOWUP_RE.search(clean_question) or COURSE_DIFFICULTY_RE.search(clean_question))
+    if not out_scope_course and not detect_faculty_member(clean_question, index) and is_out_of_scope(clean_question):
+        logger.info(
+            "[OUT_OF_SCOPE_BLOCKED] reason=no_course_or_department_signal course_matched=%s study_strategy_detected=%s",
+            bool(out_scope_course),
+            out_scope_study,
+        )
         return finish({
             "answer": OUT_OF_SCOPE_MESSAGE,
             "answer_type": "out_of_scope",

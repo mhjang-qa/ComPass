@@ -1,3 +1,6 @@
+import json
+import re
+
 from chatbot import (
     analyze_question_intent,
     build_structured_response,
@@ -1096,3 +1099,61 @@ def test_backend_localizes_notice_and_schedule_summaries_to_english() -> None:
         "You can check the academic schedule on the official department page."
     )
     assert schedule_empty["actions"][0]["label"] == "View Schedule"
+
+
+def test_backend_localizes_notice_schedule_fallback_cards_to_english() -> None:
+    from main import localize_response
+
+    notice = localize_response(
+        {
+            "answer": "컴퓨터과학과 최근 공지 안내입니다.",
+            "answer_type": "notice_list",
+            "summary": "저장된 최신 공지 데이터가 부족해 공식 공지 확인 항목을 안내드립니다.",
+            "items": [
+                {
+                    "title": "컴퓨터과학과 공지사항",
+                    "date": "",
+                    "description": "저장된 최신 공지 데이터가 부족합니다.",
+                    "source_url": "https://example.com/notices",
+                    "fallback_url": "https://example.com/notices",
+                    "link_label": "공지 바로가기",
+                }
+            ],
+            "actions": [{"type": "link", "label": "공지 더보기", "url": "https://example.com/notices"}],
+            "sources": [{"title": "컴퓨터과학과 공지사항", "url": "https://example.com/notices", "score": 0}],
+        },
+        "en",
+    )
+    schedule = localize_response(
+        {
+            "answer": "학과 일정 안내입니다.",
+            "answer_type": "schedule_list",
+            "summary": "저장된 최신 일정 데이터가 부족해 공식 일정 확인 항목을 안내드립니다.",
+            "items": [
+                {
+                    "title": "학과 일정 공식 페이지",
+                    "description": "저장된 일정 데이터가 부족합니다.",
+                    "category": "학과일정",
+                    "source_url": "https://example.com/schedule",
+                    "fallback_url": "https://example.com/schedule",
+                    "link_label": "학과 일정 바로가기",
+                }
+            ],
+            "actions": [{"type": "link", "label": "학과 일정 바로가기", "url": "https://example.com/schedule"}],
+            "sources": [{"title": "컴퓨터과학과 학과 일정", "url": "https://example.com/schedule", "score": 0}],
+        },
+        "en",
+    )
+
+    combined = json.dumps({"notice": notice, "schedule": schedule}, ensure_ascii=False)
+    assert not re.search(r"[가-힣]", combined)
+    assert notice["items"][0]["title"] == "Computer Science Department Notices"
+    assert notice["items"][0]["description"].startswith("Stored latest notice data")
+    assert notice["items"][0]["link_label"] == "View Notice"
+    assert notice["actions"][0]["label"] == "View More Notices"
+    assert notice["sources"][0]["title"] == "Computer Science Department Notices"
+    assert schedule["items"][0]["title"] == "Official Department Schedule Page"
+    assert schedule["items"][0]["category"] == "Department Schedule"
+    assert schedule["items"][0]["link_label"] == "View Schedule"
+    assert schedule["actions"][0]["label"] == "View Schedule"
+    assert schedule["sources"][0]["title"] == "Computer Science Department Schedule"

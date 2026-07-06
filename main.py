@@ -239,6 +239,112 @@ def translate_action_label_en(label: str) -> str:
     return label
 
 
+def _fallback_url(result: dict[str, Any], default_url: str) -> str:
+    for item in result.get("items") or []:
+        if item.get("source_url") or item.get("fallback_url"):
+            return item.get("source_url") or item.get("fallback_url")
+    for action in result.get("actions") or []:
+        if action.get("url"):
+            return action["url"]
+    for source in result.get("sources") or []:
+        if source.get("url"):
+            return source["url"]
+    return default_url
+
+
+def _is_fallback_payload(result: dict[str, Any]) -> bool:
+    text = json.dumps(
+        {
+            "summary": result.get("summary"),
+            "items": result.get("items"),
+            "sources": result.get("sources"),
+            "failure_reason": result.get("failure_reason"),
+        },
+        ensure_ascii=False,
+    )
+    return bool(
+        not result.get("items")
+        or "저장된" in text
+        or "데이터가 부족" in text
+        or "찾지 못했습니다" in text
+        or "필터 통과 문서 없음" in text
+    )
+
+
+def _apply_notice_fallback_en(result: dict[str, Any]) -> None:
+    url = _fallback_url(result, config.NOTICE_URL)
+    result["items"] = [
+        {
+            "title": "Computer Science Department Notices",
+            "date": "",
+            "description": "Stored latest notice data is limited. Please check the official notice page for the latest updates.",
+            "source_url": url,
+            "fallback_url": url,
+            "link_label": "View Notice",
+        },
+        {
+            "title": "Academic and Course Notices",
+            "date": "",
+            "description": "Notices about course registration, exams, and assignments are available on the official notice page.",
+            "source_url": url,
+            "fallback_url": url,
+            "link_label": "View Notice",
+        },
+        {
+            "title": "Department Events and Announcements",
+            "date": "",
+            "description": "Department events and major announcements are also posted on the official notice page.",
+            "source_url": url,
+            "fallback_url": url,
+            "link_label": "View Notice",
+        },
+    ]
+    result["sources"] = [{"title": "Computer Science Department Notices", "url": url, "score": 0}]
+    result["actions"] = [{"type": "link", "label": "View More Notices", "url": url}]
+    result["display_limit"] = 3
+    result["total_count"] = 3
+
+
+def _apply_schedule_fallback_en(result: dict[str, Any]) -> None:
+    url = _fallback_url(result, config.SCHEDULE_URL)
+    result["items"] = [
+        {
+            "title": "Official Department Schedule Page",
+            "start_date": "",
+            "end_date": "",
+            "description": "Stored schedule data is limited. Please check the official department schedule page for the latest updates.",
+            "category": "Department Schedule",
+            "source_url": url,
+            "fallback_url": url,
+            "link_label": "View Schedule",
+        },
+        {
+            "title": "Course Registration and Evaluation Schedule",
+            "start_date": "",
+            "end_date": "",
+            "description": "Course registration, exam, and evaluation schedules are available on the official department schedule page.",
+            "category": "Department Schedule",
+            "source_url": url,
+            "fallback_url": url,
+            "link_label": "View Schedule",
+        },
+        {
+            "title": "Major Department Academic Schedule",
+            "start_date": "",
+            "end_date": "",
+            "description": "Major academic schedule items such as registration, thesis, and department notices are posted on the official page.",
+            "category": "Department Schedule",
+            "source_url": url,
+            "fallback_url": url,
+            "link_label": "View Schedule",
+        },
+    ]
+    result["sources"] = [{"title": "Computer Science Department Schedule", "url": url, "score": 0}]
+    result["actions"] = [{"type": "link", "label": "View Schedule", "url": url}]
+    result["display_limit"] = 3
+    result["total_count"] = 3
+
+
 def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
     if language != "en":
         return result
@@ -286,12 +392,15 @@ def localize_response(result: dict[str, Any], language: str) -> dict[str, Any]:
     }
     answer, summary = defaults.get(answer_type, defaults["text"])
     result["answer"] = answer
+    is_fallback = _is_fallback_payload(result)
     if result.get("summary"):
         original_summary = str(result.get("summary") or "")
-        if answer_type == "notice_list" and not (result.get("items") or []):
+        if answer_type == "notice_list" and is_fallback:
             result["summary"] = "No recent notices were found in the saved official data.\nYou can check notices on the official department page."
-        elif answer_type == "schedule_list" and not (result.get("items") or []):
+            _apply_notice_fallback_en(result)
+        elif answer_type == "schedule_list" and is_fallback:
             result["summary"] = "No schedule items were found in the saved official data.\nYou can check the academic schedule on the official department page."
+            _apply_schedule_fallback_en(result)
         elif answer_type == "campus_location":
             result["summary"] = summary
             result["items"] = []

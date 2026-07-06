@@ -6,6 +6,7 @@ from chatbot import (
     build_structured_response,
     classify_intent,
     detect_course_name,
+    extract_grade_target,
     normalize_results,
     summarize_for_student,
 )
@@ -84,6 +85,14 @@ def test_nlu_router_extracts_course_and_goal_entities() -> None:
     assert routed["intent"] == "course_grade_strategy"
     assert routed["entities"]["course_name"] == "인공지능"
     assert routed["entities"]["grade_goal"] == "C 이상"
+
+
+def test_extract_grade_target_preserves_specific_grade() -> None:
+    assert extract_grade_target("해당과목 A+받으려면?") == "A+"
+    assert extract_grade_target("해당과목 C 이상 받으려면?") == "C 이상"
+    assert extract_grade_target("A0 받는 방법") == "A0"
+    assert extract_grade_target("80점 이상 받으려면") == "80점 이상"
+    assert extract_grade_target("학점 잘 받는 방법") == ""
 
 
 def test_course_name_normalizes_common_aliases() -> None:
@@ -410,6 +419,92 @@ def test_followup_expand_uses_recent_course_history(tmp_path, monkeypatch) -> No
     assert result["followup"]["entities"]["course_name"] == "컴퓨터그래픽스"
     assert "컴퓨터그래픽스" in result["resolved_query"]
     assert result["answer_policy"]["mode"] == "expanded"
+
+
+def test_followup_grade_strategy_preserves_a_plus_target(tmp_path, monkeypatch) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "파이썬프로그래밍기초",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "파이썬프로그래밍기초는 파이썬 기초 문법과 실습을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-python",
+            "normalized_items": [
+                {
+                    "course_name": "파이썬프로그래밍기초",
+                    "overview": "파이썬 기초 문법과 프로그램 작성 방법을 학습하는 과목입니다.",
+                    "topics": ["기초 문법", "예제 실습", "프로그램 작성"],
+                }
+            ],
+        }
+    ])
+    monkeypatch.setattr("chatbot.call_llm_raw", lambda prompt: "")
+    history = [
+        {
+            "role": "assistant",
+            "content": "파이썬프로그래밍기초 과목 안내입니다.",
+            "intent": "course_difficulty",
+            "entities": {"course_name": "파이썬프로그래밍기초"},
+        }
+    ]
+
+    result = answer_question("해당과목 A+받으려면?", history=history, index=index)
+
+    assert result["answer_type"] == "course_grade_strategy"
+    assert result["course_name"] == "파이썬프로그래밍기초"
+    assert result["grade_target"] == "A+"
+    assert "A+" in result["answer"]
+    assert "C 이상" not in result["answer"]
+    assert "A+" in result["resolved_query"]
+    assert "학점 잘 받는 방법" not in result["resolved_query"]
+    assert any("예제를 변형" in item["value"] or "직접 구현" in item["value"] for item in result["items"])
+
+
+def test_grade_strategy_titles_follow_requested_target(tmp_path, monkeypatch) -> None:
+    from chatbot import answer_question
+    from search_index import SearchIndex
+
+    index = SearchIndex(tmp_path / "course-index.json")
+    index.rebuild([
+        {
+            "title": "파이썬프로그래밍기초",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "파이썬프로그래밍기초는 파이썬 기초 문법과 실습을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-python",
+            "normalized_items": [
+                {
+                    "course_name": "파이썬프로그래밍기초",
+                    "overview": "파이썬 기초 문법과 프로그램 작성 방법을 학습하는 과목입니다.",
+                    "topics": ["기초 문법", "예제 실습", "프로그램 작성"],
+                }
+            ],
+        },
+        {
+            "title": "머신러닝",
+            "category": "교과정보 > 교과목안내 > 과목상세",
+            "document_type": "과목상세",
+            "body": "머신러닝은 기계학습 기본 개념을 학습한다.",
+            "source_url": "https://cs.knou.ac.kr/cs1/4791/subview.do#course-ml",
+            "normalized_items": [{"course_name": "머신러닝", "overview": "기계학습 기본 개념", "topics": ["지도학습"]}],
+        },
+    ])
+    monkeypatch.setattr("chatbot.call_llm_raw", lambda prompt: "")
+
+    a_plus = answer_question("파이썬프로그래밍기초 A+ 받는 방법", index=index)
+    general = answer_question("파이썬프로그래밍기초 학점 잘 받는 방법", index=index)
+    c_above = answer_question("머신러닝 C학점 이상 받으려면?", index=index)
+
+    assert "A+ 성적 취득" in a_plus["answer"]
+    assert a_plus["grade_target"] == "A+"
+    assert "성적 향상" in general["answer"]
+    assert general["grade_target"] == ""
+    assert "C 이상 성적 취득" in c_above["answer"]
+    assert c_above["grade_target"] == "C 이상"
 
 
 def test_contextual_followup_uses_recent_course_for_difficulty(tmp_path) -> None:

@@ -399,6 +399,10 @@ COURSE_STUDY_FOLLOWUP_RE = re.compile(
     r"공부하는\s*방법|어떻게\s*공부|학습\s*방법|준비\s*방법|선수\s*지식|어려운\s*부분|평가\s*방식|과제|시험",
     re.IGNORECASE,
 )
+GRADE_TARGET_RE = re.compile(
+    r"(?P<score>\d+)\s*점\s*이상|(?P<grade>[ABC])\s*(?P<plus>\+|0)?\s*(?:학점)?\s*(?P<above>이상)?",
+    re.IGNORECASE,
+)
 
 
 def _history_topics(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -437,6 +441,32 @@ def _followup_intent(question: str, base_intent: str = "") -> str:
     return base_intent or "general_explain"
 
 
+def extract_grade_target(question: str) -> str:
+    text = question or ""
+    for match in GRADE_TARGET_RE.finditer(text):
+        if match.group("score"):
+            return f"{match.group('score')}점 이상"
+        grade = (match.group("grade") or "").upper()
+        if not grade:
+            continue
+        suffix = match.group("plus") or ""
+        above = match.group("above") or ""
+        if suffix == "0":
+            return f"{grade}0"
+        if suffix == "+":
+            return f"{grade}+"
+        return f"{grade} 이상" if above else grade
+    return ""
+
+
+def _grade_goal_text(grade_target: str) -> str:
+    if not grade_target:
+        return "성적 향상"
+    if grade_target.endswith("점 이상"):
+        return f"{grade_target} 성적 취득"
+    return f"{grade_target} 성적 취득"
+
+
 def _expanded_followup_query(question: str, course_name: str, intent: str, base_intent: str) -> str:
     if intent == "followup_expand":
         target = {
@@ -447,6 +477,9 @@ def _expanded_followup_query(question: str, course_name: str, intent: str, base_
         }.get(base_intent, "관련 내용을 더 자세히 알려줘")
         return f"{course_name} {target}" if course_name else f"{question} 더 자세히 알려줘"
     if intent == "course_grade_strategy":
+        grade_target = extract_grade_target(question)
+        if grade_target:
+            return f"{course_name} {grade_target} 받으려면?".strip()
         return f"{course_name} 학점 잘 받는 방법을 알려줘"
     if intent == "course_study_advice":
         return f"{course_name} {question}".strip()
@@ -671,6 +704,13 @@ def analyze_question_intent(question: str, index: SearchIndex | None = None) -> 
             "reason": "keyword:grade_strategy",
         }
         raw_intent = routed.get("raw_intent") or raw_intent
+    if course_name and routed.get("intent") == "course_grade_strategy":
+        grade_target = extract_grade_target(question)
+        if grade_target:
+            entities = dict(routed.get("entities") or routed.get("entity") or {})
+            entities["course_name"] = course_name
+            entities["grade_goal"] = grade_target
+            routed = {**routed, "entities": entities, "entity": entities}
     if course_name and COURSE_DIFFICULTY_RE.search(question or "") and raw_intent != "course_difficulty":
         routed = {
             **routed,
@@ -2618,6 +2658,8 @@ def _context_summary(context: dict[str, Any]) -> str:
     # LLM context
     allowed_keys = (
         "course_name",
+        "intent",
+        "grade_target",
         "title",
         "overview",
         "topics",
@@ -2738,6 +2780,8 @@ ComPass는 학생 대상 공식 정보 안내 서비스입니다.
 공식 데이터와 일반적인 참고 조언을 반드시 구분한다.
 공식 데이터에 없는 학점, 개설 학기, 평가 방식, 시험 범위, 날짜, 규정, URL은 추측하지 않는다.
 공식 데이터에 없는 내용은 “참고용 안내”라고 명확히 표시한다.
+사용자가 목표 성적을 말한 경우 반드시 해당 성적을 기준으로 답변한다.
+A+ 질문을 C 이상 또는 일반 통과 전략으로 바꾸지 않는다.
 인사말과 자기소개를 하지 않는다.
 “안녕하세요”, “ComPass입니다”, “AI 학과 비서입니다” 같은 표현을 사용하지 않는다.
 답변은 바로 본문부터 시작한다.
@@ -3025,19 +3069,30 @@ def is_incomplete_llm_answer(text: str, raw_meta: dict[str, Any] | None = None) 
 def _llm_fallback_template(llm_type: str, context: dict[str, Any], question: str = "") -> dict[str, Any]:
     course_name = context.get("course_name") or detect_course_name(question) or "해당 과목"
     if llm_type == "course_grade_strategy":
-        goal = "C 이상 성적 취득"
-        if re.search(r"A\s*(?:이상|받|맞)", question, re.IGNORECASE):
-            goal = "A 이상 성적 취득"
-        elif re.search(r"B\s*(?:이상|받|맞)", question, re.IGNORECASE):
-            goal = "B 이상 성적 취득"
+        grade_target = context.get("grade_target") or extract_grade_target(question)
+        goal = _grade_goal_text(grade_target)
+        if grade_target == "A+":
+            items = [
+                {"label": "추천 공부법", "value": "기본 개념 암기에서 끝내지 말고 예제를 변형해 직접 구현하고, 오류 원인을 스스로 설명할 수 있을 정도로 연습해 주세요."},
+                {"label": "우선 익혀야 할 내용", "value": "강의 핵심 개념, 코드 해석, 실행 결과 예측, 과제와 형성평가에서 반복되는 유형을 빠짐없이 정리해 주세요."},
+                {"label": "시험 대비 팁", "value": "기출과 연습문제를 반복하면서 서술형, 코드 해석, 결과 예측 문제를 함께 대비해 주세요."},
+            ]
+        elif grade_target:
+            items = [
+                {"label": "추천 공부법", "value": "핵심 개념을 먼저 정리하고 기본 예제를 반복해 안정적으로 점수를 확보하는 방식이 좋습니다."},
+                {"label": "우선 익혀야 할 내용", "value": "교재와 강의에서 반복되는 필수 개념, 대표 예제, 기본 문제 풀이 흐름을 우선 확인해 주세요."},
+                {"label": "시험 대비 팁", "value": "기출이나 예시 문제를 중심으로 최소 학습 범위를 정리하고, 자주 틀리는 유형을 반복해 주세요."},
+            ]
+        else:
+            items = [
+                {"label": "추천 공부법", "value": "용어를 먼저 정리하고, 각 단원의 핵심 개념을 반복해서 확인하는 방식이 좋습니다."},
+                {"label": "우선 익혀야 할 내용", "value": "공식 과목 개요와 강의에서 반복되는 핵심 개념을 중심으로 학습해 주세요."},
+                {"label": "시험 대비 팁", "value": "강의에서 반복되는 개념과 예시 문제를 중심으로 정리하는 것이 도움이 됩니다."},
+            ]
         return {
             "answer": f"{course_name} 과목 {goal}을 위한 학습 안내입니다.",
             "summary": "공식 과목 정보를 바탕으로 일반적인 학습 전략을 참고용으로 안내드립니다.",
-            "items": [
-                {"label": "추천 공부법", "value": "용어를 먼저 정리하고, 각 단원의 핵심 개념을 반복해서 확인하는 방식이 좋습니다."},
-                {"label": "우선 익혀야 할 내용", "value": "탐색, 지식 표현, 추론, 머신러닝, 신경망 등 과목의 기본 개념을 중심으로 학습하세요."},
-                {"label": "시험 대비 팁", "value": "강의에서 반복되는 개념과 예시 문제를 중심으로 정리하는 것이 도움이 됩니다."},
-            ],
+            "items": items,
             "disclaimer": "성적 취득 전략은 공식 보장 기준이 아닌 참고용 학습 안내이며, 평가 방식과 시험 범위는 해당 학기 공지를 확인해야 합니다.",
         }
     if llm_type == "course_difficulty":
@@ -3128,21 +3183,27 @@ def _difficulty_advice_object(course_name: str, item: dict[str, Any], llm_text: 
 def _grade_strategy_fallback(course_name: str, item: dict[str, Any], question: str = "") -> str:
     topics = item.get("topics") or item.get("detail_topics") or []
     topic_lines = "\n".join(f"- {topic}" for topic in topics[:4]) or "- 공식 과목 개요와 강의 핵심 용어"
-    goal = "C 이상 성적 취득"
-    if re.search(r"A\s*(?:이상|받|맞)", question, re.IGNORECASE):
-        goal = "A 이상 성적 취득"
-    elif re.search(r"B\s*(?:이상|받|맞)", question, re.IGNORECASE):
-        goal = "B 이상 성적 취득"
+    grade_target = extract_grade_target(question)
+    goal = _grade_goal_text(grade_target)
+    if grade_target == "A+":
+        study_tip = "기본 문법과 개념 암기에서 끝내지 말고, 예제를 변형해 직접 구현하고 오류 원인을 설명하는 방식으로 학습해 주세요."
+        exam_tip = "기출과 연습문제를 반복하면서 코드 해석, 실행 결과 예측, 서술형 설명까지 함께 대비해 주세요."
+    elif grade_target:
+        study_tip = "핵심 개념을 먼저 정리하고, 기본 예제와 대표 유형을 반복해 안정적으로 점수를 확보하는 방식이 좋습니다."
+        exam_tip = "기출이나 예시 문제를 중심으로 최소 학습 범위를 정리하고 자주 틀리는 유형을 반복해 주세요."
+    else:
+        study_tip = "공식 과목 내용의 핵심 용어를 먼저 정리하고, 강의 흐름에 맞춰 개념을 반복 확인하는 방식이 좋습니다."
+        exam_tip = "기출이나 예시 문제를 볼 때 정답만 외우기보다 개념이 어떤 방식으로 문제화되는지 확인하세요."
     return (
         f"**{course_name} 학습 전략 안내입니다.**\n\n"
         f"과목:\n{course_name}\n\n"
         f"목표:\n{goal}\n\n"
         "추천 공부법:\n"
-        "공식 과목 내용의 핵심 용어를 먼저 정리하고, 강의 흐름에 맞춰 개념을 반복 확인하는 방식이 좋습니다.\n\n"
+        f"{study_tip}\n\n"
         "우선 익혀야 하는 내용:\n"
         f"{topic_lines}\n\n"
         "시험 대비 팁:\n"
-        "기출이나 예시 문제를 볼 때 정답만 외우기보다 개념이 어떤 방식으로 문제화되는지 확인하세요.\n\n"
+        f"{exam_tip}\n\n"
         "주의할 점:\n"
         "성적 취득 전략은 공식 보장 기준이 아닌 참고용 학습 안내입니다. 실제 평가 방식과 범위는 해당 학기 공지와 강의계획을 확인해야 합니다."
     )
@@ -3157,6 +3218,7 @@ def _course_grade_strategy_response(
     session_id: str = "",
     request_id: str = "",
 ) -> dict[str, Any]:
+    grade_target = extract_grade_target(question)
     item = items[0] if items else {
         "course_name": course_name,
         "overview": "공식 교과목 안내에 등록된 과목입니다.",
@@ -3168,12 +3230,14 @@ def _course_grade_strategy_response(
         "topics": item.get("topics") or item.get("detail_topics") or [],
         "source_url": _course_link(item, course_name),
         "fallback_url": COURSE_FULL_GUIDE_URL,
+        "grade_target": grade_target,
+        "intent": "course_grade_strategy",
     }
     answer = call_llm_helper("course_grade_strategy", question, context, session_id=session_id)
     if not answer or answer == LLM_SAFE_FAILURE_MESSAGE:
         answer = _grade_strategy_fallback(course_name, item, question)
     answer = sanitize_public_answer(answer)
-    fallback = _llm_fallback_template("course_grade_strategy", {"course_name": course_name}, question)
+    fallback = _llm_fallback_template("course_grade_strategy", {"course_name": course_name, "grade_target": grade_target}, question)
     labels = ["추천 공부법", "우선 익혀야 할 내용", "시험 대비 팁"]
     strategy_items = _extract_label_items_from_text(answer, labels, fallback["items"])
     source_url = _course_link(item, course_name)
@@ -3195,6 +3259,7 @@ def _course_grade_strategy_response(
         "allow_llm": True,
         "llm_type": "course_grade_strategy",
         "course_name": course_name,
+        "grade_target": grade_target,
         "score": 100 if items else 0,
         "keywords": tokenize(question),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),

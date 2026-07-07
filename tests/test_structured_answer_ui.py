@@ -159,6 +159,10 @@ def test_response_buttons_are_localized_on_language_change() -> None:
     assert '"인공지능": "AI"' in script
     assert "function translateButtonLabel(label = \"\")" in script
     assert "function expandButtonLabel(answerType, totalCount, fallbackLabel = \"\")" in script
+    assert "function dedupeActions(actions = [])" in script
+    assert "function shouldSuppressItemLinks(payload = {})" in script
+    assert '"course_grade_strategy"' in script
+    assert '"course_study_strategy"' in script
     assert "function updateRenderedButtonLabels()" in script
     assert "View All Faculty (${facultyExpandMatch[1]})" in script
     assert "button.dataset.expandButton" in script

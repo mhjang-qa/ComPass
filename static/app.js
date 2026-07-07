@@ -1344,20 +1344,94 @@ function appendExpandButton(container, cards, totalCount, answerType, messageRow
   container.appendChild(button);
 }
 
+function actionUrl(action = {}) {
+  return String(action.url || "").trim();
+}
+
+function actionPriority(action = {}) {
+  const label = String(action.label || "");
+  if (/과목\s*바로가기|^View .+ Course$/i.test(label)) return 3;
+  if (/교과목\s*안내\s*바로가기|View Course Information/i.test(label)) return 2;
+  if (/자세히\s*보기|View Details/i.test(label)) return 1;
+  return 0;
+}
+
+function dedupeActions(actions = []) {
+  const byUrl = new Map();
+  actions.forEach((action) => {
+    if (action.type !== "link" || !actionUrl(action)) return;
+    const key = actionUrl(action);
+    const prev = byUrl.get(key);
+    if (!prev || actionPriority(action) > actionPriority(prev)) {
+      byUrl.set(key, action);
+    }
+  });
+  return Array.from(byUrl.values());
+}
+
+function itemLinkUrl(item = {}, fallbackUrl = "") {
+  return item.source_url || item.fallback_url || fallbackUrl || "";
+}
+
+function courseSingleLinkAnswer(answerType = "") {
+  return new Set([
+    "course_grade_strategy",
+    "course_difficulty",
+    "course_detail",
+    "course_study_strategy",
+    "course_study_advice",
+  ]).has(answerType);
+}
+
+function collectLinkUrls(payload = {}) {
+  const urls = [];
+  (payload.items || []).forEach((item) => {
+    urls.push(itemLinkUrl(item, payload.source_urls?.[0]));
+    urls.push(item.homepage_url);
+    (item.actions || []).forEach((action) => urls.push(action.url));
+  });
+  (payload.actions || []).forEach((action) => urls.push(action.url));
+  (payload.source_urls || []).forEach((url) => urls.push(url));
+  (payload.sources || []).forEach((source) => urls.push(source.url));
+  return urls.map((url) => String(url || "").trim()).filter(Boolean);
+}
+
+function shouldSuppressItemLinks(payload = {}) {
+  if (!courseSingleLinkAnswer(payload.answer_type)) return false;
+  return new Set(collectLinkUrls(payload)).size <= 1;
+}
+
+function fallbackCourseAction(payload = {}) {
+  const url = collectLinkUrls(payload)[0];
+  if (!url) return null;
+  const courseName = payload.course_name || payload.items?.[0]?.course_name || payload.items?.[0]?.title || "";
+  return {
+    type: "link",
+    label: courseName ? `${courseName} 과목 바로가기` : I18N.ko.buttons.details,
+    url,
+  };
+}
+
 function appendActionLinks(container, payload) {
+  const suppressItemLinks = shouldSuppressItemLinks(payload);
   const itemUrls = new Set((payload.items || []).flatMap((item) => [
     item.homepage_url,
+    item.source_url,
+    item.fallback_url,
     ...(item.actions || []).map((action) => action.url),
-  ]).filter(Boolean));
+  ]).map((url) => String(url || "").trim()).filter(Boolean));
   const seen = new Set();
-  const links = (payload.actions || []).filter((action) => {
+  const rawLinks = (payload.actions || []).filter((action) => {
     if (action.type !== "link" || !action.url) return false;
-    if (itemUrls.has(action.url) || /professor\.knou\.ac\.kr/i.test(action.url)) return false;
+    const url = actionUrl(action);
+    if (!suppressItemLinks && (itemUrls.has(url) || /professor\.knou\.ac\.kr/i.test(url))) return false;
     const key = `${action.label || ""}|${action.url}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  const fallback = suppressItemLinks && !rawLinks.length ? fallbackCourseAction(payload) : null;
+  const links = dedupeActions(fallback ? [...rawLinks, fallback] : rawLinks);
   if (!links.length) return;
   const actions = document.createElement("div");
   actions.className = "answer-actions";
@@ -1475,6 +1549,7 @@ function renderGenericItems(bubble, payload, messageRow) {
   }
   const list = document.createElement("div");
   list.className = "answer-card-list";
+  const suppressItemLinks = shouldSuppressItemLinks(payload);
   const cards = payload.items.map((item) => {
     const card = document.createElement("article");
     card.className = "answer-card";
@@ -1527,7 +1602,9 @@ function renderGenericItems(bubble, payload, messageRow) {
       summary.textContent = item.summary.length > 500 ? `${item.summary.slice(0, 500)}…` : item.summary;
       card.appendChild(summary);
     }
-    appendItemLink(card, item, payload.source_urls?.[0], "자세히 보기");
+    if (!suppressItemLinks) {
+      appendItemLink(card, item, payload.source_urls?.[0], "자세히 보기");
+    }
     list.appendChild(card);
     return card;
   });

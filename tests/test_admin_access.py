@@ -72,3 +72,16 @@ def test_widget_admin_mode_keeps_active_admin_panel_visible() -> None:
     assert ".widget-window.admin-mode .section-actions" in style
     assert ".widget-window.admin-mode table" in style
     assert "min-width: 620px" in style
+
+
+def test_widget_authenticated_header_actions_fit_pip_width() -> None:
+    style = (main.BASE_DIR / "static" / "style.css").read_text(encoding="utf-8")
+    html = (main.BASE_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+
+    assert "style.css?v=23" in html
+    assert "width: min(500px, calc(100vw - 24px))" in style
+    assert ".widget-window .admin-logout" in style
+    assert "width: 42px !important" in style
+    assert ".widget-window .logout-full { display: none; }" in style
+    assert ".widget-window .logout-short { display: inline; }" in style
+    assert ".widget-window .language-menu select { width: 82px" in style

@@ -597,6 +597,69 @@ th { color: var(--muted); font-size: .77rem; }
 .widget-window > main { overflow: hidden; }
 .widget-window .panel { display: none !important; }
 .widget-window #panel-chat { display: block !important; padding: 12px; }
+.widget-window.admin-mode > main { min-height: 0; overflow: hidden; }
+.widget-window.admin-mode .panel { display: none !important; }
+.widget-window.admin-mode .panel.active {
+  display: block !important;
+  height: 100%;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.widget-window.admin-mode #panel-chat { display: none !important; }
+.widget-window.admin-mode .section-head,
+.widget-window.admin-mode .admin-auth,
+.widget-window.admin-mode .search-test {
+  align-items: stretch;
+  flex-direction: column;
+}
+.widget-window.admin-mode .section-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.widget-window.admin-mode .section-actions button,
+.widget-window.admin-mode .primary {
+  width: 100%;
+  min-height: 40px;
+  padding-inline: 12px;
+}
+.widget-window.admin-mode .admin-auth,
+.widget-window.admin-mode .status-card,
+.widget-window.admin-mode .table-card,
+.widget-window.admin-mode .search-test,
+.widget-window.admin-mode .result-card,
+.widget-window.admin-mode .metric {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 14px;
+}
+.widget-window.admin-mode .admin-auth label {
+  justify-content: space-between;
+}
+.widget-window.admin-mode .admin-auth input,
+.widget-window.admin-mode .admin-auth select {
+  min-width: 0;
+  width: min(220px, 58%);
+}
+.widget-window.admin-mode .crawl-policy { min-width: 0; }
+.widget-window.admin-mode .crawl-policy ul,
+.widget-window.admin-mode .metric-grid,
+.widget-window.admin-mode .admin-form-grid,
+.widget-window.admin-mode .icon-admin-grid {
+  grid-template-columns: 1fr;
+}
+.widget-window.admin-mode .progress-meta {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+.widget-window.admin-mode table {
+  min-width: 620px;
+  font-size: .82rem;
+}
 .widget-window .chat-layout { max-width: none; border: 0; border-radius: 16px; box-shadow: none; }
 .widget-window .messages {
   padding: 14px;

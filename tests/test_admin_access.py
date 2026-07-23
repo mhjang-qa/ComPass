@@ -62,3 +62,13 @@ def test_mobile_admin_scroll_and_two_line_subtitle_contract() -> None:
     assert "APP_DEFAULTS" in script
     legacy_subtitle = "Computer Science + Compass" + " · 학생들의 길잡이"
     assert legacy_subtitle not in html + config + style + script
+
+
+def test_widget_admin_mode_keeps_active_admin_panel_visible() -> None:
+    style = (main.BASE_DIR / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert ".widget-window.admin-mode .panel.active" in style
+    assert ".widget-window.admin-mode #panel-chat { display: none !important; }" in style
+    assert ".widget-window.admin-mode .section-actions" in style
+    assert ".widget-window.admin-mode table" in style
+    assert "min-width: 620px" in style

@@ -12,6 +12,38 @@ from notion_client import NotionClient, normalize_id, rich_text
 logger = logging.getLogger(__name__)
 
 
+def display_answer_text(result: dict[str, Any]) -> str:
+    answer = sanitize_input(str(result.get("answer") or ""), 500)
+    summary = sanitize_input(str(result.get("summary") or ""), 500)
+    lines = [answer] if answer else []
+    if summary and summary != answer:
+        lines.append(summary)
+    for item in (result.get("items") or [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        title = sanitize_input(str(item.get("title") or item.get("course_name") or ""), 160)
+        if not title:
+            continue
+        detail = sanitize_input(
+            str(
+                item.get("description")
+                or item.get("summary")
+                or item.get("feature_summary")
+                or ""
+            ),
+            220,
+        )
+        date_text = " ~ ".join(
+            part for part in (str(item.get("start_date") or ""), str(item.get("end_date") or ""))
+            if part
+        )
+        prefix = f"- {title}"
+        if date_text:
+            prefix = f"{prefix} ({date_text})"
+        lines.append(f"{prefix}: {detail}" if detail else prefix)
+    return "\n".join(dict.fromkeys(line for line in lines if line))[:1800]
+
+
 def record_interaction(question: str, result: dict[str, Any]) -> None:
     client = NotionClient()
     client.ensure_stats_schema()
@@ -42,7 +74,7 @@ def record_interaction(question: str, result: dict[str, Any]) -> None:
             },
             "검색결과유무": {"checkbox": bool(result.get("sources"))},
             "응답방식": {"select": {"name": mode if mode in {"DB검색", "LLM"} else "시스템"}},
-            "답변내용": {"rich_text": rich_text(result.get("answer", ""))},
+            "답변내용": {"rich_text": rich_text(display_answer_text(result))},
             "참조URL": {"rich_text": rich_text(reference_urls)},
             "응답시간": {"number": float(result.get("elapsed_ms") or 0)},
             "검색점수": {"number": float(result.get("score") or 0)},

@@ -331,6 +331,7 @@ OUT_OF_SCOPE_PATTERNS = re.compile(
 SCOPE_PATTERNS = re.compile(
     r"방송대|한국방송통신대|knou|컴퓨터과학과|컴과|학과|교수|교과|과목|수강|"
     r"졸업|시험|과제|공지|일정|학사|입학|편입|장학|등록금|학생회|스터디|게시판|faq|"
+    r"경진\s*대회|공모전|총장배|소프트웨어\s*경진|"
     r"지역대학|지역\s*대학|캠퍼스|학습관|방통대\s*위치|방송대\s*위치|주소|찾아가는\s*길|"
     r"자격증|정보처리기사|sqld|데이터베이스|curriculum|course|professor|faculty|notice|"
     r"announcement|schedule|calendar|graduation|degree|department|exam|pdf",

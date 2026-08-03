@@ -528,44 +528,54 @@ def extract_schedule_items(text: str) -> list[dict[str, str]]:
 
     year_match = re.search(r"(20\d{2})\s*년", text)
     default_year = int(year_match.group(1)) if year_match else datetime.now().year
-    pattern = re.compile(
+    pipe_pattern = re.compile(
         r"(?P<start>\d{1,2}\.\d{1,2})"
         r"(?:\s*~\s*(?P<end>\d{1,2}\.\d{1,2}))?"
         r"\s*\|\s*(?P<title>[^\n|]+)"
     )
+    loose_pattern = re.compile(
+        r"^\s*(?:(?P<year>20\d{2})[.\-년/\s]+)?"
+        r"(?P<start>\d{1,2}[./]\d{1,2})"
+        r"(?:\s*(?:~|-|–|—)\s*(?P<end>\d{1,2}[./]\d{1,2}))?"
+        r"\s*(?:\||:|-|–|—)?\s*(?P<title>[가-힣A-Za-z0-9][^\n|]{2,})$",
+        re.MULTILINE,
+    )
     items: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
 
-    for match in pattern.finditer(text):
-        raw_title = clean_text(match.group("title")).strip("-· ")
+    def add_item(raw_start: str, raw_end: str | None, raw_title: str, year_hint: int | None = None) -> None:
+        raw_title = clean_text(raw_title).strip("-· ")
         if not raw_title:
-            continue
+            return
         title_year = re.search(r"(20\d{2})", raw_title)
-        year = int(title_year.group(1)) if title_year else default_year
-        title = re.sub(r"^20\d{2}[.\s년]*", "", raw_title).strip() or raw_title
+        year = year_hint or (int(title_year.group(1)) if title_year else default_year)
+        title = re.sub(r"^20\d{2}(?:[.\s]+|년\s*)", "", raw_title).strip() or raw_title
+        if re.search(r"^(SUN|MON|TUE|WED|THU|FRI|SAT|월간\s*일정|일정)$", title, re.IGNORECASE):
+            return
 
         def to_iso(value: str, target_year: int) -> str:
-            month, day = (int(part) for part in value.split(".", 1))
+            normalized = value.replace("/", ".")
+            month, day = (int(part) for part in normalized.split(".", 1))
             return datetime(target_year, month, day).date().isoformat()
 
         try:
-            start_date = to_iso(match.group("start"), year)
-            end_raw = match.group("end")
+            start_date = to_iso(raw_start, year)
+            end_raw = raw_end
             end_year = year
             if end_raw:
-                start_month = int(match.group("start").split(".", 1)[0])
-                end_month = int(end_raw.split(".", 1)[0])
+                start_month = int(raw_start.replace("/", ".").split(".", 1)[0])
+                end_month = int(end_raw.replace("/", ".").split(".", 1)[0])
                 if end_month < start_month:
                     end_year += 1
                 end_date = to_iso(end_raw, end_year)
             else:
                 end_date = start_date
         except ValueError:
-            continue
+            return
 
         key = (title, start_date, end_date)
         if key in seen:
-            continue
+            return
         seen.add(key)
         items.append(
             {
@@ -576,6 +586,12 @@ def extract_schedule_items(text: str) -> list[dict[str, str]]:
                 "category": "학과일정",
             }
         )
+
+    for match in pipe_pattern.finditer(text):
+        add_item(match.group("start"), match.group("end"), match.group("title"))
+    for match in loose_pattern.finditer(text):
+        year_hint = int(match.group("year")) if match.group("year") else None
+        add_item(match.group("start"), match.group("end"), match.group("title"), year_hint)
     return items
 
 

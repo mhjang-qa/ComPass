@@ -283,6 +283,9 @@ def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]]
     if re.search(r"편입생|편입|직장인|처음|어떤\s*과목부터|과목\s*추천|수강\s*순서|로드맵|듣기\s*좋은|듣기\s*쉬운", normalized):
         return _result("course_roadmap", 0.88, entities, normalized, "수강 로드맵/추천 질문")
 
+    if re.search(r"경진\s*대회|공모전|총장배|소프트웨어\s*경진", normalized, re.IGNORECASE):
+        return _result("notice", 0.9, entities, normalized, "경진대회/공모전 공지 질문")
+
     configured_intent, confidence, reason = _match_configured_intent(normalized)
     if configured_intent:
         if configured_intent == "faculty":

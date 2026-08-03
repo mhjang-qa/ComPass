@@ -2,6 +2,7 @@ from pathlib import Path
 
 from chatbot import answer_question
 from crawler import extract_schedule_items
+from stats import display_answer_text
 
 
 class FakeIndex:
@@ -41,6 +42,26 @@ def test_notice_answer_is_summary_first_without_raw_metadata() -> None:
     assert result["items"][0]["link_label"] == "공지 바로가기"
 
 
+def test_competition_question_routes_to_notice_answer() -> None:
+    hits = [
+        {
+            "title": "2026 총장배 소프트웨어경진대회",
+            "category": "공지사항",
+            "published_at": "2026-05-20",
+            "body": "참가 신청과 작품 제출 일정을 안내합니다. 자세한 내용은 공식 공지를 확인해 주세요.",
+            "source_url": "https://cs.knou.ac.kr/bbs/cs1/2119/799004/artclView.do",
+            "score": 95,
+        }
+    ]
+
+    result = answer_question("소프트웨어 경진대회", index=FakeIndex(hits))
+
+    assert result["answer_type"] == "notice_list"
+    assert result["items"][0]["title"] == "2026 총장배 소프트웨어경진대회"
+    assert result["sources"][0]["url"].endswith("799004/artclView.do")
+    assert result["answer_type"] != "out_of_scope"
+
+
 def test_schedule_parser_and_answer_hide_calendar_raw_text() -> None:
     raw = """
     월간 일정 2026년
@@ -70,6 +91,52 @@ def test_schedule_parser_and_answer_hide_calendar_raw_text() -> None:
     assert all("SUN" not in str(item) for item in result["items"])
     assert result["actions"][-1]["label"] == "학과 일정 바로가기"
     assert result["actions"][-1]["url"] == "https://cs.knou.ac.kr/cs1/4812/subview.do"
+
+
+def test_schedule_answer_extracts_loose_saved_schedule_lines() -> None:
+    raw = """
+    학과일정 2026년
+    08.04 - 08.08 2학기 수강신청
+    09.01 2026학년도 2학기 개강
+    """
+
+    hits = [
+        {
+            "title": "학과일정",
+            "category": "학과일정",
+            "body": raw,
+            "source_url": "https://cs.knou.ac.kr/cs1/4812/subview.do",
+            "score": 99,
+        }
+    ]
+    result = answer_question("컴퓨터과학과 학과 일정을 알려줘", index=FakeIndex(hits))
+
+    assert result["answer_type"] == "schedule_list"
+    assert result["items"]
+    assert result["items"][0]["title"] == "2026학년도 2학기 개강"
+    assert result["items"][1]["title"] == "2학기 수강신청"
+    assert "저장된 최신 일정 데이터가 부족" not in result["summary"]
+
+
+def test_stats_answer_text_includes_structured_items() -> None:
+    text = display_answer_text(
+        {
+            "answer": "학과 일정 안내입니다.",
+            "summary": "컴퓨터과학과 주요 학과 일정 3건을 안내드립니다.",
+            "items": [
+                {
+                    "title": "2학기 수강신청",
+                    "start_date": "2026-08-04",
+                    "end_date": "2026-08-08",
+                    "description": "수강신청 기간입니다.",
+                }
+            ],
+        }
+    )
+
+    assert "학과 일정 안내입니다." in text
+    assert "2학기 수강신청" in text
+    assert "2026-08-04" in text
 
 
 def test_schedule_answer_rejects_non_official_schedule_sources() -> None:

@@ -21,6 +21,7 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("컴퓨터 과학과 교수님") == "faculty"
     assert classify_intent("컴퓨터과학과 교육과정을 알려줘") == "course_table"
     assert classify_intent("컴퓨터과학과 최근 공지를 알려줘") == "notice_list"
+    assert classify_intent("소프트웨어 경진대회") == "notice_list"
     assert classify_intent("컴퓨터과학과 학과 일정을 알려줘") == "schedule_list"
     assert classify_intent("편입생 과목 추천") == "course_recommendation"
     assert classify_intent("인공지능은 무슨 과목이야?") == "course_detail"

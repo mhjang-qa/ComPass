@@ -39,6 +39,7 @@ const INDEX_LOADING_MAX_RETRIES = 3;
 const INDEX_LOADING_DEFAULT_DELAY_MS = 1500;
 const SERVER_WAKE_TIMEOUT_MS = 10000;
 const LLM_TIMEOUT_MS = 60000;
+const DEBUG_CHAT_LOGS = Boolean(APP_CONFIG.DEBUG_CHAT_LOGS);
 const SERVER_DELAY_NOTICE_ATTEMPTS = 20;
 const SERVER_READY_INTERVAL_MS = 2000;
 const TYPING_SPEED_MS = 12;
@@ -2187,7 +2188,7 @@ async function sendQuestion(raw, options = {}) {
   }
   window.chatSubmitting = true;
   const requestId = newRequestId();
-  console.log("[CHAT_REQUEST]", requestId, question, allowLlm);
+  if (DEBUG_CHAT_LOGS) console.debug("[CHAT_REQUEST]", requestId, allowLlm);
   const duplicateController = pendingByQuestion.get(question);
   if (duplicateController && !allowLlm) {
     duplicateController.abort();
@@ -2226,8 +2227,10 @@ async function sendQuestion(raw, options = {}) {
           context,
         }),
       });
-      console.log("[CHAT_RESPONSE]", requestId, result?.answer_type || result?.status || "");
-      console.log("[REQUEST]", result?.request_id || requestId, result?.answer_type || result?.status || "");
+      if (DEBUG_CHAT_LOGS) {
+        console.debug("[CHAT_RESPONSE]", requestId, result?.answer_type || result?.status || "");
+        console.debug("[REQUEST]", result?.request_id || requestId, result?.answer_type || result?.status || "");
+      }
       if (isColdStartCondition(result)) {
         rememberPendingChatRequest(question, { allowLlm, llmType, context, skipUserBubble: true });
         waiting.remove();

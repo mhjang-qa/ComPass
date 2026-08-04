@@ -83,6 +83,7 @@ CAMPUS_LOCATION_WITH_PLACE_RE = re.compile(
     re.IGNORECASE,
 )
 GRADUATION_RE = re.compile(r"졸업|졸업\s*요건|졸업\s*학점|학위|graduation|degree", re.IGNORECASE)
+TRANSFER_CREDIT_RE = re.compile(r"편입(?:생|학)?(?:의|은|는)?\s*인정\s*학점|인정\s*학점|편입(?:생|학)?.*몇\s*학점|편입(?:생|학)?.*학점\s*인정", re.IGNORECASE)
 
 
 def is_campus_location_query(question: str) -> bool:
@@ -279,6 +280,9 @@ def detect_intent(question: str, catalogs: dict[str, Any] | list[dict[str, Any]]
         return _result("course_grade_strategy", 0.93, entities, normalized, "성적 목표/학습 전략 질문")
     if course_name and re.search(r"선수\s*지식|선수\s*과목|듣기\s*전|전에\s*뭐|먼저|수강\s*순서|학습\s*순서", normalized):
         return _result("course_order", 0.9, entities, normalized, "선수지식/수강순서 질문")
+
+    if TRANSFER_CREDIT_RE.search(normalized):
+        return _result("graduation", 0.92, entities, normalized, "편입생 인정학점 질문")
 
     if re.search(r"편입생|편입|직장인|처음|어떤\s*과목부터|과목\s*추천|수강\s*순서|로드맵|듣기\s*좋은|듣기\s*쉬운", normalized):
         return _result("course_roadmap", 0.88, entities, normalized, "수강 로드맵/추천 질문")

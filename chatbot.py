@@ -101,6 +101,8 @@ SCHEDULE_BAD_RE = re.compile(r"벼룩시장|학생광장|중고장터|자유게�
 SCHEDULE_ALLOWED_CATEGORIES = {"학과일정", "학사일정", "공지사항"}
 SCHEDULE_KEYWORD_RE = re.compile(r"일정|학사|수강신청|기말|중간|형성평가|시험|평가|등록|휴학|복학|마감|신청", re.IGNORECASE)
 SCHEDULE_DETAIL_RE = re.compile(r"^https://cs\.knou\.ac\.kr/bbs/cs1/.+/artclView\.do", re.IGNORECASE)
+OTHER_DEPARTMENT_NOTICE_RE = re.compile(r"^\[[^\]]*학과\](?!\s*컴퓨터과학과)|^\[[^\]]*(?:중어|보건환경|국문|영문|법학|행정|경제|경영|무역|미디어|관광|농학|통계|간호|교육|청소년|유아|문화교양)[^\]]*\]")
+GENERIC_NOTICE_QUERY_RE = re.compile(r"^(?:컴퓨터과학과|학과)?\s*(?:최근|최신|새)?\s*공지(?:사항)?[를은]?\s*(?:알려줘|안내|확인|)$")
 EXAM_SCOPE_RE = re.compile(r"시험\s*범위|시험범위|중간(?:고사)?\s*범위|기말(?:고사)?\s*범위|출석수업\s*시험\s*범위|과제\s*범위|시험\s*(어디까지|몇\s*장)", re.IGNORECASE)
 EXAM_SCOPE_EVIDENCE_RE = re.compile(r"시험\s*범위|시험범위|중간(?:고사)?\s*범위|기말(?:고사)?\s*범위|출석수업\s*시험\s*범위|과제\s*범위|강의계획서|평가정보", re.IGNORECASE)
 UNSUPPORTED_EXAM_SCOPE_RE = re.compile(r"13\s*~\s*15|13장|14장|15장|compass-database-exam-range", re.IGNORECASE)
@@ -226,6 +228,7 @@ COURSE_RECOMMENDATION_RE = re.compile(
     r"부담\s*적은\s*과목|난이도\s*낮은\s*과목|수강하기\s*좋은\s*과목|들을\s*만한\s*과목",
     re.IGNORECASE,
 )
+TRANSFER_CREDIT_RE = re.compile(r"편입(?:생|학)?(?:의|은|는)?\s*인정\s*학점|인정\s*학점|편입(?:생|학)?.*몇\s*학점|편입(?:생|학)?.*학점\s*인정", re.IGNORECASE)
 COURSE_DETAIL_RE = re.compile(
     r"(무슨|어떤)\s*과목|과목\s*(이야|인가요|소개|내용)|"
     r"무엇을\s*배우|뭘\s*배우|뭐\s*배우|뭐야|뭐임|배우는\s*과목|과목\s*설명|수업\s*내용",
@@ -605,6 +608,8 @@ def is_out_of_scope(question: str) -> bool:
 
 
 def is_course_recommendation(question: str) -> bool:
+    if TRANSFER_CREDIT_RE.search(question or ""):
+        return False
     return bool(COURSE_RECOMMENDATION_RE.search(question))
 
 
@@ -1477,9 +1482,10 @@ def build_priority_intent_response(
         )
     if intent == "notice_list":
         hits = retrieve_documents(index, question, "notice_list")
-        hits = _supplement_notice_hits(index, hits)
+        hits = _notice_hits_for_question(index, hits, question)
         items = normalize_results("notice_list", hits, question)
-        items.sort(key=lambda item: (item.get("date") or "", item.get("title") or ""), reverse=True)
+        if _is_generic_notice_query(question):
+            items.sort(key=lambda item: (item.get("date") or "", item.get("title") or ""), reverse=True)
         if not items:
             return build_notice_empty_response(started=started, keywords=keywords)
         response = build_structured_response(
@@ -1495,7 +1501,7 @@ def build_priority_intent_response(
             started=started,
         )
         response["answer"] = "컴퓨터과학과 최근 공지 안내입니다."
-        response["summary"] = "컴퓨터과학과 최근 공지 3건을 안내드립니다."
+        response["summary"] = f"컴퓨터과학과 최근 공지 {min(len(items), 3)}건을 안내드립니다."
         response["structured_intent"] = "recent_notice"
         response["search_scope"] = ["notice"]
         return response
@@ -2074,6 +2080,78 @@ def _supplement_notice_hits(index: SearchIndex, hits: list[dict[str, Any]]) -> l
     ]
     extra.sort(key=_document_date_sort_key, reverse=True)
     return [*hits, *extra]
+
+
+def _is_other_department_notice(hit: dict[str, Any]) -> bool:
+    title = hit.get("title") or ""
+    if OTHER_DEPARTMENT_NOTICE_RE.search(title):
+        return True
+    body_head = (hit.get("body") or hit.get("summary") or "")[:300]
+    return bool(
+        re.search(r"(?:중어중문|보건환경안전|국어국문|영어영문|법학|행정|경제|경영|무역|미디어영상|관광|농학|통계|간호|교육|청소년|유아|문화교양)학과", body_head)
+        and "컴퓨터과학과" not in f"{title} {body_head}"
+    )
+
+
+def _is_notice_listing_hit(hit: dict[str, Any]) -> bool:
+    source_url = hit.get("source_url") or ""
+    return (
+        (source_url == NOTICE_URL and hit.get("document_type") != "게시물")
+        or hit.get("document_type") == "게시판목록"
+    )
+
+
+def _is_generic_notice_query(question: str) -> bool:
+    compact = re.sub(r"\s+", "", question or "")
+    return bool(GENERIC_NOTICE_QUERY_RE.search(compact))
+
+
+def _notice_hits_for_question(index: SearchIndex, hits: list[dict[str, Any]], question: str) -> list[dict[str, Any]]:
+    primary = [hit for hit in hits if not _is_other_department_notice(hit) and not _is_notice_listing_hit(hit)]
+    if _is_generic_notice_query(question):
+        supplemented = _supplement_notice_hits(index, primary)
+        return [
+            hit
+            for hit in supplemented
+            if not _is_other_department_notice(hit) and not _is_notice_listing_hit(hit)
+        ]
+    specific_tokens = [
+        token
+        for token in tokenize(question)
+        if token not in {"최근", "최신", "공지", "공지사항", "알림", "컴퓨터과학과", "학과"}
+    ]
+    if specific_tokens:
+        narrowed = []
+        for hit in primary:
+            text = re.sub(
+                r"\s+",
+                "",
+                " ".join(
+                    str(hit.get(field) or "")
+                    for field in ("title", "summary", "body", "search_text", "category")
+                ).lower(),
+            )
+            token_matches = [
+                re.sub(r"\s+", "", token.lower()) in text
+                for token in specific_tokens
+            ]
+            if all(token_matches) if len(token_matches) > 1 else any(token_matches):
+                narrowed.append(hit)
+        if narrowed:
+            return narrowed
+    if primary:
+        return primary
+    seen = {hit.get("source_url") or hit.get("title") for hit in primary}
+    extras = [
+        doc
+        for doc in _index_documents(index)
+        if (doc.get("source_url") or doc.get("title")) not in seen
+        and validate_notice_document(doc)
+        and not _is_other_department_notice(doc)
+        and not _is_notice_listing_hit(doc)
+    ]
+    extras.sort(key=_document_date_sort_key, reverse=True)
+    return [*primary, *extras]
 
 
 def _supplement_schedule_hits(index: SearchIndex, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -93,8 +93,10 @@ REQUIRED_DOCUMENT_URLS = (
     "https://cs.knou.ac.kr/cs1/4812/subview.do",
 )
 COURSE_GUIDE_URL = "https://cs.knou.ac.kr/cs1/4791/subview.do"
+NOTICE_URL = config.NOTICE_URL
 SCHEDULE_URL = config.SCHEDULE_URL
 COURSE_DETAIL_ENDPOINT = "https://cs.knou.ac.kr/learningInformation/cs1/view.do"
+BOARD_ARTICLE_RE = re.compile(r"/bbs/cs1/\d+/\d+/artclView\.do", re.IGNORECASE)
 
 
 def course_detail_url(spec: dict[str, str]) -> str:
@@ -166,7 +168,7 @@ def is_static_document_record(record: dict[str, Any]) -> bool:
     marker = f"{url} {category} {title} {document_type}"
     if document_type in STATIC_DOCUMENT_TYPES and document_type not in BOARD_DOCUMENT_TYPES:
         return True
-    if any(path in url for path in ("/4786/", "/4789/", "/4791/", "/4792/", "/4812/")):
+    if any(path in url for path in ("/4786/", "/4789/", "/4791/", "/4792/")):
         return True
     if STATIC_CATEGORY_HINT_RE.search(marker) and not BOARD_CATEGORY_HINT_RE.search(marker):
         return True
@@ -240,9 +242,10 @@ def classify_data_tier(record: dict[str, Any], today: date | None = None) -> dic
 
     compact_body = re.sub(r"\s+", "", body)
     is_document_resource = document_type in {"pdf", "synap", "기출문제", "시험자료", "교과목자료", "공지자료", "학과자료"} or DOCUMENT_URL_RE.search(url)
+    is_notice_summary = bool("공지" in marker and (body or record.get("summary")))
     is_noise = (
         title in {"", "제목 없음"}
-        or (is_board_document_record(record) and len(compact_body) < 100 and not IMPORTANT_ARCHIVE_HINT_RE.search(full_text))
+        or (is_board_document_record(record) and len(compact_body) < 100 and not is_notice_summary and not IMPORTANT_ARCHIVE_HINT_RE.search(full_text))
         or bool(NOISE_HINT_RE.search(clean_text(body)))
     ) and not is_document_resource
     if is_noise:
@@ -634,6 +637,8 @@ class KnouCrawler:
         self.max_pages = max_pages
         self.delay = max(delay, 0.2)
         self.max_depth = max(0, max_depth)
+        self.started_at = 0.0
+        self.stopped_by_time_limit = False
         configured_prefixes = {
             prefix.strip()
             for prefix in config.ALLOWED_PATH_PREFIX.split(",")
@@ -662,6 +667,7 @@ class KnouCrawler:
             "TEMPORARY": 0,
             "IMPORTANT_ARCHIVE": 0,
             "NOISE": 0,
+            "time_limited": 0,
         }
 
     def _ensure_stats(self) -> dict[str, int]:
@@ -679,6 +685,7 @@ class KnouCrawler:
                 "TEMPORARY": 0,
                 "IMPORTANT_ARCHIVE": 0,
                 "NOISE": 0,
+                "time_limited": 0,
             }
         return self.stats
 
@@ -714,6 +721,8 @@ class KnouCrawler:
 
     def crawl(self, progress: Callable[[dict[str, Any]], None] | None = None) -> list[CrawlDocument]:
         self._ensure_stats()
+        self.started_at = time.monotonic()
+        self.stopped_by_time_limit = False
         seed_urls = [self.start_url, *REQUIRED_DOCUMENT_URLS]
         queue = deque((url, 0) for url in dict.fromkeys(seed_urls))
         enqueued: set[str] = set(seed_urls)
@@ -721,6 +730,18 @@ class KnouCrawler:
         documents: list[CrawlDocument] = []
 
         while queue and len(seen) < self.max_pages:
+            if self._time_limit_reached():
+                self.stopped_by_time_limit = True
+                self.stats["time_limited"] = 1
+                logger.warning(
+                    "[CRAWL_TIME_LIMIT] elapsed=%.1fs max=%ss visited=%d queued=%d documents=%d",
+                    time.monotonic() - self.started_at,
+                    config.CRAWL_MAX_SECONDS,
+                    len(seen),
+                    len(queue),
+                    len(documents),
+                )
+                break
             url, depth = queue.popleft()
             if url in seen or not self.is_allowed(url):
                 continue
@@ -769,6 +790,52 @@ class KnouCrawler:
                     for detail_document in detail_documents:
                         if detail_document.data_tier in DATA_TIERS:
                             self.stats[detail_document.data_tier] += 1
+                if self._is_notice_board_seed_url(url) and config.CRAWL_NOTICE_DETAIL_LIMIT:
+                    detail_links = [
+                        link
+                        for link in discovered_links
+                        if self._is_board_article_url(link) and link not in seen
+                    ][: config.CRAWL_NOTICE_DETAIL_LIMIT]
+                    for detail_index, detail_url in enumerate(detail_links, start=1):
+                        if self._time_limit_reached():
+                            self.stopped_by_time_limit = True
+                            self.stats["time_limited"] = 1
+                            break
+                        seen.add(detail_url)
+                        try:
+                            detail_response = self.session.get(
+                                detail_url,
+                                timeout=config.CRAWL_TIMEOUT_SECONDS,
+                            )
+                            detail_response.raise_for_status()
+                            detail_response.encoding = detail_response.apparent_encoding or detail_response.encoding
+                            detail_document = self._parse_page(
+                                detail_url,
+                                BeautifulSoup(detail_response.text, "lxml"),
+                            )
+                            if detail_document and detail_document.body:
+                                documents.append(detail_document.finalize())
+                                self.stats["collected"] = len(documents)
+                                if detail_document.data_tier in DATA_TIERS:
+                                    self.stats[detail_document.data_tier] += 1
+                            if progress:
+                                progress(
+                                    {
+                                        "visited": len(seen),
+                                        "queued": len(queue),
+                                        "documents": len(documents),
+                                        "depth": depth,
+                                        "max_depth": self.max_depth,
+                                        "url": detail_url,
+                                        "percent": min(94, max(2, round(len(seen) / self.max_pages * 100))),
+                                        **self.stats,
+                                    }
+                                )
+                        except requests.RequestException as exc:
+                            logger.warning("공지 상세 수집 실패 url=%s error=%s", detail_url, exc)
+                        except Exception:
+                            logger.exception("공지 상세 파싱 실패 url=%s", detail_url)
+                        time.sleep(self.delay)
                 if depth < self.max_depth:
                     for link in discovered_links:
                         if link not in seen and link not in enqueued:
@@ -799,12 +866,20 @@ class KnouCrawler:
 
         self.save_snapshot(documents, config.CRAWL_SNAPSHOT_PATH)
         logger.info(
-            "크롤링 완료: 최대깊이=%d 방문=%d 문서=%d",
+            "크롤링 완료: 최대깊이=%d 방문=%d 문서=%d 시간제한=%s",
             self.max_depth,
             len(seen),
             len(documents),
+            self.stopped_by_time_limit,
         )
         return documents
+
+    def _time_limit_reached(self) -> bool:
+        return bool(
+            config.CRAWL_MAX_SECONDS
+            and self.started_at
+            and time.monotonic() - self.started_at >= config.CRAWL_MAX_SECONDS
+        )
 
     def fetch_document(self, url: str) -> CrawlDocument | None:
         # 필수 페이지
@@ -842,6 +917,36 @@ class KnouCrawler:
                 links.append(candidate)
         links.extend(self._extract_board_page_links(current_url, soup))
         return list(dict.fromkeys(links))
+
+    @staticmethod
+    def _is_board_article_url(url: str) -> bool:
+        return bool(BOARD_ARTICLE_RE.search(url or ""))
+
+    @staticmethod
+    def _is_resource_document_url(url: str) -> bool:
+        path = urlsplit(url or "").path.lower()
+        return (
+            "/synap/skin/doc.html" in path
+            or "/synap/result/" in path
+            or path.endswith(".pdf")
+        )
+
+    @staticmethod
+    def _is_notice_board_seed_url(url: str) -> bool:
+        normalized = normalize_url(url)
+        notice = normalize_url(NOTICE_URL)
+        path = urlsplit(normalized).path
+        return (
+            bool(notice and normalized.startswith(notice))
+            or bool(re.search(r"/bbs/cs1/\d+/artclList\.do", path, re.IGNORECASE))
+        )
+
+    @staticmethod
+    def _is_schedule_seed_url(url: str) -> bool:
+        normalized = normalize_url(url)
+        schedule = normalize_url(SCHEDULE_URL)
+        notice = normalize_url(NOTICE_URL)
+        return bool(schedule and schedule != notice and normalized.startswith(schedule))
 
     @staticmethod
     def _course_detail_specs(soup: BeautifulSoup) -> list[dict[str, str]]:
@@ -998,7 +1103,7 @@ class KnouCrawler:
         if not current_page or not total_page or not page_form:
             return []
         try:
-            total = min(int(total_page.get_text(strip=True)), 100)
+            total = min(int(total_page.get_text(strip=True)), config.CRAWL_BOARD_PAGE_LIMIT)
         except ValueError:
             return []
         action = normalize_url(page_form.get("action", ""), current_url)
@@ -1027,12 +1132,14 @@ class KnouCrawler:
         category = " > ".join(dict.fromkeys(x for x in breadcrumbs if x and x != title))
         if not category:
             category = self._guess_category(url, title)
-        if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+        if self._is_board_article_url(url) and "/bbs/cs1/2119/" in url:
+            category = "공지사항"
+        if self._is_schedule_seed_url(url):
             category = "학과일정"
 
         attachments = self._extract_attachments(url, soup)
         content = self._select_content(url, soup)
-        if content is None and DOCUMENT_URL_RE.search(url):
+        if content is None and (self._is_board_article_url(url) or self._is_resource_document_url(url)):
             content = soup.body or soup
         if content is None:
             return None
@@ -1047,14 +1154,14 @@ class KnouCrawler:
         if not normalized_items and ("교수진" in category or "/4786/" in url):
             normalized_items = self._extract_faculty_items(content, url)
         body = self._structured_text(content)
-        if DOCUMENT_URL_RE.search(url):
+        if self._is_resource_document_url(url):
             body = self._augment_synap_text(url, soup, body)
         if not body:
             return None
         title = self._document_title(title, url, body)
         if not normalized_items and ("학과일정" in category or "/4792/" in url):
             normalized_items = extract_schedule_items(body)
-        if not normalized_items and normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+        if not normalized_items and self._is_schedule_seed_url(url):
             normalized_items = extract_schedule_items(body)
 
         published_at = self._extract_date(page_text)
@@ -1071,13 +1178,13 @@ class KnouCrawler:
             table_rows=table_rows,
             normalized_items=normalized_items,
         )
-        if DOCUMENT_URL_RE.search(url):
+        if self._is_resource_document_url(url):
             self._apply_document_metadata(document)
-        if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+        if self._is_schedule_seed_url(url):
             document.category = "학과일정"
             document.document_type = "학과일정"
         document.finalize()
-        if normalize_url(url).startswith(normalize_url(SCHEDULE_URL)):
+        if self._is_schedule_seed_url(url):
             document.category = "학과일정"
             document.document_type = "학과일정"
             tier = classify_data_tier(asdict(document))

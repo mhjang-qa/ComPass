@@ -78,6 +78,30 @@ def test_builds_javascript_board_pagination_links() -> None:
     ]
 
 
+def test_limits_board_pagination_links(monkeypatch) -> None:
+    crawler = crawler_without_network()
+    soup = BeautifulSoup(
+        """
+        <form name="pageForm" action="/bbs/cs1/2119/artclList.do"></form>
+        <p class="_pageState">
+          <span class="_curPage">1</span>
+          <span class="_totPage">20</span>
+        </p>
+        """,
+        "lxml",
+    )
+    monkeypatch.setattr("crawler.config.CRAWL_BOARD_PAGE_LIMIT", 4)
+
+    links = crawler._extract_links("https://cs.knou.ac.kr/cs1/4812/subview.do", soup)
+
+    assert links == [
+        "https://cs.knou.ac.kr/bbs/cs1/2119/artclList.do?page=1",
+        "https://cs.knou.ac.kr/bbs/cs1/2119/artclList.do?page=2",
+        "https://cs.knou.ac.kr/bbs/cs1/2119/artclList.do?page=3",
+        "https://cs.knou.ac.kr/bbs/cs1/2119/artclList.do?page=4",
+    ]
+
+
 class FakeResponse:
     headers = {"content-type": "text/html; charset=utf-8"}
     apparent_encoding = "utf-8"
@@ -126,6 +150,60 @@ def test_crawl_respects_max_depth(tmp_path: Path, monkeypatch) -> None:
     assert [document.source_url for document in documents] == [start, child]
     assert all(item["depth"] <= 1 for item in progress)
     assert progress[-1]["documents"] == 2
+
+
+def test_notice_seed_fetches_recent_board_details_at_depth_zero(tmp_path: Path, monkeypatch) -> None:
+    start = "https://cs.knou.ac.kr/sites/cs1/index.do"
+    notice = "https://cs.knou.ac.kr/cs1/4812/subview.do"
+    detail = "https://cs.knou.ac.kr/bbs/cs1/2119/802584/artclView.do"
+    pages = {
+        start: "<html><title>메인</title><main>컴퓨터과학과 메인 내용입니다.</main></html>",
+        notice: f"""
+            <html>
+              <title>학과</title>
+              <main>
+                <h1>학과공지</h1>
+                <table>
+                  <tr><th>번호</th><th>제목</th><th>작성일</th></tr>
+                  <tr><td>102</td><td><a href="{detail}">최신 공지</a></td><td>2026.07.22</td></tr>
+                </table>
+              </main>
+            </html>
+        """,
+        detail: """
+            <html>
+              <body>
+                <div class="_fnctWrap">
+                  <div class="board-view-info">등록일 2026.07.22 작성자 컴퓨터과학과</div>
+                  <h1>최신 공지</h1>
+                  <p>참가 신청과 작품 제출 일정을 안내합니다. 학생이 확인할 공식 공지 본문입니다.
+                  신청 기간과 제출 방법을 반드시 확인해 주세요.</p>
+                </div>
+              </body>
+            </html>
+        """,
+    }
+
+    crawler = object.__new__(KnouCrawler)
+    crawler.start_url = start
+    crawler.max_pages = 20
+    crawler.max_depth = 0
+    crawler.delay = 0
+    crawler.allowed_path_prefixes = ("/cs1", "/sites/cs1", "/bbs/cs1")
+    crawler.robots = AllowAllRobots()
+    crawler.session = FakeSession(pages)
+    monkeypatch.setattr("crawler.config.CRAWL_SNAPSHOT_PATH", tmp_path / "snapshot.json")
+    monkeypatch.setattr("crawler.REQUIRED_DOCUMENT_URLS", (notice,))
+    monkeypatch.setattr("crawler.config.CRAWL_NOTICE_DETAIL_LIMIT", 3)
+    monkeypatch.setattr("crawler.time.sleep", lambda _: None)
+
+    documents = crawler.crawl()
+    detail_doc = next(document for document in documents if document.source_url == detail)
+
+    assert detail_doc.title == "최신 공지"
+    assert detail_doc.document_type == "게시물"
+    assert detail_doc.data_tier == "TEMPORARY"
+    assert detail_doc.active is True
 
 
 def test_clean_text_removes_site_technical_noise() -> None:

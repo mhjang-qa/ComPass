@@ -14,6 +14,18 @@ def test_graduation_credits_answer(tmp_path) -> None:
     assert result["structured_intent"] == "graduation_requirement"
 
 
+def test_transfer_accepted_credits_answer(tmp_path) -> None:
+    result = answer_question("편입생의 인정 학점은?", index=empty_index(tmp_path))
+
+    assert result["mode"] == "DB검색"
+    assert result["answer_type"] == "text"
+    assert result["structured_intent"] == "transfer_accepted_credits"
+    assert "2학년 편입 30학점" in result["answer"]
+    assert "3학년 편입 63학점" in result["answer"]
+    assert result["summary"]
+    assert "과목" not in result["answer"]
+
+
 def test_recommended_certifications_follow_up(tmp_path) -> None:
     result = answer_question(
         "추천 자격증은?",

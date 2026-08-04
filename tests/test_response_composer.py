@@ -24,6 +24,7 @@ def test_response_composer_classifies_supported_intents() -> None:
     assert classify_intent("소프트웨어 경진대회") == "notice_list"
     assert classify_intent("컴퓨터과학과 학과 일정을 알려줘") == "schedule_list"
     assert classify_intent("편입생 과목 추천") == "course_recommendation"
+    assert classify_intent("편입생의 인정 학점은?") == "text"
     assert classify_intent("인공지능은 무슨 과목이야?") == "course_detail"
     assert classify_intent("인공지능은 어떤 커리큘럼이야?") == "course_detail"
     assert classify_intent("파이썬프로그래밍기초 수업 난이도는?") == "course_difficulty"
@@ -65,6 +66,7 @@ def test_nlu_router_classifies_natural_language_intents() -> None:
         "시험 일정": "schedule",
         "인공지능 시험 어디까지": "exam_scope",
         "졸업하려면 몇 학점": "graduation",
+        "편입생의 인정 학점은?": "graduation",
         "편입 안내": "course_roadmap",
         "장학금 안내": "scholarship",
         "학과 전화번호": "contact",

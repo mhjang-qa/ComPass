@@ -53,6 +53,22 @@
       "updated_at": "2026-06-22T00:00:00+09:00"
     },
     {
+      "id": "transfer_accepted_credits",
+      "enabled": true,
+      "title": "편입생 인정학점 기준",
+      "category": "입학 > 편입학 > 인정학점",
+      "intent": "transfer_accepted_credits",
+      "answer_type": "text",
+      "match_all": ["편입"],
+      "match_any": ["인정학점", "인정 학점", "학점인정", "학점 인정", "몇학점", "몇 학점"],
+      "answer": "편입생 인정학점은 2학년 편입 30학점, 3학년 편입 63학점입니다.",
+      "note": "2학년 편입은 교양 15학점과 전공 15학점, 3학년 편입은 교양 33학점과 전공 30학점으로 인정됩니다. 출신대학 교과목별 성적은 인정하지 않고 방송대 교과과정 학년별 기준 학점으로 인정합니다.",
+      "keywords": ["편입", "편입생", "인정학점", "학점인정", "2학년편입", "3학년편입", "30학점", "63학점"],
+      "source_url": "https://prime.knou.ac.kr/admission/290/subview.do?epTicket=LOG",
+      "validity": "한국방송통신대학교 편입학 학년별 학점인정 기준",
+      "updated_at": "2026-08-04T00:00:00+09:00"
+    },
+    {
       "id": "recommended_certifications",
       "enabled": true,
       "title": "컴퓨터과학과 추천 자격증",

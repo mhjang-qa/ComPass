@@ -256,6 +256,9 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 | `ALLOWED_PATH_PREFIX` | 허용 URL 경로 접두사. 쉼표로 복수 지정 가능 |
 | `CRAWL_DELAY_SECONDS` | 요청 사이 대기 시간 |
 | `CRAWL_MAX_PAGES` | 한 번에 방문할 최대 URL 수 |
+| `CRAWL_MAX_SECONDS` | 공식 사이트 크롤링 최대 실행 시간. 기본값 600초 |
+| `CRAWL_BOARD_PAGE_LIMIT` | 게시판별 페이지네이션 최대 탐색 페이지 수. 기본값 5 |
+| `CRAWL_NOTICE_DETAIL_LIMIT` | 공지 목록에서 즉시 수집할 최신 상세 게시글 수. 기본값 12 |
 | `CRAWL_YEARS_LIMIT` | 게시판/공지/자료실 게시물 수집 기간. 기본값 3년 |
 | `CRAWL_NOTICE_YEARS_LIMIT` | ACTIVE_NOTICE 활성 기준. 기본값 3년 |
 | `CRAWL_TEMPORARY_YEARS_LIMIT` | TEMPORARY 활성 기준. 기본값 1년 |

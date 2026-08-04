@@ -804,6 +804,7 @@ def run_crawl_job(max_depth: int) -> None:
             "TEMPORARY": 0,
             "IMPORTANT_ARCHIVE": 0,
             "NOISE": 0,
+            "time_limited": 0,
             "depth": 0,
             "max_depth": max_depth,
             "url": "",
@@ -827,6 +828,7 @@ def run_crawl_job(max_depth: int) -> None:
                     f"방문 {progress['visited']} · 대기 {progress['queued']} · "
                     f"수집 {progress['documents']} · "
                     f"3년 초과 제외 {progress.get('skipped_old', 0)}"
+                    + (" · 시간 제한 도달" if progress.get("time_limited") else "")
                 ),
                 total_urls=int(progress.get("total_urls") or progress.get("visited") or 0),
                 skipped_old_count=int(progress.get("skipped_old") or 0),
@@ -942,7 +944,11 @@ def run_crawl_job(max_depth: int) -> None:
             logger.warning("[INDEX] AUTO_REBUILD_INDEX_AFTER_CRAWL=false: crawl completed without index rebuild")
         update_crawl_state(
             running=False,
-            message="크롤링 및 Notion 저장 완료",
+            message=(
+                "크롤링 시간 제한 도달 후 수집된 데이터 저장 완료"
+                if crawl_stats.get("time_limited")
+                else "크롤링 및 Notion 저장 완료"
+            ),
             error="",
             current_title="",
             saved_count=int(notion_result.get("신규", 0)) + int(notion_result.get("변경", 0)),
